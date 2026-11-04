@@ -6,7 +6,7 @@ export default defineConfig({
     index: 'src/index.ts',
   },
   format: ['esm'],
-  target: 'node20.18',
+  target: 'node22.18',
   platform: 'node',
   outDir: 'dist',
   clean: true,

@@ -20,7 +20,7 @@ End-to-end flow:
 
 ## Toolchain (locked decisions — see `memory/project_toolchain_decisions.md`)
 
-- **Node ≥ 20.18**, **ESM only** (`"type": "module"`).
+- **Node ≥ 22.18**, **ESM only** (`"type": "module"`).
 - **TypeScript** strict mode, plus `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`. Module resolution is `bundler`; we drop `.js` extensions only inside the project's own bundled output, but **all relative imports in source must use the `.js` extension** to stay portable.
 - **Build:** `tsup` → bundled `dist/cli.js` (with `#!/usr/bin/env node` shebang from `src/cli.ts`) and `dist/index.js` (programmatic API). `tsc` is used only for typechecking.
 - **CLI:** `commander` + `@commander-js/extra-typings`.

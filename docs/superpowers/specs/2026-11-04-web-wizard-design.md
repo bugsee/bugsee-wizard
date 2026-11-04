@@ -23,7 +23,7 @@ today; this closes the gaps found in the source-map audit (JS repo, `docs/review
   project kind exists but prints "not implemented".
 - **Dependencies are behind** (npm outdated): commander 12→15, @commander-js/extra-typings 12→15, @clack/prompts
   0.9→1.8, magicast 0.3→0.5, vitest 2→5, @vitest/coverage-v8 2→5, biome 1.9→2.6, tsup 8→9, typescript 5.9→7.0,
-  open 10→11, xcode 3→4, @types/node 20→26, yaml 2.8→2.9.
+  open 10→11, xcode 3→4, @types/node stays on 22.x, yaml 2.8→2.9.
 - `@bugsee/wizard` is not published to npm.
 - **Sentry's wizard** (v9.1.0, cloned and read in full for the web paths) is the reference. Its mechanics are
   summarised in §8.
@@ -75,6 +75,7 @@ My calls (change any you disagree with):
 - **C2.** Update every dependency to latest, **except** adopt TypeScript 7 only if `tsup` declaration build and
   vitest work under it; otherwise stay on the newest TypeScript 5.x/6.x and say so. Each major bump is its own
   commit with the test suite green.
+- **C2a.** Node floor raised to 22.18 on 2026-11-04 because the latest majors of vitest, tsup and commander require it (Node 20 is EOL).
 - **C3.** Config edits use **magicast/recast for JS/TS configs, JSON-C-aware edits for `tsconfig`/`angular.json`/
   `wrangler.jsonc`, and a format-preserving `package.json` writer** (detect indent, key order, trailing
   newline) — Sentry rewrites `package.json` with `JSON.stringify(…, 2)` and loses formatting. Static analysis

@@ -6,14 +6,14 @@
 
 **Architecture:** Recipes are JSON data made of a closed set of operations the wizard implements; they are resolved by SDK version from `download.bugsee.com/sdk/wizard-recipes/<platform>/index.json`, with a snapshot bundled in the wizard as fallback. The existing `Step` runner (`precheck → apply → rollback`) is extended, not replaced; each operation compiles to a `Step`. Detection reports runtime subtype(s), framework, build tool and package manager.
 
-**Tech Stack:** TypeScript (strict, ESM, `.js` import suffixes), Node ≥ 20.18, commander, @clack/prompts, magicast (JS configs), recast via magicast, detect-indent, vitest, biome, tsup.
+**Tech Stack:** TypeScript (strict, ESM, `.js` import suffixes), Node ≥ 22.18, commander, @clack/prompts, magicast (JS configs), recast via magicast, detect-indent, vitest, biome, tsup.
 
 **Spec:** `docs/superpowers/specs/2026-11-04-web-wizard-design.md` (approved 2026-11-04). Read it first; section numbers below refer to it.
 
 ## Global Constraints
 
 - Repo `/Users/alexeykarimov/Projects/Bugsee/wizard-cli`, remote `github.com/bugsee/bugsee-wizard`, base branch `main`. Work on feature branches; open PRs ready (not draft). Never push to `main`; if a push is refused, stop and report.
-- Node `>=20.18.0`, ESM only; all relative imports use the `.js` extension; `exactOptionalPropertyTypes` and `noUncheckedIndexedAccess` stay on.
+- Node `>=22.18.0`, ESM only; all relative imports use the `.js` extension; `exactOptionalPropertyTypes` and `noUncheckedIndexedAccess` stay on.
 - Checks that must pass before every commit: `npm run typecheck && npm run lint && npm test && npm run build`.
 - TDD: failing test first, then code; after each new function run a mutation pass (inject one bug, confirm a test fails, roll it back) per the Bugsee standard.
 - Recipes are data only; the wizard never downloads or executes code (§6.1). No `import()` of user config; edits are static (magicast / JSON-C / format-preserving JSON).
@@ -42,8 +42,8 @@
 
 - [ ] **Step 1:** `git pull --ff-only` on `main` (local is behind `origin/main` by the two workflow commits), then `git switch -c chore/baseline-and-deps`.
 - [ ] **Step 2:** Run `npm ci && npm run typecheck && npm run lint && npm test && npm run build` on the current code; record failures. Fix only what blocks green (lint formatting via `npm run lint:fix`); do not change behavior.
-- [ ] **Step 3:** Add `ci.yml`: trigger `pull_request` and `push` to `main`; matrix Node `20.18`, `22`, `24` on `ubuntu-latest`; steps `npm ci`, typecheck, lint, test, build.
-- [ ] **Step 4:** Commit in two commits: `chore: import existing wizard (framework, android, ios, react-native)` and `ci: typecheck, lint, test, build on Node 20/22/24`. Push the branch.
+- [ ] **Step 3:** Add `ci.yml`: trigger `pull_request` and `push` to `main`; matrix Node `22.18`, `24` on `ubuntu-latest`; steps `npm ci`, typecheck, lint, test, build.
+- [ ] **Step 4:** Commit in two commits: `chore: import existing wizard (framework, android, ios, react-native)` and `ci: typecheck, lint, test, build on Node 22.18/24`. Push the branch.
 
 ### Task 2: Dependency upgrades (one commit per major)
 
@@ -51,9 +51,9 @@
 
 **Interfaces:** Produces the library versions every later task assumes: commander 15, @clack/prompts 1.x, magicast 0.5, vitest 5, biome 2, tsup 9, open 11, xcode 4, yaml latest; add `semver` and its types.
 
-- [ ] **Step 1:** For each target below, read the package's `engines`. If any latest major requires Node > 20.18, **stop and report** (do not raise the floor silently).
+- [ ] **Step 1:** For each target below, read the package's `engines`. If any latest major requires Node > 22.18, **stop and report** (do not raise the floor silently).
 - [ ] **Step 2:** In this order, each its own commit, running the four checks after each: (a) `yaml`, patch bumps; (b) `@biomejs/biome` 1.9→2 (run `npx biome migrate --write`, then `lint:fix`); (c) `vitest` + `@vitest/coverage-v8` 2→5; (d) `tsup` 8→9; (e) `commander` + `@commander-js/extra-typings` 12→15 (fix `src/cli.ts`); (f) `@clack/prompts` 0.9→1.x (fix prompt call sites in `src/commands/*` and recipes; the test mock in `test/step.test.ts` must still match); (g) `magicast` 0.3→0.5; (h) `open` 11, `xcode` 4; (i) `typescript` 7: if `npm run build` (tsup dts) or vitest fails under 7, use the newest 5.x/6.x, say so in the commit body.
-- [ ] **Step 3:** `@types/node` stays on the 20.x line (the engine floor) so Node 22+ APIs cannot be used by accident; note this as the one deliberate exception to "all latest" in the PR description.
+- [ ] **Step 3:** `@types/node` stays on the 22.x line (the engine floor) so Node 24+ APIs cannot be used by accident; note this as the one deliberate exception to "all latest" in the PR description.
 - [ ] **Step 4:** `npm outdated` shows only the deliberate `@types/node` exception (and TypeScript if held back).
 
 ### Task 3: Open PR #1
