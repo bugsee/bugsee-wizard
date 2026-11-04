@@ -25,6 +25,11 @@ export interface ManualSnippet {
 
 export interface ApplyResult {
   readonly manual?: ManualSnippet;
+  /**
+   * With `manual`: the step also changed something before handing the rest to
+   * the user, so it stays rollback-covered if a later step fails.
+   */
+  readonly applied?: boolean;
 }
 
 export interface StepResult {
@@ -78,6 +83,7 @@ export async function runSteps<Ctx extends WizardContext>(
         const res = await step.apply(ctx);
         if (res?.manual) {
           incomplete = true;
+          if (res.applied === true) applied.push(step);
           results.push({ id: step.id, outcome: 'manual', snippet: res.manual });
           ctx.log.warn(`${step.title} — manual step required`);
         } else {

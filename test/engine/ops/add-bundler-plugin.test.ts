@@ -1,8 +1,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { executeRecipe } from '../../../src/engine/execute.js';
 import { opToStep } from '../../../src/engine/ops/index.js';
-import type { OpSpec } from '../../../src/engine/recipe.js';
+import { type OpSpec, parseRecipe } from '../../../src/engine/recipe.js';
 import { makeCtx, makeTmp } from '../helpers.js';
 
 const spec: OpSpec = {
@@ -132,6 +133,92 @@ describe('add-bundler-plugin op', () => {
         makeCtx(tmp.dir),
       );
       expect(res).toBeUndefined();
+    });
+  });
+
+  describe('ensureSourcemap stays rollback-covered and re-reported', () => {
+    const smSpec = { ...spec, ensureSourcemap: true } as OpSpec;
+
+    it('flags the manual result as applied so a later failure rolls the config back', async () => {
+      await writeFile(cfg(), CONFIG);
+      const ctx = makeCtx(tmp.dir);
+      const res = await opToStep(smSpec).apply(ctx);
+      expect(res?.applied).toBe(true);
+      expect(res?.manual).toBeDefined();
+    });
+
+    it('end to end: a later failing step restores vite.config.ts', async () => {
+      await writeFile(cfg(), CONFIG);
+      await writeFile(join(tmp.dir, 'package.json'), '{"scripts":{"up":"other"}}');
+      const res = await executeRecipe(
+        parseRecipe({
+          schema: 1,
+          id: 'r',
+          kind: 'buildtool',
+          platform: 'javascript-vite',
+          engine: { min: '1.0.0' },
+          sdk: { range: '*' },
+          detect: [],
+          ops: [smSpec, { op: 'add-package-script', name: 'up', command: 'echo up' }],
+        }),
+        makeCtx(tmp.dir),
+      );
+      expect(res.failed).toBe(true);
+      expect(res.results.map((r) => r.outcome)).toEqual(['manual', 'blocked', 'rolled-back']);
+      expect(await readFile(cfg(), 'utf8')).toBe(CONFIG);
+    });
+
+    it('a re-run still reports pending, and apply re-emits ONLY the hint without editing', async () => {
+      await writeFile(cfg(), CONFIG);
+      const step = opToStep(smSpec);
+      await step.apply(makeCtx(tmp.dir));
+      const edited = await readFile(cfg(), 'utf8');
+      const ctx = makeCtx(tmp.dir);
+      expect(await opToStep(smSpec).precheck(ctx)).toEqual({ kind: 'pending' });
+      const res = await opToStep(smSpec).apply(ctx);
+      expect(res?.manual?.code).toContain('build: { sourcemap: true }');
+      expect(res?.manual?.code).not.toContain('import');
+      expect(res?.applied).toBeUndefined();
+      expect(await readFile(cfg(), 'utf8')).toBe(edited);
+      expect(ctx.entries).toEqual([]);
+    });
+
+    it('is satisfied once the config has a sourcemap/devtool setting', async () => {
+      await writeFile(
+        cfg(),
+        `// bugsee-wizard\n${CONFIG.replace('plugins: []', 'plugins: [], build: { sourcemap: true }')}`,
+      );
+      expect(await opToStep(smSpec).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'satisfied' });
+      await writeFile(
+        cfg('webpack.config.js'),
+        '// bugsee-wizard\nmodule.exports = { devtool: "source-map", plugins: [] };\n',
+      );
+      expect(
+        await opToStep({ ...smSpec, target: 'webpack' } as OpSpec).precheck(makeCtx(tmp.dir)),
+      ).toEqual({
+        kind: 'satisfied',
+      });
+    });
+
+    it('a setting already present means the plugin edit returns no manual hint', async () => {
+      await writeFile(
+        cfg(),
+        CONFIG.replace('plugins: []', 'plugins: [], build: { sourcemap: true }'),
+      );
+      const res = await opToStep(smSpec).apply(makeCtx(tmp.dir));
+      expect(res).toBeUndefined();
+    });
+
+    it('an odd config that already sets a source map gets only the plugin snippet', async () => {
+      await writeFile(cfg(), 'export default makeConfig({ sourcemap: true });\n');
+      const res = await opToStep(smSpec).apply(makeCtx(tmp.dir));
+      expect(res?.manual?.code).toContain('bugsee({ app: "x" })');
+      expect(res?.manual?.code).not.toContain('enable source maps');
+    });
+
+    it('without ensureSourcemap a marked config stays satisfied', async () => {
+      await writeFile(cfg(), `// bugsee-wizard\n${CONFIG}`);
+      expect(await opToStep(spec).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'satisfied' });
     });
   });
 

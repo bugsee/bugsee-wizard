@@ -144,6 +144,26 @@ describe('runSteps manual outcome', () => {
     ]);
   });
 
+  it('a manual result flagged applied stays rollback-covered but keeps outcome manual', async () => {
+    const trace: Trace = { calls: [] };
+    const m = makeStep('m', trace, { apply: async () => ({ manual: snippet, applied: true }) });
+    const bad = makeStep('bad', trace, {
+      apply: async () => {
+        throw new Error('boom');
+      },
+    });
+    const ok = await runSteps([m], makeContext());
+    expect(ok.incomplete).toBe(true);
+    expect(ok.results).toEqual([{ id: 'm', outcome: 'manual', snippet }]);
+    const result = await runSteps([m, bad], makeContext());
+    expect(trace.calls).toContain('rollback:m');
+    expect(result.results.map((r) => `${r.id}:${r.outcome}`)).toEqual([
+      'm:manual',
+      'bad:failed',
+      'm:rolled-back',
+    ]);
+  });
+
   it('incomplete is false when nothing is manual', async () => {
     const trace: Trace = { calls: [] };
     const result = await runSteps([makeStep('a', trace)], makeContext());
