@@ -1,5 +1,6 @@
 // End-to-end: the built wizard (dist/cli.js) against real projects — the bugsee-javascript samples
-// at a pinned ref, sanitized by e2e/fixtures.mjs — with a real package manager (pnpm), the real
+// at a pinned ref, sanitized by e2e/fixtures.mjs, and the synthetic tsc/esbuild/rspack/rollup
+// projects under e2e/fixtures/ — with a real package manager (pnpm), the real
 // npm registry (@bugsee/* at the `beta` dist-tag), the project's real build and the real
 // bugsee-cli. Nothing reaches Bugsee: every upload goes to a local mock collector through
 // BUGSEE_ENDPOINT, which both the bundler plugins and bugsee-cli honour.
@@ -17,6 +18,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseJsonc } from 'jsonc-parser';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { opToStep } from '../src/engine/ops/index.js';
 import type { Recipe } from '../src/engine/recipe.js';
@@ -41,6 +43,10 @@ const MANUAL: Record<string, string[]> = {
   'node-service': ['add-package-script:bugsee:sourcemaps'],
   'vite-object-config': [],
   'webpack-object-config': [],
+  'tsc-build': [],
+  'esbuild-build': [],
+  'rspack-build': [],
+  'rollup-build': [],
 };
 
 const selected = (
@@ -168,6 +174,19 @@ function jsMaps(dir: string): string[] {
   return out;
 }
 
+type JsonKeyOp = Extract<Recipe['ops'][number], { op: 'set-json-key' }>;
+
+/** The value at `op.path` in the (JSONC) file `op.file` of `dir`; undefined when absent. */
+function jsonKey(dir: string, op: JsonKeyOp): unknown {
+  let v: unknown = parseJsonc(readFileSync(path.join(dir, op.file), 'utf8'));
+  for (const k of op.path) {
+    v = typeof v === 'object' && v !== null ? (v as Record<string, unknown>)[k] : undefined;
+  }
+  return v;
+}
+
+const showKey = (op: JsonKeyOp): string => `${op.file} ${op.path.join('.')}`;
+
 function bugseeCli(): { cmd: string; pre: string[] } {
   const bin = process.env.BUGSEE_CLI_BIN;
   if (bin) return { cmd: bin, pre: [] };
@@ -243,6 +262,11 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
   const recipe = readRecipe(fixture.recipe);
   const manual = MANUAL[name] ?? [];
   const pluginManual = manual.some((id) => id.startsWith('add-bundler-plugin:'));
+  const jsonKeyOps = recipe.ops.filter((op): op is JsonKeyOp => op.op === 'set-json-key');
+  // the recipe sets tsc's inlineSources: every map the build writes must carry the sources
+  const inlineSources = jsonKeyOps.some(
+    (op) => op.path.join('.') === 'compilerOptions.inlineSources' && op.value === true,
+  );
   const expectedIds = [
     ...recipe.ops.map((op) => opToStep(op).id),
     opToStep({ op: 'ensure-gitignore', line: '.bugsee/' }).id,
@@ -253,9 +277,12 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
     let installed: string;
     /** Source maps the wizard-wired build uploaded to the mock collector. */
     let uploaded = 0;
+    /** The fixture's own values at the keys the recipe sets (uninstall must bring them back). */
+    const originalKeys = new Map<JsonKeyOp, unknown>();
 
     beforeAll(() => {
       dir = prepareFixture(name, fresh(name), { log: (m) => console.error(`[${name}] ${m}`) });
+      for (const op of jsonKeyOps) originalKeys.set(op, jsonKey(dir, op));
     });
 
     it('install: applies the recipe, writes the manifest, never prints the token', async () => {
@@ -307,6 +334,11 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       const install = recipe.ops.find((op) => op.op === 'install-package');
       for (const p of install && 'packages' in install ? install.packages : []) {
         expect(pkg.devDependencies?.[p], `${p} in devDependencies`).toBeTypeOf('string');
+      }
+      // tsc recipes: the source-map options landed (with values the fixture did not have)
+      for (const op of jsonKeyOps) {
+        expect(jsonKey(dir, op), showKey(op)).toEqual(op.value);
+        expect(originalKeys.get(op), `${showKey(op)} before the wizard`).not.toEqual(op.value);
       }
       expect(readFileSync(path.join(dir, '.env.bugsee-build-plugin'), 'utf8')).toContain(
         `BUGSEE_APP_TOKEN=${TOKEN}`,
@@ -376,6 +408,13 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
         }
         const maps = jsMaps(out);
         expect(maps.length, `source maps in ${out}`).toBeGreaterThan(0);
+        if (inlineSources) {
+          for (const m of maps) {
+            const { sources, sourcesContent } = JSON.parse(readFileSync(m, 'utf8'));
+            expect(sourcesContent?.length, `${m}: inlineSources`).toBe(sources.length);
+            for (const c of sourcesContent) expect(c, m).toBeTypeOf('string');
+          }
+        }
         // what the wired-up build uploaded is what bugsee-cli discovers
         if (!pluginManual) expect(uploaded).toBe(maps.length);
         // CLI route: the generated script ran inside the build, so the output is injected already
@@ -444,6 +483,10 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       // git does not show ignored files (and honours a global excludes file): check them directly
       for (const f of ['.env.bugsee-build-plugin', '.bugsee', 'scripts/bugsee-sourcemaps.mjs']) {
         expect(existsSync(path.join(dir, f)), `${f} left behind`).toBe(false);
+      }
+      // the tsconfig keys are back to the fixture's own (absent) values, not merely git-clean
+      for (const op of jsonKeyOps) {
+        expect(jsonKey(dir, op), showKey(op)).toEqual(originalKeys.get(op));
       }
     });
   });

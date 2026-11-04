@@ -27,6 +27,19 @@
 // (outcome `manual`), so without the variants the automatic plugin wiring and its build-time upload
 // would never run end to end.
 //
+// SYNTHETIC fixtures (`synthetic: true`) are not samples at all: no sample uses tsc, esbuild, rspack
+// or rollup as its build, so each of those recipes gets a minimal project committed under
+// e2e/fixtures/<name>/ (package.json with real dependencies, source, config, .gitignore). They are
+// pnpm projects like the samples, so one install path and the same install-script approvals serve
+// every fixture. Their @bugsee/* dependencies are written as `beta` and pinned to the exact version
+// like the samples' (no lockfile is committed: it would pin a stale SDK).
+//   tsc-build      `tsc -p tsconfig.json` into lib/ (an outDir other than dist), no source-map
+//                  options: the recipe sets sourceMap/inlineSources itself
+//   esbuild-build  the esbuild CLI, --sourcemap, --outdir=dist
+//   rspack-build   @rspack/cli + @rspack/core, devtool 'source-map', output.path dist
+//   rollup-build   an object-form rollup.config.mjs with output.sourcemap, so the wizard wires
+//                  bugseeRollupPlugin itself (plugin route, upload at build time)
+//
 // pnpm >= 10 refuses to run dependency install scripts that are not approved, and pnpm 11 FAILS the
 // install (ERR_PNPM_IGNORED_BUILDS). Both Bugsee CLI packages have one (the binary download).
 // Unless `{ approveBuilds: false }` is passed, the fixture approves them in pnpm-workspace.yaml up
@@ -45,7 +58,7 @@
 // CLI: `node e2e/fixtures.mjs <name> <dest>` prepares one fixture (handy when debugging by hand).
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,6 +81,7 @@ const TOOLING = new Set([
  *   recipe  the recipe the wizard must pick (its id)
  *   route   'plugin': the bundler plugin uploads at build time; 'cli': the generated script does
  *   outDir  the build output holding the source maps (null: the project has no build)
+ *   synthetic  the fixture is e2e/fixtures/<name>/, not a sample
  */
 export const FIXTURES = {
   'react-spa': { recipe: 'javascript-vite', route: 'plugin', outDir: 'dist' },
@@ -88,6 +102,10 @@ export const FIXTURES = {
     route: 'plugin',
     outDir: 'dist',
   },
+  'tsc-build': { synthetic: true, recipe: 'javascript-tsc', route: 'cli', outDir: 'lib' },
+  'esbuild-build': { synthetic: true, recipe: 'javascript-esbuild', route: 'cli', outDir: 'dist' },
+  'rspack-build': { synthetic: true, recipe: 'javascript-rspack', route: 'cli', outDir: 'dist' },
+  'rollup-build': { synthetic: true, recipe: 'javascript-rollup', route: 'plugin', outDir: 'dist' },
 };
 
 /** The Bugsee packages with an install script (both download the bugsee-cli binary). */
@@ -194,8 +212,21 @@ function run(cmd, args, opts = {}) {
   return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts });
 }
 
+const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
+
 function cacheDir() {
-  return path.join(path.dirname(fileURLToPath(import.meta.url)), '.cache');
+  return path.join(E2E_DIR, '.cache');
+}
+
+/** Copy synthetic fixture `name` (never anything a local run of it may have left there). */
+function copySynthetic(name, dest) {
+  const src = path.join(E2E_DIR, 'fixtures', name);
+  if (!existsSync(path.join(src, 'package.json'))) throw new Error(`${src} has no package.json`);
+  const skip = new Set(['node_modules', 'dist', 'lib', 'pnpm-lock.yaml']);
+  cpSync(src, dest, {
+    recursive: true,
+    filter: (p) => !skip.has(path.relative(src, p).split(path.sep)[0]),
+  });
 }
 
 /** A git repository that has `ref`: BUGSEE_JS_REPO, or a cached shallow fetch of the pinned ref. */
@@ -238,7 +269,8 @@ function sanitizePackageJson(file, version) {
     for (const [name, spec] of Object.entries(deps)) {
       if (!name.startsWith('@bugsee/')) continue;
       if (TOOLING.has(name)) delete deps[name];
-      else if (String(spec).includes('local-registry')) deps[name] = version;
+      // `beta`: a synthetic fixture's SDK dependency
+      else if (String(spec).includes('local-registry') || spec === 'beta') deps[name] = version;
     }
   }
   const text = JSON.stringify(pkg, null, 2);
@@ -317,14 +349,22 @@ export function prepareFixture(name, dest, { log = () => {}, approveBuilds = tru
   const fixture = FIXTURES[name];
   if (!fixture) throw new Error(`unknown fixture ${name}`);
   const sample = fixture.base ?? name;
-  const { repo, ref } = samplesRepo();
   mkdirSync(dest, { recursive: true });
-  const prefix = `samples/${sample}/`;
-  log(`archiving ${prefix} at ${ref.slice(0, 10)}`);
-  const tar = execFileSync('git', ['-C', repo, 'archive', '--format=tar', ref, prefix], {
-    maxBuffer: 256 * 1024 * 1024,
-  });
-  execFileSync('tar', ['-x', '-C', dest, '--strip-components=2'], { input: tar });
+  let origin;
+  if (fixture.synthetic) {
+    log(`copying e2e/fixtures/${name}`);
+    copySynthetic(name, dest);
+    origin = `e2e/fixtures/${name}`;
+  } else {
+    const { repo, ref } = samplesRepo();
+    const prefix = `samples/${sample}/`;
+    log(`archiving ${prefix} at ${ref.slice(0, 10)}`);
+    const tar = execFileSync('git', ['-C', repo, 'archive', '--format=tar', ref, prefix], {
+      maxBuffer: 256 * 1024 * 1024,
+    });
+    execFileSync('tar', ['-x', '-C', dest, '--strip-components=2'], { input: tar });
+    origin = `${sample} @ ${ref}`;
+  }
 
   const version = sdkVersion();
   sanitizePackageJson(path.join(dest, 'package.json'), version);
@@ -347,7 +387,7 @@ export function prepareFixture(name, dest, { log = () => {}, approveBuilds = tru
   const env = { ...process.env, ...GIT_ENV };
   run('git', ['init', '-q', '-b', 'main'], { cwd: dest, env });
   run('git', ['add', '-A'], { cwd: dest, env });
-  run('git', ['commit', '-q', '--no-gpg-sign', '-m', `fixture ${name} (${sample} @ ${ref})`], {
+  run('git', ['commit', '-q', '--no-gpg-sign', '-m', `fixture ${name} (${origin})`], {
     cwd: dest,
     env,
   });

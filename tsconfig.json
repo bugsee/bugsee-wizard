@@ -27,5 +27,5 @@
     "vitest.e2e.config.ts",
     "tsup.config.ts"
   ],
-  "exclude": ["test/fixtures/configs", "test/fixtures/js"]
+  "exclude": ["test/fixtures/configs", "test/fixtures/js", "e2e/fixtures"]
 }

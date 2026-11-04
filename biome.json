@@ -14,7 +14,8 @@
       "!**/*.md",
       "!**/*.yml",
       "!**/test/fixtures/configs",
-      "!**/test/fixtures/js"
+      "!**/test/fixtures/js",
+      "!**/e2e/fixtures"
     ]
   },
   "formatter": {

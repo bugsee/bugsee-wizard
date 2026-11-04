@@ -1,6 +1,8 @@
 export interface Fixture {
   /** The sample a variant is derived from (absent: the fixture is the sample of that name). */
   base?: string;
+  /** The fixture is the committed project e2e/fixtures/<name>/, not a bugsee-javascript sample. */
+  synthetic?: boolean;
   recipe: string;
   route: 'plugin' | 'cli';
   outDir: string | null;

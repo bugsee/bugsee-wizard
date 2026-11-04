@@ -45,6 +45,11 @@ jobs:
           # not samples as such: object-form bundler configs, the only shape the wizard edits itself
           - vite-object-config
           - webpack-object-config
+          # synthetic projects (e2e/fixtures/): no sample builds with these tools
+          - tsc-build
+          - esbuild-build
+          - rspack-build
+          - rollup-build
           # pnpm 11 with the Bugsee install scripts not approved (a known bug, see e2e/run.test.ts)
           - unapproved-builds
     env:

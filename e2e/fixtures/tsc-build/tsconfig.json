@@ -1,0 +1,14 @@
+{
+  // e2e fixture: a plain tsc build into lib/ (not dist/), with no source-map options yet
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "src",
+    "outDir": "lib",
+    "strict": true,
+    "types": ["node"],
+    "skipLibCheck": true,
+  },
+  "include": ["src"]
+}
