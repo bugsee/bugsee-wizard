@@ -12,6 +12,7 @@ import {
   type IndexEntry,
   RecipeStoreError,
   resolveRecipe,
+  snapshotDirFor,
 } from '../../src/engine/recipe-store.js';
 
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
@@ -471,6 +472,95 @@ describe('resolveRecipe: offline and network behaviour', () => {
       body: null,
     })) as unknown as typeof fetch;
     await expect(resolveRecipe(q({ fetchImpl }))).rejects.toThrow(/offline/i);
+  });
+});
+
+describe('snapshotDirFor', () => {
+  it('uses ../../snapshot/ for the source layout', () => {
+    expect(snapshotDirFor('file:///repo/src/engine/recipe-store.ts')).toBe('/repo/snapshot/');
+  });
+  it('uses ../snapshot/ for the dist layout', () => {
+    expect(snapshotDirFor('file:///repo/dist/cli.js')).toBe('/repo/snapshot/');
+  });
+  it('is not fooled by an install path containing a src directory', () => {
+    expect(snapshotDirFor('file:///home/me/src/app/node_modules/@bugsee/wizard/dist/cli.js')).toBe(
+      '/home/me/src/app/node_modules/@bugsee/wizard/snapshot/',
+    );
+    expect(snapshotDirFor('file:///usr/src/wizard/dist/index.js')).toBe(
+      '/usr/src/wizard/snapshot/',
+    );
+  });
+  it('requires both engine and its src parent for the source layout', () => {
+    expect(snapshotDirFor('file:///a/engine/cli.js')).toBe('/a/snapshot/');
+    expect(snapshotDirFor('file:///a/src/other/cli.js')).toBe('/a/src/snapshot/');
+    expect(snapshotDirFor('file:///a/lib/engine/cli.js')).toBe('/a/lib/snapshot/');
+  });
+  it('treats src/engine only as the source layout, not src/other', () => {
+    expect(snapshotDirFor('file:///a/src/x/dist/cli.js')).toBe('/a/src/x/snapshot/');
+  });
+});
+
+describe('resolveRecipe: review fixes', () => {
+  it.each([
+    ['a different host', 'https://evil.example/x.json'],
+    ['a protocol-relative host', '//evil.example/x.json'],
+    ['userinfo', 'USERINFO'],
+  ])('rejects an index url with %s', async (_n, url) => {
+    const b = recipeBody('>=1.0.0', 'x');
+    const u = url === 'USERINFO' ? `http://user:pw@${base.slice('http://'.length)}/js/x.json` : url;
+    serve([entry({ body: b, url: u })], { 'x.json': b });
+    await expect(resolveRecipe(q())).rejects.toThrow(/origin|credentials|non-https/);
+  });
+
+  it('rejects a cross-origin https url on an https base', async () => {
+    const b = recipeBody('>=1.0.0', 'x');
+    const fetchImpl = (async (url: string | URL | Request) => {
+      if (String(url).endsWith('index.json'))
+        return new Response(
+          JSON.stringify({
+            schema: 1,
+            platform: 'js',
+            entries: [entry({ body: b, url: 'https://evil.example/x.json' })],
+          }),
+        );
+      throw new Error('must not fetch');
+    }) as typeof fetch;
+    await expect(
+      resolveRecipe(q({ baseUrl: 'https://store.example/recipes', fetchImpl })),
+    ).rejects.toThrow(/different origin/);
+  });
+
+  it('rejects userinfo on a same-host url', async () => {
+    const b = recipeBody('>=1.0.0', 'x');
+    const host = base.slice('http://'.length);
+    serve([entry({ body: b, url: `http://u:p@${host}/js/x.json` })], { 'x.json': b });
+    await expect(resolveRecipe(q())).rejects.toThrow(/credentials/);
+  });
+
+  it('rejects a password-only userinfo url', async () => {
+    const b = recipeBody('>=1.0.0', 'x');
+    const host = base.slice('http://'.length);
+    serve([entry({ body: b, url: `http://:p@${host}/js/x.json` })], { 'x.json': b });
+    await expect(resolveRecipe(q())).rejects.toThrow(/credentials/);
+  });
+
+  it('says the remote index was not found on a 404, distinct from a network failure', async () => {
+    const b = recipeBody('>=1.0.0', 'snap');
+    await writeSnapshot([entry({ body: b })], { 'x.json': b });
+    const r = await resolveRecipe(q());
+    expect(r.source).toBe('snapshot');
+    expect(r.warning).toMatch(/not found/i);
+    expect(r.warning).not.toMatch(/unreachable/i);
+    const net = await resolveRecipe(q({ baseUrl: 'http://127.0.0.1:1' }));
+    expect(net.warning).toMatch(/unreachable/i);
+    expect(net.warning).not.toMatch(/not found/i);
+  });
+
+  it('throws a RecipeStoreError for an invalid engine version', async () => {
+    const err = await resolveRecipe(q({ engine: 'banana' })).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RecipeStoreError);
+    expect((err as Error).message).toMatch(/Invalid wizard engine version/);
+    expect(served.hits).toEqual([]);
   });
 });
 

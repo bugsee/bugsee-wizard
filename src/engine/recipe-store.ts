@@ -70,17 +70,29 @@ export class RecipeStoreError extends Error {
 class Fallback extends Error {
   constructor(
     message: string,
-    readonly kind: 'offline' | 'integrity',
+    readonly kind: 'offline' | 'integrity' | 'notfound',
     options?: { cause?: unknown },
   ) {
     super(message, options);
   }
 }
 
+/**
+ * Snapshot directory for a module URL, decided by the module's OWN location:
+ * `<root>/src/engine/<file>.ts` (source/tests) -> `<root>/snapshot/`;
+ * anything else (`<root>/dist/<file>.js`) -> `<root>/snapshot/` one level up.
+ * Never inspects the rest of the install path (it may contain a `src` dir).
+ */
+export function snapshotDirFor(moduleUrl: string): string {
+  const parts = new URL(moduleUrl).pathname.split('/');
+  const dir = parts[parts.length - 2];
+  const parent = parts[parts.length - 3];
+  const isSource = dir === 'engine' && parent === 'src';
+  return fileURLToPath(new URL(isSource ? '../../snapshot/' : '../snapshot/', moduleUrl));
+}
+
 export function defaultSnapshotDir(): string {
-  // Built: dist/<file>.js -> ../snapshot/. From source: src/engine/<file>.ts -> ../../snapshot/.
-  const here = import.meta.url;
-  return fileURLToPath(new URL(here.includes('/src/') ? '../../snapshot/' : '../snapshot/', here));
+  return snapshotDirFor(import.meta.url);
 }
 
 export function compareRevisions(a: string, b: string): number {
@@ -199,6 +211,7 @@ async function httpGet(url: string, fetchImpl: typeof fetch): Promise<Buffer> {
         lastErr = new Error(`HTTP ${res.status}`);
         continue;
       }
+      if (res.status === 404) throw new Fallback(`${url} was not found (HTTP 404)`, 'notfound');
       if (!res.ok) throw new Fallback(`HTTP ${res.status} from ${url}`, 'offline');
       return await readCapped(res);
     } catch (err) {
@@ -245,6 +258,12 @@ async function fromRemote(
   const allowed =
     url.protocol === 'https:' || (url.protocol === 'http:' && isLocal(base) && isLocal(url));
   if (!allowed) throw new RecipeStoreError(`Refusing non-https recipe URL: ${url.href}`);
+  if (url.username !== '' || url.password !== '') {
+    throw new RecipeStoreError('Refusing a recipe URL that embeds credentials');
+  }
+  if (url.origin !== base.origin) {
+    throw new RecipeStoreError(`Refusing a recipe URL on a different origin: ${url.origin}`);
+  }
   const recipe = verifyAndParse(await httpGet(url.href, fetchImpl), entry);
   return { recipe, revision: entry.revision, source: 'remote', ...(warning ? { warning } : {}) };
 }
@@ -270,6 +289,7 @@ async function fromSnapshot(q: RecipeQuery, why: string): Promise<ResolvedRecipe
     return fail(cause instanceof Error ? cause.message : String(cause), cause);
   }
   const { entry, warning } = selection;
+  // Snapshot entries must be bare filenames inside snapshot/<platform>/.
   if (entry.url.includes('/') || entry.url.includes('\\') || entry.url.includes('..')) {
     return fail(`snapshot entry ${entry.revision} has an unsafe file name`);
   }
@@ -299,6 +319,8 @@ export async function resolveRecipe(q: RecipeQuery): Promise<ResolvedRecipe> {
     throw new RecipeStoreError(`Invalid platform id "${q.platform}"`);
   if (semver.valid(q.sdkVersion) === null)
     throw new RecipeStoreError(`Invalid SDK version "${q.sdkVersion}"`);
+  if (semver.valid(q.engine) === null)
+    throw new RecipeStoreError(`Invalid wizard engine version "${q.engine}"`);
   const base = new URL(q.baseUrl ?? DEFAULT_BASE_URL);
   if (base.protocol !== 'https:' && !(base.protocol === 'http:' && isLocal(base))) {
     throw new RecipeStoreError(`Recipe store must be https: ${base.href}`);
@@ -310,7 +332,9 @@ export async function resolveRecipe(q: RecipeQuery): Promise<ResolvedRecipe> {
     const why =
       err.kind === 'integrity'
         ? `Recipe integrity verification failed (${err.message})`
-        : `The recipe store is unreachable/offline (${err.message})`;
+        : err.kind === 'notfound'
+          ? `The remote recipe index was not found (${err.message})`
+          : `The recipe store is unreachable/offline (${err.message})`;
     return fromSnapshot(q, why);
   }
 }
