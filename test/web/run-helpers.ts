@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmod, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -99,6 +100,19 @@ export async function sandbox(fixture: string): Promise<Sandbox> {
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+/** `git init` + commit everything in `dir` (a real repository, identity set locally). */
+export function gitCommitAll(dir: string): void {
+  const git = (...args: string[]): void => {
+    execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+  };
+  git('init', '-q');
+  git('config', 'user.email', 'wizard-test@example.com');
+  git('config', 'user.name', 'Wizard Test');
+  git('config', 'commit.gpgsign', 'false');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'init');
 }
 
 /** relative path -> sha256 of every file under `dir`. */

@@ -22,7 +22,7 @@ import { WIZARD_VERSION } from '../engine/telemetry.js';
 import { selectTokenSource } from '../engine/token.js';
 import { detectJavaScript, type JsDetection } from './detect.js';
 import { choosePackage } from './package-choice.js';
-import { checkGit, type GitState, probeGit } from './preconditions.js';
+import { checkGit, type GitState, probeGit, withoutWizardChanges } from './preconditions.js';
 import { clackPrompts, type Prompts } from './prompts.js';
 import { resolveSdkVersion, type SdkVersionQuery } from './sdk-version.js';
 import { checkSupported, SDK_TAG } from './versions.js';
@@ -125,10 +125,14 @@ export async function runJavaScriptInstall(
   const packageDir = det.packageDir;
   for (const w of checkSupported(det).warnings) log.warn(w);
 
-  const git = await checkGit(await deps.git(packageDir), opts, {
-    confirm: (m) => deps.prompts.confirm(m),
-    log,
-  });
+  const git = await checkGit(
+    await withoutWizardChanges(await deps.git(packageDir), packageDir),
+    opts,
+    {
+      confirm: (m) => deps.prompts.confirm(m),
+      log,
+    },
+  );
   if (!git.ok) {
     log.error(git.message);
     return failed(git.error, git.message);

@@ -1,23 +1,27 @@
-import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadManifest } from '../../src/engine/manifest.js';
 import { CancelledError, exitCodeFor, MissingInputError } from '../../src/engine/noninteractive.js';
+import { parseRecipe } from '../../src/engine/recipe.js';
 import { RecipeStoreError } from '../../src/engine/recipe-store.js';
 import { WIZARD_VERSION } from '../../src/engine/telemetry.js';
+import { probeGit } from '../../src/web/preconditions.js';
 import { runJavaScriptInstall } from '../../src/web/run.js';
 import { resolveSdkVersion } from '../../src/web/sdk-version.js';
 import { SDK_FALLBACK_VERSION, SDK_TAG } from '../../src/web/versions.js';
 import {
   baseOpts,
   captureOutput,
+  gitCommitAll,
   makeDeps,
   type Sandbox,
   sandbox,
   TOKEN,
   tree,
+  VITE_RECIPE,
 } from './run-helpers.js';
 
 const exists = (p: string): Promise<boolean> =>
@@ -455,5 +459,91 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptInstall', () => {
       );
       expect(options).toHaveLength(3);
     });
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('re-runs against a real git repository', () => {
+  let sb: Sandbox;
+  afterEach(async () => {
+    await sb.cleanup();
+  });
+  // the real probe, not an injected one
+  const realGit = (cap = captureOutput()) => makeDeps(cap, { git: (d) => probeGit(d) });
+
+  it('a second run is not blocked by the wizard own changes: all satisfied, exit 0', async () => {
+    sb = await sandbox('vite-react-spa');
+    gitCommitAll(sb.project);
+    const first = await runJavaScriptInstall(baseOpts(sb.project), realGit());
+    expect(first.ok).toBe(true);
+    const after = await tree(sb.project);
+    const second = await runJavaScriptInstall(baseOpts(sb.project), realGit());
+    expect(second).toMatchObject({ ok: true, incomplete: false });
+    expect(second.steps.every((s) => s.outcome === 'skipped')).toBe(true);
+    expect(exitCodeFor(second, true)).toBe(0);
+    expect(await tree(sb.project)).toEqual(after);
+  });
+
+  it('a wizard-touched file the user then edited still stops a non-interactive run', async () => {
+    sb = await sandbox('vite-react-spa');
+    gitCommitAll(sb.project);
+    await runJavaScriptInstall(baseOpts(sb.project), realGit());
+    await appendFile(join(sb.project, 'vite.config.ts'), '// mine\n');
+    const r = await runJavaScriptInstall(baseOpts(sb.project), realGit());
+    expect(r).toMatchObject({ ok: false, error: 'dirty-git-tree' });
+    expect(r.message).toContain('vite.config.ts');
+    expect(r.message).not.toContain('package.json');
+  });
+
+  it('works for a package in a subdirectory of the repository (status paths are repo-relative)', async () => {
+    sb = await sandbox('vite-react-spa');
+    const repo = join(sb.root, 'repo');
+    await mkdir(join(repo, 'apps'), { recursive: true });
+    await rename(sb.project, join(repo, 'apps', 'web'));
+    gitCommitAll(repo);
+    const pkg = join(repo, 'apps', 'web');
+    expect((await runJavaScriptInstall(baseOpts(pkg), realGit())).ok).toBe(true);
+    const second = await runJavaScriptInstall(baseOpts(pkg), realGit());
+    expect(second.ok).toBe(true);
+    expect(second.steps.every((s) => s.outcome === 'skipped')).toBe(true);
+    await mkdir(sb.project); // for cleanup symmetry
+  });
+
+  it('a wizard-created file in a new directory does not block the re-run', async () => {
+    sb = await sandbox('vite-react-spa');
+    gitCommitAll(sb.project);
+    const recipe = parseRecipe({
+      ...VITE_RECIPE,
+      ops: [
+        ...VITE_RECIPE.ops,
+        { op: 'write-file', path: 'bugsee/verify.ts', template: 'export {};\n' },
+      ],
+    });
+    const deps = (): ReturnType<typeof realGit> =>
+      makeDeps(captureOutput(), {
+        git: (d) => probeGit(d),
+        resolveRecipe: async () => ({ recipe, revision: 'r2', source: 'snapshot' as const }),
+      });
+    expect((await runJavaScriptInstall(baseOpts(sb.project), deps())).ok).toBe(true);
+    const second = await runJavaScriptInstall(baseOpts(sb.project), deps());
+    expect(second.ok).toBe(true);
+    expect(second.steps.every((s) => s.outcome === 'skipped')).toBe(true);
+  });
+
+  it('without a manifest every uncommitted change stops the first run', async () => {
+    sb = await sandbox('vite-react-spa');
+    gitCommitAll(sb.project);
+    await writeFile(join(sb.project, 'notes.txt'), 'x');
+    const r = await runJavaScriptInstall(baseOpts(sb.project), realGit());
+    expect(r).toMatchObject({ ok: false, error: 'dirty-git-tree' });
+  });
+
+  it('an unrelated uncommitted change still stops it', async () => {
+    sb = await sandbox('vite-react-spa');
+    gitCommitAll(sb.project);
+    await runJavaScriptInstall(baseOpts(sb.project), realGit());
+    await writeFile(join(sb.project, 'notes.txt'), 'x');
+    const r = await runJavaScriptInstall(baseOpts(sb.project), realGit());
+    expect(r).toMatchObject({ ok: false, error: 'dirty-git-tree' });
+    expect(r.message).toContain('notes.txt');
   });
 });

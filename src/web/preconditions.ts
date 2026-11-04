@@ -1,12 +1,19 @@
+import { createHash } from 'node:crypto';
+import { readFile, realpath } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
 import type { Logger } from '../core/logger.js';
 import { runChildOutput } from '../core/run-child.js';
+import { loadManifest } from '../engine/manifest.js';
 import { CancelledError } from '../engine/noninteractive.js';
 
 export interface GitState {
   /** Inside a git working tree. */
   readonly repo: boolean;
-  /** Paths `git status` reports as changed or untracked (repo-relative). */
+  /** Paths `git status` reports as changed or untracked (relative to `root`). */
   readonly changed: readonly string[];
+  /** The repository's top-level directory (absolute), when inside one. */
+  readonly root?: string;
 }
 
 export type RunOutput = (
@@ -40,8 +47,46 @@ export async function probeGit(dir: string, run: RunOutput = runChildOutput): Pr
     return { repo: false, changed: [] }; // not a repository, or git is not installed
   }
   if (inside.trim() !== 'true') return { repo: false, changed: [] };
-  const status = await run('git', ['status', '--porcelain=v1', '-z'], { cwd: dir });
-  return { repo: true, changed: parsePorcelainZ(status) };
+  const root = (await run('git', ['rev-parse', '--show-toplevel'], { cwd: dir })).trim();
+  // -uall: list every untracked file, not just its collapsed new directory
+  const status = await run('git', ['status', '--porcelain=v1', '-z', '-uall'], { cwd: dir });
+  return { repo: true, changed: parsePorcelainZ(status), root };
+}
+
+/**
+ * Drop the changes this wizard made itself (a re-run must not be blocked by the previous run): a
+ * changed path is dropped when the manifest in `packageDir` records it with an `afterSha256` that
+ * still matches the file. Entries without a content hash (manual steps, env markers) never excuse a
+ * change, and neither does a file the user edited after the wizard.
+ */
+export async function withoutWizardChanges(state: GitState, packageDir: string): Promise<GitState> {
+  if (!state.repo || state.root === undefined || state.changed.length === 0) return state;
+  const manifest = await loadManifest(packageDir);
+  if (manifest === null) return state;
+  // git reports real paths; compare against the real package directory
+  const base = await realpath(packageDir);
+  const expected = new Map<string, string>();
+  for (const e of manifest.entries) {
+    if (e.afterSha256 !== undefined) expected.set(resolve(base, e.file), e.afterSha256);
+  }
+  const root = state.root;
+  const kept: string[] = [];
+  for (const rel of state.changed) {
+    const abs = resolve(root, rel);
+    const want = expected.get(abs);
+    if (want === undefined || (await hashOf(abs)) !== want) kept.push(rel);
+  }
+  return { ...state, changed: kept };
+}
+
+async function hashOf(path: string): Promise<string | null> {
+  try {
+    return createHash('sha256')
+      .update(await readFile(path))
+      .digest('hex');
+  } catch {
+    return null;
+  }
 }
 
 export type GitCheck =

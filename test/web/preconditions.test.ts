@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -37,13 +37,21 @@ describe('parsePorcelainZ', () => {
 
 describe('probeGit', () => {
   it('asks git through the shared child runner (no shell) and parses the status', async () => {
-    const run = vi.fn(async (_cmd: string, args: readonly string[], _o: { cwd: string }) =>
-      args[0] === 'rev-parse' ? 'true\n' : ' M a.ts\0',
-    );
-    await expect(probeGit('/repo', run)).resolves.toEqual({ repo: true, changed: ['a.ts'] });
+    const run = vi.fn(async (_cmd: string, args: readonly string[], _o: { cwd: string }) => {
+      if (args[1] === '--is-inside-work-tree') return 'true\n';
+      if (args[1] === '--show-toplevel') return '/repo\n';
+      return ' M a.ts\0';
+    });
+    await expect(probeGit('/repo/sub', run)).resolves.toEqual({
+      repo: true,
+      changed: ['a.ts'],
+      root: '/repo',
+    });
     expect(run.mock.calls.map((c) => [c[0], c[1], c[2]])).toEqual([
-      ['git', ['rev-parse', '--is-inside-work-tree'], { cwd: '/repo' }],
-      ['git', ['status', '--porcelain=v1', '-z'], { cwd: '/repo' }],
+      ['git', ['rev-parse', '--is-inside-work-tree'], { cwd: '/repo/sub' }],
+      ['git', ['rev-parse', '--show-toplevel'], { cwd: '/repo/sub' }],
+      // -uall: every untracked file, never a collapsed `?? dir/`
+      ['git', ['status', '--porcelain=v1', '-z', '-uall'], { cwd: '/repo/sub' }],
     ]);
   });
   it('not a repository when rev-parse fails (or git is missing)', async () => {
@@ -71,8 +79,13 @@ describe('probeGit', () => {
     });
     it('reports untracked files in a fresh repository', async () => {
       execFileSync('git', ['init', '-q'], { cwd: dir });
+      await mkdir(join(dir, 'new', 'deep'), { recursive: true });
       await writeFile(join(dir, 'a b.txt'), 'x');
-      await expect(probeGit(dir)).resolves.toEqual({ repo: true, changed: ['a b.txt'] });
+      await writeFile(join(dir, 'new', 'deep', 'f.txt'), 'x');
+      const state = await probeGit(dir);
+      expect(state.repo).toBe(true);
+      expect([...state.changed].sort()).toEqual(['a b.txt', 'new/deep/f.txt']);
+      expect(state.root).toBe(await realpath(dir));
     });
   });
 });
