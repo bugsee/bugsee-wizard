@@ -59,7 +59,18 @@ export function installPackageStep(spec: Spec): Step<RecipeContext> {
         });
       } catch (err) {
         // leave nothing of the failed install in the repo
-        for (const [p, bytes] of snap) await restoreBytes(p, bytes);
+        const failures: string[] = [];
+        for (const [p, bytes] of snap) {
+          try {
+            await restoreBytes(p, bytes);
+          } catch (restoreErr) {
+            failures.push(`${p}: ${(restoreErr as Error).message}`);
+          }
+        }
+        // the install error stays primary; restore problems ride along
+        if (failures.length > 0 && err instanceof Error) {
+          err.message += `\n(also failed to restore: ${failures.join('; ')})`;
+        }
         throw err;
       }
       snapshot = snap;

@@ -59,14 +59,48 @@ describe('add-package-script op', () => {
     expect(await read()).toBe(PKG);
   });
 
-  it('skips chaining (with a note) when the chainInto script does not exist', async () => {
+  it('chainInto missing: a manual snippet (package.json still edited, rollback-covered), and re-runs keep reporting it', async () => {
     await write('{"name":"x"}\n');
     const ctx = makeCtx(tmp.dir);
     const step = opToStep(spec);
-    await step.apply(ctx);
+    const res = await step.apply(ctx);
     expect(await scripts()).toEqual({ 'bugsee:upload': 'bugsee-cli upload' });
-    expect(ctx.logs.join('\n')).toContain('No "build" script to chain into');
-    expect(await step.precheck(ctx)).toEqual({ kind: 'satisfied' });
+    expect(res?.applied).toBe(true);
+    expect(res?.manual?.file).toBe('package.json');
+    expect(res?.manual?.code).toContain('npm run bugsee:upload');
+    expect(res?.manual?.title).toContain('"build"');
+    // re-run: still pending, apply changes nothing but still reports the manual step
+    const ctx2 = makeCtx(tmp.dir);
+    expect(await opToStep(spec).precheck(ctx2)).toEqual({ kind: 'pending' });
+    const again = await opToStep(spec).apply(ctx2);
+    expect(again?.manual?.code).toContain('npm run bugsee:upload');
+    expect(again?.applied).toBeUndefined();
+    expect(ctx2.entries).toEqual([]);
+    await step.rollback(ctx);
+    expect(await read()).toBe('{"name":"x"}\n');
+  });
+
+  it('matches the chained command on a boundary (npm run up is not npm run upload)', async () => {
+    const mk = (build: string) => write(JSON.stringify({ scripts: { build, up: 'echo up' } }));
+    const up = {
+      op: 'add-package-script',
+      name: 'up',
+      command: 'echo up',
+      chainInto: 'build',
+    } as const;
+    await mk('vite build && npm run upload');
+    expect(await opToStep(up).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+    await opToStep(up).apply(makeCtx(tmp.dir));
+    expect((await scripts()).build).toBe('vite build && npm run upload && npm run up');
+    expect(await opToStep(up).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'satisfied' });
+    await mk('npm run up:fast');
+    expect(await opToStep(up).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+    await mk('npm run up');
+    expect(await opToStep(up).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'satisfied' });
+    await mk('pnpm run up');
+    expect(await opToStep(up).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+    await mk('a;npm run up;b');
+    expect(await opToStep(up).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'satisfied' });
   });
 
   it('without chainInto only adds the script', async () => {

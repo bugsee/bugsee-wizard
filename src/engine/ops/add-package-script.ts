@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { Step } from '../../core/step.js';
+import type { ManualSnippet, Step } from '../../core/step.js';
 import { readPackageJson } from '../package-json.js';
 import type { DetectedPackageManager } from '../package-manager.js';
 import type { OpSpec, RecipeContext } from '../recipe.js';
@@ -11,6 +11,15 @@ type Spec = Extract<OpSpec, { op: 'add-package-script' }>;
 export function runScriptCommand(pm: DetectedPackageManager | null, name: string): string {
   if (pm?.name === 'deno') return `deno task ${name}`;
   return `${pm?.name ?? 'npm'} run ${name}`;
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** True when `script` runs `command` as a whole command, not as a prefix of a longer one. */
+function includesCommand(script: string, command: string): boolean {
+  return new RegExp(`(?:^|[\\s&|;(])${escapeRe(command)}(?![\\w:.-])`).test(script);
 }
 
 function scriptsOf(data: Record<string, unknown>): Record<string, unknown> {
@@ -40,9 +49,13 @@ export function addPackageScriptStep(spec: Spec): Step<RecipeContext> {
       }
       if (existing === undefined) return { kind: 'pending' };
       const chained = spec.chainInto === undefined ? undefined : scripts[spec.chainInto];
+      // chain target missing, or not running us yet: stay pending (apply reports it)
       if (
-        typeof chained === 'string' &&
-        !chained.includes(runScriptCommand(ctx.packageManager, spec.name))
+        spec.chainInto !== undefined &&
+        !(
+          typeof chained === 'string' &&
+          includesCommand(chained, runScriptCommand(ctx.packageManager, spec.name))
+        )
       ) {
         return { kind: 'pending' };
       }
@@ -54,12 +67,17 @@ export function addPackageScriptStep(spec: Spec): Step<RecipeContext> {
       const pkg = await readPackageJson(path);
       const scripts = { ...scriptsOf(pkg.data) };
       scripts[spec.name] = spec.command;
+      let chainHint: ManualSnippet | undefined;
       if (spec.chainInto !== undefined) {
         const target = scripts[spec.chainInto];
         const run = runScriptCommand(ctx.packageManager, spec.name);
         if (typeof target !== 'string') {
-          ctx.log.info(`No "${spec.chainInto}" script to chain into; run "${run}" yourself`);
-        } else if (!target.includes(run)) {
+          chainHint = {
+            file: manifestPath(ctx, path),
+            title: `Run "${spec.name}" as part of your "${spec.chainInto}" script`,
+            code: `// package.json has no "${spec.chainInto}" script; chain this into the script that builds your app:\n${run}`,
+          };
+        } else if (!includesCommand(target, run)) {
           scripts[spec.chainInto] = `${target} && ${run}`;
         }
       }
@@ -73,6 +91,11 @@ export function addPackageScriptStep(spec: Spec): Step<RecipeContext> {
           after: after.toString('utf8'),
         });
       }
+      if (chainHint) {
+        // anything this run wrote stays rollback-covered even though a manual step remains
+        return { manual: chainHint, ...(after.equals(before as Buffer) ? {} : { applied: true }) };
+      }
+      return undefined;
     },
     async rollback(ctx) {
       if (before === undefined) return;

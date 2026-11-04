@@ -181,6 +181,29 @@ describe.skipIf(process.platform === 'win32')('install-package op', () => {
     expect([...(await readFile(join(project, 'bun.lockb')))]).toEqual([0, 255, 1, 254]);
   });
 
+  it('keeps the install error primary when restoring also fails, and still restores the rest', async () => {
+    process.env.FAKE_NPM_FAIL = '1';
+    // a directory where package.json should be makes restoring it fail (EISDIR)
+    const ctx = ctxFor();
+    const pkg = join(project, 'package.json');
+    const fs = await import('node:fs/promises');
+    const step = opToStep(spec);
+    // fake npm replaces package.json with a directory-hostile state: make the lockfile restorable
+    await fs.writeFile(
+      join(tmp.dir, 'bin', 'npm'),
+      `#!/bin/sh\nrm -f package.json; mkdir package.json; echo partial > package-lock.json; echo "ERR! boom" >&2; exit 1\n`,
+    );
+    const err = await step.apply(ctx).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(err?.message).toContain('boom');
+    expect(err?.message).toContain('also failed to restore');
+    expect(err?.message).toContain('package.json');
+    expect(await readFile(join(project, 'package-lock.json'), 'utf8')).toBe('lock v1\n');
+    expect((await fs.stat(pkg)).isDirectory()).toBe(true);
+  });
+
   it('rollback before apply is a no-op', async () => {
     await opToStep(spec).rollback(ctxFor());
     expect(await readFile(join(project, 'package.json'), 'utf8')).toBe('{"name":"x"}\n');
