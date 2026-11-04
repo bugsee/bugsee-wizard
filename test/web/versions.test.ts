@@ -62,6 +62,16 @@ describe('checkSupported', () => {
     );
   });
 
+  it('does not treat wildcard ranges (minimum 0.0.0) as too old', () => {
+    for (const range of ['*', '>=0', '', 'x', '>=0.0.0']) {
+      expect(checkSupported(det({ next: range, node: range })).warnings).toEqual([]);
+    }
+  });
+
+  it('still warns for a real range that starts at 0.x', () => {
+    expect(checkSupported(det({ esbuild: '^0.19.0' })).warnings).toHaveLength(1);
+  });
+
   it('ignores packages without a table entry', () => {
     expect(checkSupported(det({ react: '16.0.0' })).warnings).toEqual([]);
   });

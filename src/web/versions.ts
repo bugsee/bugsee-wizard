@@ -48,7 +48,9 @@ const DOCS = 'https://docs.bugsee.com/';
 /** Lowest version a range allows, or null when it is not a parseable range (catalog:, latest, ...). */
 function lowest(range: string): semver.SemVer | null {
   try {
-    return semver.minVersion(range);
+    const min = semver.minVersion(range);
+    // A wildcard (`*`, `>=0`, ...) bottoms out at 0.0.0: that is "any version", not "too old".
+    return min?.version === '0.0.0' ? null : min;
   } catch {
     return null;
   }
