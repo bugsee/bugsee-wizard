@@ -149,8 +149,42 @@ describe('detectJavaScript fixtures', () => {
     expect((await detectJavaScript(fx('electron-app')))?.runtimes).toEqual(['electron']);
   });
 
-  it('returns null for a directory with no package.json', async () => {
-    expect(await detectJavaScript(fx('non-js'))).toBeNull();
+  it('returns null for a directory with no package.json or deno.json anywhere up the tree', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'bugsee-js-nonjs-'));
+    try {
+      await writeFile(path.join(dir, 'requirements.txt'), 'flask\n');
+      expect(await detectJavaScript(dir)).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a deno.json-only project is a deno project with no node and no package.json', async () => {
+    const det = await detectJavaScript(fx('deno-only'));
+    expect(det).toMatchObject({
+      packageDir: fx('deno-only'),
+      packageManager: 'deno',
+      runtimes: ['deno'],
+      buildTool: 'cli',
+      typescript: true,
+      needsPackageChoice: false,
+      versions: {},
+    });
+    expect(det?.framework).toBeUndefined();
+    expect(det?.startedIn).toBeUndefined();
+  });
+
+  it('walks up from a subdirectory to the nearest package.json and reports startedIn', async () => {
+    const start = path.join(fx('pnpm-monorepo'), 'apps', 'web', 'src');
+    const det = await detectJavaScript(start);
+    expect(det?.packageDir).toBe(path.join(fx('pnpm-monorepo'), 'apps', 'web'));
+    expect(det?.startedIn).toBe(start);
+    expect(det?.buildTool).toBe('vite');
+    expect(det?.workspace?.root).toBe(fx('pnpm-monorepo'));
+  });
+
+  it('does not set startedIn when cwd itself is the project', async () => {
+    expect((await detectJavaScript(fx('vite-react-spa')))?.startedIn).toBeUndefined();
   });
 
   it('returns null for React Native (the RN recipe owns it)', async () => {
@@ -433,6 +467,101 @@ describe('detectJavaScript rules (synthetic projects)', () => {
       'wrangler.toml': '',
     });
     expect((await detectJavaScript(edge))?.runtimes).toEqual(['deno', 'edge']);
+  });
+
+  it('a tooling-only workspace root (vite, typescript, rollup, esbuild) is a package choice', async () => {
+    const dir = await project({
+      'package.json': {
+        name: 'root',
+        workspaces: ['apps/*', 'packages/*'],
+        devDependencies: { vite: '5.0.0', typescript: '5.5.0', rollup: '4.0.0', esbuild: '0.21.0' },
+      },
+      'apps/a/package.json': { name: 'a' },
+    });
+    const det = await detectJavaScript(dir);
+    expect(det?.needsPackageChoice).toBe(true);
+    expect(det?.buildTool).toBeUndefined();
+    expect(det?.workspace?.root).toBe(dir);
+  });
+
+  it('a workspace root with react in dependencies is an app', async () => {
+    const dir = await project({
+      'package.json': {
+        name: 'root',
+        workspaces: ['packages/*'],
+        dependencies: { react: '18.0.0' },
+        devDependencies: { vite: '5.0.0' },
+      },
+      'packages/a/package.json': { name: 'a' },
+    });
+    const det = await detectJavaScript(dir);
+    expect(det?.needsPackageChoice).toBe(false);
+    expect(det?.buildTool).toBe('vite');
+  });
+
+  it('a workspace root with a framework or server dep is an app', async () => {
+    for (const dep of ['next', 'express', 'electron']) {
+      const dir = await project({
+        'package.json': {
+          name: 'root',
+          workspaces: ['packages/*'],
+          devDependencies: { [dep]: '1.0.0' },
+        },
+        'packages/a/package.json': { name: 'a' },
+      });
+      expect((await detectJavaScript(dir))?.needsPackageChoice).toBe(false);
+    }
+  });
+
+  it('hoisted react in devDependencies makes the root an app only with an index.html entry', async () => {
+    const files = {
+      'package.json': {
+        name: 'root',
+        workspaces: ['packages/*'],
+        devDependencies: { react: '18.0.0' },
+      },
+      'packages/a/package.json': { name: 'a' },
+    };
+    const tooling = await project(files);
+    expect((await detectJavaScript(tooling))?.needsPackageChoice).toBe(true);
+    const app = await project({ ...files, 'index.html': '<html></html>' });
+    expect((await detectJavaScript(app))?.needsPackageChoice).toBe(false);
+    const srcApp = await project({ ...files, 'src/index.html': '<html></html>' });
+    expect((await detectJavaScript(srcApp))?.needsPackageChoice).toBe(false);
+  });
+
+  it('a deno.jsonc-only project works, and deno.json beside a package.json keeps node', async () => {
+    const only = await project({ 'deno.jsonc': '{}' });
+    expect((await detectJavaScript(only))?.runtimes).toEqual(['deno']);
+    const both = await project({ 'package.json': { name: 'x' }, 'deno.json': '{}' });
+    expect((await detectJavaScript(both))?.runtimes).toEqual(['node', 'deno']);
+  });
+
+  it('walks up at most 10 levels', async () => {
+    const dir = await project({ 'package.json': { name: 'x' } });
+    const deep = (n: number): string =>
+      path.join(dir, ...Array.from({ length: n }, (_, i) => `d${i}`));
+    await mkdir(deep(10), { recursive: true });
+    expect((await detectJavaScript(deep(10)))?.packageDir).toBe(dir);
+    await mkdir(deep(11), { recursive: true });
+    expect(await detectJavaScript(deep(11))).toBeNull();
+  });
+
+  it('stops at the first project: a malformed package.json is not skipped for a parent', async () => {
+    const dir = await project({
+      'package.json': { name: 'parent', dependencies: { express: '4.0.0' } },
+      'sub/package.json': '{ nope',
+    });
+    expect(await detectJavaScript(path.join(dir, 'sub'))).toBeNull();
+  });
+
+  it('stops at a react-native package instead of walking to a parent project', async () => {
+    const dir = await project({
+      'package.json': { name: 'parent' },
+      'rn/package.json': { name: 'rn', dependencies: { 'react-native': '0.74.0' } },
+      'rn/src/index.js': '',
+    });
+    expect(await detectJavaScript(path.join(dir, 'rn', 'src'))).toBeNull();
   });
 
   it('never executes or imports user files', async () => {

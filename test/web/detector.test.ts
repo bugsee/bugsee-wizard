@@ -1,3 +1,5 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,7 +49,12 @@ describe('javascriptDetector', () => {
   });
 
   it('is null for non-JS and for React Native, which the RN detector still owns', async () => {
-    expect(await javascriptDetector.detect({ cwd: fx('non-js') })).toBeNull();
+    const dir = await mkdtemp(path.join(tmpdir(), 'bugsee-js-nonjs-'));
+    try {
+      expect(await javascriptDetector.detect({ cwd: dir })).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
     expect(await javascriptDetector.detect({ cwd: fx('react-native-app') })).toBeNull();
     const rn = await reactNativeDetector.detect({ cwd: fx('react-native-app') });
     expect(rn?.kind).toBe('react-native');

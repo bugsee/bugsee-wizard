@@ -16,6 +16,8 @@ export interface JsDetection {
   versions: Record<string, string>;
   workspace?: { root: string; packages: { dir: string; name: string }[] };
   needsPackageChoice: boolean;
+  /** The directory detection was started in, set only when it walked up to `packageDir`. */
+  startedIn?: string;
 }
 
 export interface JsEvidence {
@@ -147,21 +149,29 @@ async function readManifest(dir: string): Promise<Record<string, unknown> | null
   }
 }
 
-function depNames(pkg: Record<string, unknown>): Set<string> {
+function depNames(pkg: Record<string, unknown>, fields: string[]): Set<string> {
   const out = new Set<string>();
-  for (const field of ['dependencies', 'devDependencies']) {
+  for (const field of fields) {
     const section = pkg[field];
     if (isRecord(section)) for (const k of Object.keys(section)) out.add(k);
   }
   return out;
 }
 
-function isAppLike(deps: Set<string>): boolean {
-  for (const d of deps) {
-    if (IDENTIFYING.has(d) && d !== 'typescript' && d !== 'vitest') return true;
+/**
+ * Whether a workspace root is itself an app (rather than a tooling-only shell around packages).
+ * Only a framework, a server library or Electron (in any dependency field) or a UI library in
+ * `dependencies` makes it one; bundlers, typescript and test tools never do. A UI library that is
+ * only in devDependencies (hoisted for the packages) counts only when the root has its own entry
+ * (an `index.html` at the root or in `src/`).
+ */
+function isAppLike(prod: Set<string>, all: Set<string>, hasEntry: boolean): boolean {
+  for (const d of all) {
     if (FRAMEWORKS.some((f) => f.match(d))) return true;
+    if (SERVER_DEPS.includes(d)) return true;
   }
-  return false;
+  if (UI_DEPS.some((d) => prod.has(d))) return true;
+  return hasEntry && UI_DEPS.some((d) => all.has(d));
 }
 
 function engineVersion(pkg: Record<string, unknown>, runtime: string): string | undefined {
@@ -170,12 +180,69 @@ function engineVersion(pkg: Record<string, unknown>, runtime: string): string | 
   return typeof v === 'string' ? v : undefined;
 }
 
+async function hasHtmlEntry(dir: string): Promise<boolean> {
+  return (
+    (await exists(path.join(dir, 'index.html'))) ||
+    (await exists(path.join(dir, 'src', 'index.html')))
+  );
+}
+
+const MAX_WALK = 10;
+
+/** Nearest directory at or above `cwd` (at most MAX_WALK levels up) holding a package.json or deno.json[c]. */
+async function findProjectDir(cwd: string): Promise<string | undefined> {
+  let current = cwd;
+  for (let i = 0; i <= MAX_WALK; i++) {
+    if (
+      (await exists(path.join(current, 'package.json'))) ||
+      (await firstExisting(current, ['deno.json', 'deno.jsonc']))
+    ) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+  return undefined;
+}
+
 export async function inspectJavaScript(
+  start: string,
+): Promise<{ detection: JsDetection; evidence: JsEvidence[] } | null> {
+  const cwd = await findProjectDir(start);
+  if (cwd === undefined) return null;
+  const found = await inspectProject(cwd);
+  if (found && cwd !== start) found.detection.startedIn = start;
+  return found;
+}
+
+async function inspectProject(
   cwd: string,
 ): Promise<{ detection: JsDetection; evidence: JsEvidence[] } | null> {
-  const pkg = await readManifest(cwd);
+  const hasPackageJson = await exists(path.join(cwd, 'package.json'));
+  const pkg = hasPackageJson ? await readManifest(cwd) : {};
   if (!pkg) return null;
-  const deps = depNames(pkg);
+  const denoConfig = await firstExisting(cwd, ['deno.json', 'deno.jsonc']);
+  if (!hasPackageJson && denoConfig !== undefined) {
+    // A Deno-only project: no manifest, no node.
+    const lock = await firstExisting(cwd, ['deno.lock']);
+    return {
+      detection: {
+        packageDir: cwd,
+        packageManager: 'deno',
+        runtimes: ['deno'],
+        buildTool: 'cli',
+        typescript: true,
+        versions: {},
+        needsPackageChoice: false,
+      },
+      evidence: [
+        { path: denoConfig, note: 'deno' },
+        ...(lock ? [{ path: lock, note: 'lockfile' }] : []),
+      ],
+    };
+  }
+  const deps = depNames(pkg, ['dependencies', 'devDependencies']);
   // A React Native project is owned by the React Native recipe.
   if (deps.has('react-native')) return null;
 
@@ -192,7 +259,12 @@ export async function inspectJavaScript(
   const typescript = deps.has('typescript') || hasTsconfig;
   if (hasTsconfig) evidence.push({ path: 'tsconfig.json' });
 
-  if (isRoot && workspace && workspace.packages.length > 0 && !isAppLike(deps)) {
+  if (
+    isRoot &&
+    workspace &&
+    workspace.packages.length > 0 &&
+    !isAppLike(depNames(pkg, ['dependencies']), deps, await hasHtmlEntry(cwd))
+  ) {
     evidence.push({
       path: 'package.json',
       note: `workspace root with ${workspace.packages.length} packages`,
@@ -239,9 +311,7 @@ export async function inspectJavaScript(
 
   // Runtimes.
   const runtimes = new Set<string>();
-  const hasHtml =
-    (await exists(path.join(cwd, 'index.html'))) ||
-    (await exists(path.join(cwd, 'src', 'index.html')));
+  const hasHtml = await hasHtmlEntry(cwd);
   const hasUi = UI_DEPS.some((d) => deps.has(d));
   const browser = hasUi || (bundler !== undefined && hasHtml);
   const edgeFile = await firstExisting(cwd, EDGE_CONFIGS);
