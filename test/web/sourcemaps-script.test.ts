@@ -157,6 +157,32 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
     expect((await calls())[0]?.args.at(-1)).toBe('./build');
   });
 
+  // Found by the e2e suite on the angular-spa sample: every Angular CLI project's tsconfig.json has
+  // "outDir": "./dist/out-tsc", which the application builder never writes (its output is
+  // dist/<app>/browser), so the upload chained into `ng build` silently skipped every time.
+  it('a tsconfig outDir that was never built falls back to an existing dist', async () => {
+    await out('dist/app/browser');
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      '{ "compilerOptions": { "outDir": "./dist/out-tsc" } }',
+    );
+    const r = run([], { BUGSEE_APP_TOKEN: 't' });
+    expect(r.status).toBe(0);
+    expect((await calls())[0]?.args.at(-1)).toBe('dist');
+  });
+
+  it('with neither the tsconfig outDir nor dist built it skips, naming both', async () => {
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      '{ "compilerOptions": { "outDir": "./build" } }',
+    );
+    const r = run([], { BUGSEE_APP_TOKEN: 't' });
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain('"./build"');
+    expect(r.stderr).toContain('"dist"');
+    expect(await calls()).toEqual([]);
+  });
+
   it('works in a project with no package.json (version falls back)', async () => {
     await out();
     await rm(join(root, 'project', 'package.json'));
