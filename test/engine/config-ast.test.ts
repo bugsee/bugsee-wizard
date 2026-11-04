@@ -70,6 +70,12 @@ describe('hasBugseeMarker', () => {
     expect(hasBugseeMarker('const bugsee-wizard = 1')).toBe(false);
     expect(hasBugseeMarker('')).toBe(false);
   });
+  it('requires the marker as a whole word', () => {
+    expect(hasBugseeMarker('// bugsee-wizard-foo')).toBe(false);
+    expect(hasBugseeMarker('// my-bugsee-wizard')).toBe(false);
+    expect(hasBugseeMarker('/* bugsee-wizardry */')).toBe(false);
+    expect(hasBugseeMarker('// see bugsee-wizard.')).toBe(true);
+  });
   it('detects a marker after a string containing comment-like text', () => {
     expect(hasBugseeMarker("const u = 'http://x'; // bugsee-wizard")).toBe(true);
   });
@@ -299,11 +305,61 @@ describe('addBundlerPlugin: idempotence and no-ops', () => {
     expect(first.code.split('@bugsee/vite-plugin').length - 1).toBe(1);
   });
 
-  it('is a no-op when the import already exists without the marker', () => {
-    const src = "import { x } from '@bugsee/vite-plugin';\nexport default {};\n";
+  it('is a no-op when the import AND the plugin call exist without the marker', () => {
+    const src =
+      "import { bugsee } from '@bugsee/vite-plugin';\nexport default { plugins: [bugsee({ a: 1 })] };\n";
     expect(addBundlerPlugin(src, 'vite', spec)).toEqual({ code: src });
-    const cjs = "const { x } = require('@bugsee/vite-plugin');\nmodule.exports = {};\n";
+    const cjs =
+      "const { bugsee } = require('@bugsee/vite-plugin');\nmodule.exports = { plugins: [bugsee()] };\n";
     expect(addBundlerPlugin(cjs, 'vite', spec)).toEqual({ code: cjs });
+  });
+
+  it('an unrelated import of the same package does not count as configured', () => {
+    expect(
+      addBundlerPlugin(
+        'import { other } from "@bugsee/vite-plugin";\nexport default { plugins: [] };\n',
+        'vite',
+        spec,
+      ),
+    ).toEqual({
+      code: `import { other } from "@bugsee/vite-plugin";\nimport { bugsee } from '@bugsee/vite-plugin'; ${MARK}\nexport default { plugins: [bugsee({ appToken: 'T' })] };\n`,
+    });
+    expect(
+      addBundlerPlugin(
+        "const { other } = require('@bugsee/vite-plugin');\nmodule.exports = { plugins: [] };\n",
+        'vite',
+        spec,
+      ),
+    ).toEqual({
+      code: `const { other } = require('@bugsee/vite-plugin');\nconst { bugsee } = require('@bugsee/vite-plugin'); ${MARK}\nmodule.exports = { plugins: [bugsee({ appToken: 'T' })] };\n`,
+    });
+  });
+
+  it('import bound but plugin call missing: only the call is added', () => {
+    expect(
+      addBundlerPlugin(
+        "import { bugsee } from '@bugsee/vite-plugin';\nexport default { plugins: [] };\n",
+        'vite',
+        spec,
+      ),
+    ).toEqual({
+      code: "import { bugsee } from '@bugsee/vite-plugin';\nexport default { plugins: [bugsee({ appToken: 'T' })] };\n",
+    });
+  });
+
+  it('call present but import missing: only the import is added', () => {
+    expect(addBundlerPlugin('export default { plugins: [bugsee()] };\n', 'vite', spec)).toEqual({
+      code: `import { bugsee } from '@bugsee/vite-plugin'; ${MARK}\nexport default { plugins: [bugsee()] };\n`,
+    });
+  });
+
+  it('a comment or string mentioning the package does not count', () => {
+    const src =
+      "// import { bugsee } from '@bugsee/vite-plugin'\nconst s = \"from '@bugsee/vite-plugin'\";\nexport default { plugins: [] };\n";
+    const r = addBundlerPlugin(src, 'vite', spec);
+    expect(r).toEqual({
+      code: `import { bugsee } from '@bugsee/vite-plugin'; ${MARK}\n// import { bugsee } from '@bugsee/vite-plugin'\nconst s = "from '@bugsee/vite-plugin'";\nexport default { plugins: [bugsee({ appToken: 'T' })] };\n`,
+    });
   });
 
   it('is a no-op when only the marker exists', () => {
@@ -395,6 +451,113 @@ describe('addBundlerPlugin: details', () => {
       'manual',
       expect.stringContaining('import { bugsee }'),
     );
+  });
+});
+
+describe('addBundlerPlugin: aliased bindings', () => {
+  it('an import that merely aliases another export to the same local name is not ours', () => {
+    const src =
+      "import { other as bugsee } from '@bugsee/vite-plugin';\nexport default { plugins: [bugsee()] };\n";
+    // not our binding, so the wizard must not claim success; a duplicate declaration cannot re-parse
+    expect(addBundlerPlugin(src, 'vite', spec)).toHaveProperty('manual');
+  });
+});
+
+describe('addBundlerPlugin: BOM, shebang, trailing comments', () => {
+  it('keeps a BOM (also with CRLF)', () => {
+    expect(
+      addBundlerPlugin(
+        '\uFEFFimport a from "a";\nexport default { plugins: [a()] };',
+        'vite',
+        spec,
+      ),
+    ).toEqual({
+      code: `\uFEFFimport a from "a";\nimport { bugsee } from '@bugsee/vite-plugin'; ${MARK}\nexport default { plugins: [a(), bugsee({ appToken: 'T' })] };`,
+    });
+    expect(
+      addBundlerPlugin(
+        '\uFEFFimport a from "a";\r\nexport default { plugins: [a()] };\r\n',
+        'vite',
+        spec,
+      ),
+    ).toEqual({
+      code: `\uFEFFimport a from "a";\r\nimport { bugsee } from '@bugsee/vite-plugin'; ${MARK}\r\nexport default { plugins: [a(), bugsee({ appToken: 'T' })] };\r\n`,
+    });
+  });
+
+  it('never inserts above a shebang line', () => {
+    expect(
+      addBundlerPlugin('#!/usr/bin/env node\nexport default { plugins: [] }', 'vite', spec),
+    ).toEqual({
+      code: `#!/usr/bin/env node\nimport { bugsee } from '@bugsee/vite-plugin'; ${MARK}\nexport default { plugins: [bugsee({ appToken: 'T' })] }`,
+    });
+    expect(
+      addBundlerPlugin(
+        '\uFEFF#!/usr/bin/env node\r\nmodule.exports = { plugins: [] };\r\n',
+        'webpack',
+        spec,
+      ),
+    ).toEqual({
+      code: `\uFEFF#!/usr/bin/env node\r\nconst { bugsee } = require('@bugsee/vite-plugin'); ${MARK}\r\nmodule.exports = { plugins: [bugsee({ appToken: 'T' })] };\r\n`,
+    });
+  });
+
+  it('a shebang-only file is left to the manual path', () => {
+    expect(addBundlerPlugin('#!/usr/bin/env node', 'vite', spec)).toHaveProperty('manual');
+  });
+
+  it('keeps a trailing comment on the import line and puts the new import on its own line', () => {
+    expect(
+      addBundlerPlugin(
+        'import a from "a"; // keep\nexport default { plugins: [a()] };\n',
+        'vite',
+        spec,
+      ),
+    ).toEqual({
+      code: `import a from "a"; // keep\nimport { bugsee } from '@bugsee/vite-plugin'; ${MARK}\nexport default { plugins: [a(), bugsee({ appToken: 'T' })] };\n`,
+    });
+    expect(
+      addBundlerPlugin(
+        'import a from "a"; /* k */\nexport default { plugins: [a()] };\n',
+        'vite',
+        spec,
+      ),
+    ).toEqual({
+      code: `import a from "a"; /* k */\nimport { bugsee } from '@bugsee/vite-plugin'; ${MARK}\nexport default { plugins: [a(), bugsee({ appToken: 'T' })] };\n`,
+    });
+    expect(
+      addBundlerPlugin("'use strict'; // d\nmodule.exports = { plugins: [] };\n", 'webpack', spec),
+    ).toEqual({
+      code: `'use strict'; // d\nconst { bugsee } = require('@bugsee/vite-plugin'); ${MARK}\nmodule.exports = { plugins: [bugsee({ appToken: 'T' })] };\n`,
+    });
+  });
+
+  it('does not split an import from following code on the same line', () => {
+    expect(
+      addBundlerPlugin('import a from "a"; export default { plugins: [] };\n', 'vite', spec),
+    ).toEqual({
+      code: `import a from "a";\nimport { bugsee } from '@bugsee/vite-plugin'; ${MARK} export default { plugins: [bugsee({ appToken: 'T' })] };\n`,
+    });
+  });
+
+  it('appends after the last element line, leaving its trailing comment alone', () => {
+    const imp = `import { bugsee } from '@bugsee/vite-plugin'; ${MARK}\n`;
+    expect(
+      addBundlerPlugin('export default {\n  plugins: [\n    a(), // x\n  ],\n};\n', 'vite', spec),
+    ).toEqual({
+      code: `${imp}export default {\n  plugins: [\n    a(), // x\n    bugsee({ appToken: 'T' }),\n  ],\n};\n`,
+    });
+    expect(
+      addBundlerPlugin('export default {\n  plugins: [\n    a() // x\n  ],\n};\n', 'vite', spec),
+    ).toEqual({
+      code: `${imp}export default {\n  plugins: [\n    a(), // x\n    bugsee({ appToken: 'T' })\n  ],\n};\n`,
+    });
+    expect(addBundlerPlugin('export default {\n  a: 1, // x\n};\n', 'vite', spec)).toEqual({
+      code: `${imp}export default {\n  a: 1, // x\n  plugins: [bugsee({ appToken: 'T' })],\n};\n`,
+    });
+    expect(addBundlerPlugin('export default {\n  a: 1 /* x */\n};\n', 'vite', spec)).toEqual({
+      code: `${imp}export default {\n  a: 1, /* x */\n  plugins: [bugsee({ appToken: 'T' })]\n};\n`,
+    });
   });
 });
 
