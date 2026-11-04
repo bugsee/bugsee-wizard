@@ -177,14 +177,58 @@ describe('injectLoaderStep', () => {
     });
   });
 
-  it('injects the Kotlin DSL loader before the plugins block', async () => {
+  it('injects the Kotlin DSL loader after the plugins block', async () => {
     const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin' });
     expect(await injectLoaderStep.precheck(ctx)).toEqual({ kind: 'pending' });
     await injectLoaderStep.apply(ctx);
     const updated = await readFixture(fixture, 'app/build.gradle.kts');
     expect(updated).toContain('val bugseeAppToken: String =');
-    expect(updated.indexOf('bugseeAppToken')).toBeLessThan(updated.indexOf('plugins {'));
+    expect(updated.indexOf('bugseeAppToken')).toBeGreaterThan(updated.indexOf('plugins {'));
+    // Kotlin `import`s must precede every statement, so the loader uses
+    // fully-qualified names and carries no import lines.
+    expect(updated).not.toMatch(/^import /m);
+    expect(updated).toContain('java.util.Properties()');
     expect(await injectLoaderStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+  });
+
+  it('Groovy: places the loader immediately after the plugins block', async () => {
+    const dir = await makeFixture({ 'app/build.gradle': SAMPLE_GROOVY_APP_BUILD });
+    const ctx = makeAndroidContext({ cwd: dir, dsl: 'groovy' });
+    const original = await readFixture(dir, 'app/build.gradle');
+    await injectLoaderStep.apply(ctx);
+    const updated = await readFixture(dir, 'app/build.gradle');
+    const pluginsEnd = updated.indexOf('}\n', updated.indexOf('plugins {')) + 2;
+    expect(updated.slice(0, pluginsEnd)).toBe(original.slice(0, pluginsEnd));
+    expect(updated.indexOf('def bugseeAppToken')).toBeGreaterThan(updated.indexOf('plugins {'));
+    expect(updated.slice(pluginsEnd).startsWith('// bugsee:wizard:loader:begin')).toBe(true);
+    expect(updated.indexOf('android {')).toBeGreaterThan(updated.indexOf('def bugseeAppToken'));
+    await injectLoaderStep.rollback(ctx);
+    expect(await readFixture(dir, 'app/build.gradle')).toBe(original);
+    await cleanup(dir);
+  });
+
+  it('without a plugins block, inserts at the file top (Groovy)', async () => {
+    const dir = await makeFixture({ 'app/build.gradle': SAMPLE_RN_APP_BUILD });
+    const ctx = makeAndroidContext({ cwd: dir, dsl: 'groovy', style: 'legacy-apply' });
+    await injectLoaderStep.apply(ctx);
+    const updated = await readFixture(dir, 'app/build.gradle');
+    expect(updated.startsWith('// bugsee:wizard:loader:begin')).toBe(true);
+    await cleanup(dir);
+  });
+
+  it('without a plugins block, keeps Kotlin imports above the loader', async () => {
+    const src = 'import java.io.File\nimport java.util.Date\n\napply(plugin = "x")\n';
+    const dir = await makeFixture({ 'app/build.gradle.kts': src });
+    const ctx = makeAndroidContext({ cwd: dir, dsl: 'kotlin', style: 'legacy-apply' });
+    await injectLoaderStep.apply(ctx);
+    const updated = await readFixture(dir, 'app/build.gradle.kts');
+    expect(updated.startsWith('import java.io.File\nimport java.util.Date\n')).toBe(true);
+    expect(updated.indexOf('bugseeAppToken')).toBeGreaterThan(
+      updated.indexOf('import java.util.Date'),
+    );
+    await injectLoaderStep.rollback(ctx);
+    expect(await readFixture(dir, 'app/build.gradle.kts')).toBe(src);
+    await cleanup(dir);
   });
 
   it('rolls back by stripping the loader marker block', async () => {

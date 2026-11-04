@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
 import { findBlock } from '../blocks.js';
-import { lineStartBefore, readOrNull, stripMarkerBlock } from '../io.js';
+import { readOrNull, stripMarkerBlock } from '../io.js';
 import {
   type AndroidContext,
   type GradleDsl,
@@ -18,12 +18,9 @@ const LOADER_SIGNATURE_GROOVY = /def\s+bugseeAppToken\s*=/;
 function loaderBlock(dsl: GradleDsl): string {
   if (dsl === 'kotlin') {
     return `${LOADER_MARKER_BEGIN}
-import java.io.FileInputStream
-import java.util.Properties
-
-val bugseeProps = Properties().apply {
+val bugseeProps = java.util.Properties().apply {
     val f = rootProject.file("${PROPERTIES_FILE_NAME}")
-    if (f.exists()) FileInputStream(f).use { load(it) }
+    if (f.exists()) java.io.FileInputStream(f).use { load(it) }
 }
 val bugseeAppToken: String = bugseeProps.getProperty("${TOKEN_PROPERTY_KEY}", "")
 ${LOADER_MARKER_END}
@@ -38,6 +35,23 @@ if (bugseePropsFile.exists()) {
 def bugseeAppToken = bugseeProps.getProperty('${TOKEN_PROPERTY_KEY}', '')
 ${LOADER_MARKER_END}
 `;
+}
+
+/**
+ * Where the loader goes. Gradle's Groovy DSL rejects any statement before
+ * a `plugins {}` block, so the loader lands on the line after its closing
+ * brace. With no `plugins {}` block (legacy `apply plugin:`), it goes at the
+ * top of the file — but below any leading `import` lines, which Kotlin
+ * scripts require before every other statement.
+ */
+function loaderInsertionPoint(source: string): number {
+  const plugins = findBlock(source, 'plugins');
+  if (plugins) {
+    const nl = source.indexOf('\n', plugins.closeBrace);
+    return nl === -1 ? source.length : nl + 1;
+  }
+  const header = /^(?:[ \t]*import\s[^\n]*\n|[ \t]*\n)*/.exec(source);
+  return header ? header[0].length : 0;
 }
 
 function isLoaderPresent(content: string, dsl: GradleDsl): boolean {
@@ -62,12 +76,11 @@ export const injectLoaderStep: Step<AndroidContext> = {
   async apply(ctx) {
     const original = (await readOrNull(ctx.androidPaths.appBuildGradle)) ?? '';
     const block = loaderBlock(ctx.androidPaths.appBuildGradleDsl);
-    // Insert at the start of the line that contains `plugins`. Falls back
-    // to file start when no plugins block is present. Anchoring at column
-    // zero keeps the rollback strip-regex symmetric with the apply.
-    const plugins = findBlock(original, 'plugins');
-    const insertAt = plugins ? lineStartBefore(original, plugins.start) : 0;
-    const updated = original.slice(0, insertAt) + block + original.slice(insertAt);
+    const insertAt = loaderInsertionPoint(original);
+    // A missing trailing newline after `plugins {}` (block is the last
+    // line) needs one so the loader starts on its own line.
+    const lead = insertAt > 0 && original[insertAt - 1] !== '\n' ? '\n' : '';
+    const updated = original.slice(0, insertAt) + lead + block + original.slice(insertAt);
     await writeFile(ctx.androidPaths.appBuildGradle, updated);
   },
 
