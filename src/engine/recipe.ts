@@ -56,7 +56,7 @@ type Obj = Record<string, unknown>;
 const KINDS = ['runtime', 'framework', 'buildtool'] as const;
 const TARGETS = ['vite', 'webpack', 'rollup', 'rspack'] as const;
 const PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i;
-const TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._^~<>=*-]*$/;
+const TAG_RE = /^\w[\w.-]*$/;
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/;
 const TOKEN_PLACEHOLDER = '{{token}}';
@@ -286,7 +286,7 @@ function checkDetect(c: Check, raw: unknown, path: string): DetectRule | undefin
     const dependency = c.string(raw, 'dependency', path);
     return dependency === undefined ? undefined : { dependency };
   }
-  const file = c.string(raw, 'file', path);
+  const file = c.relPath(raw, 'file', path);
   return file === undefined ? undefined : { file };
 }
 

@@ -6,7 +6,15 @@ export interface RunChildOptions {
   readonly cwd: string;
   /** Mirror the child's stdout to ours (debug mode). Otherwise it is discarded. */
   readonly forwardStdout: boolean;
+  /** Override the host platform (tests); defaults to `process.platform`. */
+  readonly platform?: NodeJS.Platform;
 }
+
+// On Windows the package managers are `.cmd` shims that cannot be spawned without a
+// shell (ENOENT, or EINVAL for `npm.cmd`). Only this closed set gets a shell, and
+// only with arguments that carry no cmd.exe metacharacters.
+const SHELL_COMMANDS: ReadonlySet<string> = new Set(['npm', 'yarn', 'pnpm', 'bun', 'deno']);
+const SAFE_SHELL_ARG = /^[\w@./:=+~-]+$/;
 
 /**
  * Run `cmd args…` to completion. Resolves on exit code 0; rejects with the
@@ -21,9 +29,18 @@ export async function runChild(
   args: readonly string[],
   options: RunChildOptions,
 ): Promise<void> {
+  const shell = (options.platform ?? process.platform) === 'win32' && SHELL_COMMANDS.has(cmd);
+  if (shell) {
+    for (const arg of args) {
+      if (!SAFE_SHELL_ARG.test(arg)) {
+        throw new Error(`Refusing to run ${cmd}: unsafe argument ${JSON.stringify(arg)}`);
+      }
+    }
+  }
   await new Promise<void>((resolve, reject) => {
     const child = spawn(cmd, [...args], {
       cwd: options.cwd,
+      shell,
       stdio: ['ignore', options.forwardStdout ? 'pipe' : 'ignore', 'pipe'],
     });
     // Rolling tail: only the last few lines are ever reported, so never hold

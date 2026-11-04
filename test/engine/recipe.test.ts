@@ -136,6 +136,25 @@ describe('parseRecipe', () => {
     ).toBe(4);
   });
 
+  it('detect[].file must be a safe relative path (same rule as the other file fields)', () => {
+    for (const bad of [
+      '/etc/passwd',
+      '../x',
+      'a/../../x',
+      'C:\\x',
+      'C:x',
+      '\\srv\\x',
+      'a\0b',
+      '.',
+    ]) {
+      expect(violations({ ...base(), detect: [{ file: bad }] }), bad).toHaveLength(1);
+    }
+    expect(violations({ ...base(), detect: [{ file: '../x' }] })[0]).toContain(
+      'recipe.detect[0].file',
+    );
+    expect(() => parseRecipe({ ...base(), detect: [{ file: 'a/b.config.ts' }] })).not.toThrow();
+  });
+
   it('rejects a non-array ops / non-object op / missing ops', () => {
     expect(violations({ ...base(), ops: 5 })).toEqual(['recipe.ops: must be an array']);
     expect(violations({ ...base(), ops: [5] })).toEqual(['recipe.ops[0]: must be an object']);
@@ -211,6 +230,32 @@ describe('parseRecipe', () => {
       'recipe.ops[0].tag: is not a valid version or dist-tag',
     ]);
     expect(violations(withOp(op({ tag: '' })))).toHaveLength(1);
+    for (const bad of [
+      '^1.0.0',
+      '~1.0.0',
+      '>=1',
+      '<2',
+      '*',
+      '1^2',
+      '1~2',
+      'a<b',
+      'a>b',
+      'a*',
+      'a=b',
+      '1 2',
+      'a&b',
+      'a|b',
+      'a;b',
+      '%x%',
+      'a"b',
+    ]) {
+      expect(violations(withOp(op({ tag: bad }))), bad).toEqual([
+        'recipe.ops[0].tag: is not a valid version or dist-tag',
+      ]);
+    }
+    for (const ok of ['beta', 'latest', '1.2.3', '1.2.3-beta.1', 'next_2']) {
+      expect(() => parseRecipe(withOp(op({ tag: ok }))), ok).not.toThrow();
+    }
     expect(violations(withOp(op({ dev: 'yes' })))).toEqual([
       'recipe.ops[0].dev: must be a boolean',
     ]);
