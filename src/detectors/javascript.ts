@@ -12,10 +12,19 @@ export const javascriptDetector: Detector = {
     const found = await inspectJavaScript(cwd);
     if (!found) return null;
     const { detection, evidence } = found;
+    // A project found by walking up from a subdirectory is never "high": it must not outrank a
+    // native detector (or an explicit choice) just because a parent directory has a package.json.
+    const walkedUp = detection.startedIn !== undefined;
+    if (walkedUp) {
+      evidence.push({
+        path: detection.packageDir,
+        note: 'project found above the current directory',
+      });
+    }
     const identified = detection.framework !== undefined || detection.buildTool !== 'cli';
     return {
       kind: 'javascript',
-      confidence: identified && !detection.needsPackageChoice ? 'high' : 'medium',
+      confidence: identified && !detection.needsPackageChoice && !walkedUp ? 'high' : 'medium',
       evidence,
     };
   },

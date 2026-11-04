@@ -1,4 +1,5 @@
-import { access } from 'node:fs/promises';
+import { access, readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { findConfigFile } from '../engine/config-ast.js';
@@ -189,27 +190,73 @@ async function hasHtmlEntry(dir: string): Promise<boolean> {
 
 const MAX_WALK = 10;
 
-/** Nearest directory at or above `cwd` (at most MAX_WALK levels up) holding a package.json or deno.json[c]. */
-async function findProjectDir(cwd: string): Promise<string | undefined> {
+/** Files/directories that mark a native or other-language project: detection never walks up from these. */
+const NATIVE_MARKER_SUFFIXES = ['.xcodeproj', '.xcworkspace'];
+const NATIVE_MARKER_FILES = [
+  'build.gradle',
+  'build.gradle.kts',
+  'settings.gradle',
+  'settings.gradle.kts',
+  'Podfile',
+  'pubspec.yaml',
+  'Cargo.toml',
+  'go.mod',
+  'pyproject.toml',
+  'requirements.txt',
+];
+
+async function hasNativeMarker(dir: string): Promise<boolean> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return false;
+  }
+  return entries.some(
+    (e) => NATIVE_MARKER_FILES.includes(e) || NATIVE_MARKER_SUFFIXES.some((x) => e.endsWith(x)),
+  );
+}
+
+/** Seams for the environment probes (home directory, git root) so tests need not touch the real ones. */
+export interface DetectOptions {
+  homeDir?: string;
+  hasGit?: (dir: string) => Promise<boolean>;
+}
+
+async function hasProjectFile(dir: string): Promise<boolean> {
+  return (
+    (await exists(path.join(dir, 'package.json'))) ||
+    (await firstExisting(dir, ['deno.json', 'deno.jsonc'])) !== undefined
+  );
+}
+
+/**
+ * The project directory for `cwd`. `cwd` itself wins. Otherwise detection walks up at most
+ * MAX_WALK levels, but never from a native/other-language directory, never past a `.git`
+ * directory (that directory is examined, then the walk stops), and never accepting the home
+ * directory or the filesystem root (the walk ends there).
+ */
+async function findProjectDir(cwd: string, options: DetectOptions): Promise<string | undefined> {
+  if (await hasProjectFile(cwd)) return cwd;
+  if (await hasNativeMarker(cwd)) return undefined;
+  const home = options.homeDir ?? homedir();
+  const hasGit = options.hasGit ?? ((d: string) => exists(path.join(d, '.git')));
   let current = cwd;
-  for (let i = 0; i <= MAX_WALK; i++) {
-    if (
-      (await exists(path.join(current, 'package.json'))) ||
-      (await firstExisting(current, ['deno.json', 'deno.jsonc']))
-    ) {
-      return current;
-    }
+  for (let i = 0; i < MAX_WALK; i++) {
+    if (await hasGit(current)) return undefined;
     const parent = path.dirname(current);
-    if (parent === current) return undefined;
+    if (parent === current || parent === home) return undefined;
     current = parent;
+    if (await hasProjectFile(current)) return current;
   }
   return undefined;
 }
 
 export async function inspectJavaScript(
   start: string,
+  options: DetectOptions = {},
 ): Promise<{ detection: JsDetection; evidence: JsEvidence[] } | null> {
-  const cwd = await findProjectDir(start);
+  const cwd = await findProjectDir(start, options);
   if (cwd === undefined) return null;
   const found = await inspectProject(cwd);
   if (found && cwd !== start) found.detection.startedIn = start;
@@ -373,6 +420,9 @@ async function inspectProject(
   return { detection, evidence };
 }
 
-export async function detectJavaScript(cwd: string): Promise<JsDetection | null> {
-  return (await inspectJavaScript(cwd))?.detection ?? null;
+export async function detectJavaScript(
+  cwd: string,
+  options: DetectOptions = {},
+): Promise<JsDetection | null> {
+  return (await inspectJavaScript(cwd, options))?.detection ?? null;
 }

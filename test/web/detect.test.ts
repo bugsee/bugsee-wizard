@@ -149,6 +149,10 @@ describe('detectJavaScript fixtures', () => {
     expect((await detectJavaScript(fx('electron-app')))?.runtimes).toEqual(['electron']);
   });
 
+  it('returns null for the non-js fixture (requirements.txt: no walk-up into the repo package.json)', async () => {
+    expect(await detectJavaScript(fx('non-js'))).toBeNull();
+  });
+
   it('returns null for a directory with no package.json or deno.json anywhere up the tree', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'bugsee-js-nonjs-'));
     try {
@@ -562,6 +566,80 @@ describe('detectJavaScript rules (synthetic projects)', () => {
       'rn/src/index.js': '',
     });
     expect(await detectJavaScript(path.join(dir, 'rn', 'src'))).toBeNull();
+  });
+
+  it.each([
+    ['MinimalApp.xcodeproj/project.pbxproj'],
+    ['App.xcworkspace/contents.xcworkspacedata'],
+    ['build.gradle'],
+    ['build.gradle.kts'],
+    ['settings.gradle'],
+    ['settings.gradle.kts'],
+    ['Podfile'],
+    ['pubspec.yaml'],
+    ['Cargo.toml'],
+    ['go.mod'],
+    ['pyproject.toml'],
+    ['requirements.txt'],
+  ])(
+    'does not walk up from a directory holding native/other-language marker %s',
+    async (marker) => {
+      const dir = await project({
+        'package.json': { name: 'parent', devDependencies: { vite: '5.0.0' } },
+        [`app/${marker}`]: '',
+      });
+      expect(await detectJavaScript(path.join(dir, 'app'))).toBeNull();
+    },
+  );
+
+  it('still detects a project that holds its own package.json beside a native marker', async () => {
+    const dir = await project({ 'package.json': { name: 'x' }, Podfile: '' });
+    expect((await detectJavaScript(dir))?.packageDir).toBe(dir);
+  });
+
+  it('stops at the git root: a package.json above it is ignored', async () => {
+    const dir = await project({
+      'package.json': { name: 'outer' },
+      'repo/.git/HEAD': 'ref: refs/heads/main',
+      'repo/sub/deep/file.txt': '',
+    });
+    expect(await detectJavaScript(path.join(dir, 'repo', 'sub', 'deep'))).toBeNull();
+  });
+
+  it('examines the directory that holds .git before stopping', async () => {
+    const dir = await project({
+      'repo/.git/HEAD': 'x',
+      'repo/package.json': { name: 'root' },
+      'repo/sub/file.txt': '',
+    });
+    const det = await detectJavaScript(path.join(dir, 'repo', 'sub'));
+    expect(det?.packageDir).toBe(path.join(dir, 'repo'));
+  });
+
+  it('the git probe is injectable', async () => {
+    const dir = await project({ 'package.json': { name: 'outer' }, 'a/b/file.txt': '' });
+    const start = path.join(dir, 'a', 'b');
+    expect(
+      await detectJavaScript(start, { hasGit: async (d) => d === path.join(dir, 'a') }),
+    ).toBeNull();
+    expect((await detectJavaScript(start, { hasGit: async () => false }))?.packageDir).toBe(dir);
+  });
+
+  it('never accepts the home directory (or anything above it) as the package dir when walking up', async () => {
+    const dir = await project({
+      'home/package.json': { name: 'home-pkg' },
+      'home/proj/src/file.txt': '',
+      'package.json': { name: 'above-home' },
+    });
+    const home = path.join(dir, 'home');
+    expect(await detectJavaScript(path.join(home, 'proj', 'src'), { homeDir: home })).toBeNull();
+    // cwd itself being a project is always fine, even when it is the home directory
+    expect((await detectJavaScript(home, { homeDir: home }))?.packageDir).toBe(home);
+    // without the injection the home package is a normal walk-up target
+    expect(
+      (await detectJavaScript(path.join(home, 'proj', 'src'), { homeDir: '/nonexistent' }))
+        ?.packageDir,
+    ).toBe(home);
   });
 
   it('never executes or imports user files', async () => {
