@@ -5,11 +5,19 @@ name: E2E
 # real builds and the real bugsee-cli. Uploads go to a local mock collector, never to Bugsee.
 on:
   workflow_dispatch:
+  schedule:
+    # the suite tracks the floating npm `beta` tag and the public registry: catch upstream breakage
+    - cron: '17 5 * * 1'
   pull_request:
     paths:
       - 'src/**'
       - 'snapshot/**'
+      - 'scripts/**'
       - 'e2e/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsup.config.ts'
+      - 'vitest.e2e.config.ts'
       - '.github/workflows/e2e.yml'
 
 permissions:

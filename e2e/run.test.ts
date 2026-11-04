@@ -10,7 +10,7 @@
 //                        --yes -p @bugsee/cli bugsee-cli`)
 //   BUGSEE_JS_REPO, BUGSEE_JS_REF, BUGSEE_SDK_VERSION, BUGSEE_E2E_WORKDIR: see fixtures.mjs
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -92,7 +92,14 @@ function exec(
 
 /** The parent's env minus anything that would steer the wizard or the uploads from outside. */
 function childEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: '1', NG_CLI_ANALYTICS: 'false' };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    NO_COLOR: '1',
+    NG_CLI_ANALYTICS: 'false',
+    // pnpm 11 holds back (and, when verifying a lockfile, rejects) versions published < 1 day ago;
+    // the suite installs the live `beta` tag, which is often that new
+    pnpm_config_minimum_release_age: '0',
+  };
   for (const k of Object.keys(env)) {
     if (k.startsWith('BUGSEE_WIZARD_') || k === 'BUGSEE_APP_TOKEN' || k === 'BUGSEE_ENDPOINT') {
       delete env[k];
@@ -434,11 +441,21 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       for (const s of res.steps) expect(s.outcome).not.toBe('skipped');
       expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
       expect(await git(dir, ['diff', 'HEAD'])).toBe('');
+      // git does not show ignored files (and honours a global excludes file): check them directly
+      for (const f of ['.env.bugsee-build-plugin', '.bugsee', 'scripts/bugsee-sourcemaps.mjs']) {
+        expect(existsSync(path.join(dir, f)), `${f} left behind`).toBe(false);
+      }
     });
   });
 }
 
-describe.runIf(selected.includes(UNAPPROVED))(UNAPPROVED, () => {
+// the known bug is pnpm 11's: pnpm 10 only warns about unapproved install scripts, so there the
+// install succeeds and the pair below would check nothing
+const pnpmMajor = Number(
+  spawnSync('pnpm', ['--version'], { encoding: 'utf8' }).stdout.split('.')[0],
+);
+
+describe.runIf(selected.includes(UNAPPROVED) && pnpmMajor >= 11)(UNAPPROVED, () => {
   let dir: string;
   beforeAll(() => {
     dir = prepareFixture('node-service', fresh(UNAPPROVED), { approveBuilds: false });
@@ -456,7 +473,7 @@ describe.runIf(selected.includes(UNAPPROVED))(UNAPPROVED, () => {
   it('a failed install leaves the tree exactly as it was', async () => {
     const r = await wizard(dir, ['--non-interactive', '--json', '--token', TOKEN]);
     const res = parseResult(r);
-    if (res.ok) return; // the known bug above is fixed: nothing to check here
+    if (res.ok) return; // the known bug above is fixed: nothing to check here (the it.fails above is then red)
     expect(res.steps).toEqual([{ id: 'install-package:@bugsee/cli', outcome: 'failed' }]);
     expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
     expect(await git(dir, ['diff', 'HEAD'])).toBe('');

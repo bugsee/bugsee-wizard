@@ -335,8 +335,11 @@ export function prepareFixture(name, dest, { log = () => {}, approveBuilds = tru
   }
 
   log(`pnpm install (@bugsee/* ${version})`);
+  // minimumReleaseAge=0: pnpm 11 holds back versions published < 1 day ago, and the exact pin to the
+  // live `beta` tag would otherwise be unsatisfiable for a day after every release
   run('pnpm', ['install', '--no-frozen-lockfile'], {
     cwd: dest,
+    env: { ...process.env, pnpm_config_minimum_release_age: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,
   });

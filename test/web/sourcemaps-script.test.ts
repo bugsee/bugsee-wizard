@@ -190,4 +190,106 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
     expect(r.status).toBe(0);
     expect((await calls())[1]?.args).toContain('0.0.0');
   });
+
+  it('an argument that looks like a flag is not a directory (build flags pnpm/npm append reach the chained script)', async () => {
+    await out();
+    const r = run(['--configuration', 'staging'], { BUGSEE_APP_TOKEN: 't' });
+    expect(r.status).toBe(0);
+    expect((await calls())[0]?.args.at(-1)).toBe('dist');
+  });
+
+  it('precedence: argument > BUGSEE_SOURCEMAPS_DIR > tsconfig outDir > dist, existing directories only', async () => {
+    await out('dist');
+    await out('build');
+    await out('lib');
+    await out('arg');
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      '{"compilerOptions":{"outDir":"build"}}',
+    );
+    const dir = async (args: string[], env: Record<string, string>) => {
+      await rm(join(root, 'log'), { force: true });
+      run(args, { BUGSEE_APP_TOKEN: 't', ...env });
+      return (await calls())[0]?.args.at(-1);
+    };
+    expect(await dir(['arg'], { BUGSEE_SOURCEMAPS_DIR: 'lib' })).toBe('arg');
+    expect(await dir([], { BUGSEE_SOURCEMAPS_DIR: 'lib' })).toBe('lib');
+    expect(await dir([], {})).toBe('build'); // outDir beats dist when both exist
+    await rm(join(root, 'project', 'build'), { recursive: true });
+    expect(await dir([], {})).toBe('dist'); // outDir never built: fall back to dist
+  });
+
+  it('reads a tsconfig the way tsc does: $schema URL, block and line comments, trailing commas', async () => {
+    await out('build');
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      `{
+  "$schema": "https://json.schemastore.org/tsconfig", /* block
+  comment */
+  "compilerOptions": {
+    "outDir": "build", // trailing comment
+    "paths": { "@/*": ["src/*",], },
+  },
+}`,
+    );
+    run([], { BUGSEE_APP_TOKEN: 't' });
+    expect((await calls())[0]?.args.at(-1)).toBe('build');
+  });
+
+  it('version and build number: environment overrides, then the git commit count, then 1', async () => {
+    await out();
+    const version = async (env: Record<string, string>) => {
+      await rm(join(root, 'log'), { force: true });
+      run([], { BUGSEE_APP_TOKEN: 't', ...env });
+      const a = (await calls())[1]?.args ?? [];
+      return [a[a.indexOf('--version') + 1], a[a.indexOf('--build') + 1]];
+    };
+    expect(await version({ BUGSEE_APP_VERSION: '9.9.9', GITHUB_RUN_NUMBER: '12' })).toEqual([
+      '9.9.9',
+      '12',
+    ]);
+    expect(await version({ BUILD_NUMBER: '34' })).toEqual(['2.3.4', '34']);
+    expect(await version({ BUGSEE_BUILD: '5', GITHUB_RUN_NUMBER: '12' })).toEqual(['2.3.4', '5']);
+    spawnSync('git', ['init', '-q'], { cwd: join(root, 'project') });
+    spawnSync(
+      'git',
+      ['-c', 'user.email=a@b.c', '-c', 'user.name=n', 'commit', '-q', '--allow-empty', '-m', 'x'],
+      { cwd: join(root, 'project') },
+    );
+    expect(await version({})).toEqual(['2.3.4', '1']);
+    spawnSync(
+      'git',
+      ['-c', 'user.email=a@b.c', '-c', 'user.name=n', 'commit', '-q', '--allow-empty', '-m', 'y'],
+      { cwd: join(root, 'project') },
+    );
+    expect(await version({})).toEqual(['2.3.4', '2']);
+  });
+
+  it('npx missing is a failure, not a silent pass', async () => {
+    await out();
+    const r = spawnSync(process.execPath, ['scripts/bugsee-sourcemaps.mjs'], {
+      cwd: join(root, 'project'),
+      encoding: 'utf8',
+      env: { PATH: '/nonexistent', BUGSEE_APP_TOKEN: 't' },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/could not run bugsee-cli/);
+  });
+
+  it('env file: the first BUGSEE_APP_TOKEN line wins (as the wizard reads it) and quoted escapes are undone', async () => {
+    await out();
+    await writeFile(
+      join(root, 'project', '.env.bugsee-build-plugin'),
+      'BUGSEE_APP_TOKEN=first\nBUGSEE_APP_TOKEN=second\n',
+    );
+    run();
+    expect((await calls())[0]?.token).toBe('first');
+    await rm(join(root, 'log'));
+    await writeFile(
+      join(root, 'project', '.env.bugsee-build-plugin'),
+      'BUGSEE_APP_TOKEN="a\\"b\\\\c"\n',
+    );
+    run();
+    expect((await calls())[0]?.token).toBe('a"b\\c');
+  });
 });
