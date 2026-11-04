@@ -1,5 +1,3 @@
-import { chmod } from 'node:fs/promises';
-import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { runAndroidRecipe, runAndroidRollback } from '../../src/recipes/android/run.js';
@@ -21,6 +19,20 @@ import {
   SAMPLE_KOTLIN_SETTINGS_NO_MAVEN,
   SAMPLE_MANIFEST,
 } from './helpers.js';
+
+const failWrites = vi.hoisted(() => ({ suffix: null as string | null }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    writeFile: (async (file: Parameters<typeof actual.writeFile>[0], ...rest: unknown[]) => {
+      if (failWrites.suffix && String(file).endsWith(failWrites.suffix)) {
+        throw new Error('EACCES: simulated write failure');
+      }
+      return (actual.writeFile as (...a: unknown[]) => Promise<void>)(file, ...rest);
+    }) as typeof actual.writeFile,
+  };
+});
 
 vi.mock('@clack/prompts', () => ({
   log: {
@@ -146,11 +158,14 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
     });
     const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin' });
     await injectLoaderStep.apply(ctx);
-    // Read-only build script: the loader rollback's writeFile throws.
-    await chmod(path.join(fixture, 'app/build.gradle.kts'), 0o444);
-    const ran = await runAndroidRollback({ cwd: fixture, debug: false, dryRun: false });
-    await chmod(path.join(fixture, 'app/build.gradle.kts'), 0o644);
-    expect(ran).toBe('failed');
+    // The loader rollback's writeFile throws (mocked; independent of file modes/root).
+    failWrites.suffix = 'app/build.gradle.kts';
+    try {
+      const ran = await runAndroidRollback({ cwd: fixture, debug: false, dryRun: false });
+      expect(ran).toBe('failed');
+    } finally {
+      failWrites.suffix = null;
+    }
   });
 });
 

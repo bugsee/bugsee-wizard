@@ -56,7 +56,7 @@ export const applyPluginStep: Step<AndroidContext> = {
     }
     if (PLUGIN_PRESENT_RE.test(content)) return { kind: 'satisfied' };
     if (ctx.androidPaths.appBuildScriptStyle === 'plugins-dsl') {
-      const plugins = findBlock(content, 'plugins');
+      const plugins = findBlock(content, 'plugins', { topLevel: true });
       if (!plugins) {
         return {
           kind: 'blocked',
@@ -71,7 +71,7 @@ export const applyPluginStep: Step<AndroidContext> = {
     const original = (await readOrNull(ctx.androidPaths.appBuildGradle)) ?? '';
     let updated: string;
     if (ctx.androidPaths.appBuildScriptStyle === 'plugins-dsl') {
-      const plugins = findBlock(original, 'plugins');
+      const plugins = findBlock(original, 'plugins', { topLevel: true });
       if (!plugins) throw new Error('No plugins {} block found in app build script');
       const insertAt = plugins.bodyEnd;
       updated =

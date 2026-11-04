@@ -11,6 +11,51 @@ export interface BlockSpan {
   readonly bodyEnd: number;
 }
 
+/**
+ * Copy of `source` with comments and string literals blanked out (same
+ * length; newlines kept) so brace/keyword scanning can't be fooled by them.
+ * Handles `//`, `/* *\/`, '…', "…", and triple-quoted strings.
+ */
+export function maskCommentsAndStrings(source: string): string {
+  const out = source.split('');
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) if (out[k] !== '\n' && out[k] !== '\r') out[k] = ' ';
+  };
+  let i = 0;
+  while (i < source.length) {
+    const two = source.slice(i, i + 2);
+    const three = source.slice(i, i + 3);
+    if (two === '//') {
+      let end = source.indexOf('\n', i);
+      if (end === -1) end = source.length;
+      blank(i, end);
+      i = end;
+    } else if (two === '/*') {
+      const close = source.indexOf('*/', i + 2);
+      const end = close === -1 ? source.length : close + 2;
+      blank(i, end);
+      i = end;
+    } else if (three === '"""' || three === "'''") {
+      const close = source.indexOf(three, i + 3);
+      const end = close === -1 ? source.length : close + 3;
+      blank(i, end);
+      i = end;
+    } else if (source[i] === '"' || source[i] === "'") {
+      const quote = source[i];
+      let j = i + 1;
+      while (j < source.length && source[j] !== quote && source[j] !== '\n') {
+        j += source[j] === '\\' ? 2 : 1;
+      }
+      const end = Math.min(source.length, j + 1);
+      blank(i, end);
+      i = end;
+    } else {
+      i++;
+    }
+  }
+  return out.join('');
+}
+
 export function findMatchingBrace(s: string, openIdx: number): number | null {
   if (s[openIdx] !== '{') return null;
   let depth = 1;
@@ -28,18 +73,34 @@ export function findMatchingBrace(s: string, openIdx: number): number | null {
 /**
  * Locate a top-level Gradle DSL block by name.
  *
- * Naive — assumes braces in strings/comments don't appear. Good enough for
- * settings.gradle and build.gradle files where this assumption holds.
+ * Comments and string literals are ignored (matching runs on a masked copy),
+ * so a `plugins {` or a stray brace inside them is never picked up. With
+ * `topLevel`, only a block at brace depth 0 matches (use for blocks Gradle
+ * defines at script level, e.g. `plugins`).
  *
  * Searches for `<blockName>(...optional args...) {` followed by balanced braces.
  */
-export function findBlock(source: string, blockName: string): BlockSpan | null {
+export function findBlock(
+  source: string,
+  blockName: string,
+  options: { readonly topLevel?: boolean } = {},
+): BlockSpan | null {
+  const masked = maskCommentsAndStrings(source);
   const re = new RegExp(`(?<![\\w.])${escapeRegex(blockName)}\\s*(?:\\([^)]*\\)\\s*)?\\{`, 'g');
-  for (const match of source.matchAll(re)) {
+  let depth = 0;
+  let scanned = 0;
+  for (const match of masked.matchAll(re)) {
     const matchStart = match.index;
     if (matchStart === undefined) continue;
+    if (options.topLevel) {
+      for (; scanned < matchStart; scanned++) {
+        if (masked[scanned] === '{') depth++;
+        else if (masked[scanned] === '}') depth--;
+      }
+      if (depth !== 0) continue;
+    }
     const openBrace = matchStart + match[0].length - 1;
-    const closeBrace = findMatchingBrace(source, openBrace);
+    const closeBrace = findMatchingBrace(masked, openBrace);
     if (closeBrace === null) continue;
     return {
       start: matchStart,

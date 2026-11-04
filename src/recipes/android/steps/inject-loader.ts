@@ -45,13 +45,17 @@ ${LOADER_MARKER_END}
  * scripts require before every other statement.
  */
 function loaderInsertionPoint(source: string): number {
-  const plugins = findBlock(source, 'plugins');
+  const plugins = findBlock(source, 'plugins', { topLevel: true });
   if (plugins) {
     const nl = source.indexOf('\n', plugins.closeBrace);
     return nl === -1 ? source.length : nl + 1;
   }
   const header = /^(?:[ \t]*import\s[^\n]*\n|[ \t]*\n)*/.exec(source);
   return header ? header[0].length : 0;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function isLoaderPresent(content: string, dsl: GradleDsl): boolean {
@@ -75,11 +79,18 @@ export const injectLoaderStep: Step<AndroidContext> = {
 
   async apply(ctx) {
     const original = (await readOrNull(ctx.androidPaths.appBuildGradle)) ?? '';
-    const block = loaderBlock(ctx.androidPaths.appBuildGradleDsl);
+    // Match the file's line endings so a CRLF build script stays uniformly CRLF.
+    const eol = original.includes('\r\n') ? '\r\n' : '\n';
+    let block = loaderBlock(ctx.androidPaths.appBuildGradleDsl).replaceAll('\n', eol);
     const insertAt = loaderInsertionPoint(original);
-    // A missing trailing newline after `plugins {}` (block is the last
-    // line) needs one so the loader starts on its own line.
-    const lead = insertAt > 0 && original[insertAt - 1] !== '\n' ? '\n' : '';
+    // No trailing newline after `plugins {}` (it is the last line): separate
+    // the loader with one and omit the block's own final newline, so rollback
+    // (which strips this tail form whole) restores the file byte-for-byte.
+    let lead = '';
+    if (insertAt > 0 && original[insertAt - 1] !== '\n') {
+      lead = eol;
+      block = block.slice(0, -eol.length);
+    }
     const updated = original.slice(0, insertAt) + lead + block + original.slice(insertAt);
     await writeFile(ctx.androidPaths.appBuildGradle, updated);
   },
@@ -87,7 +98,14 @@ export const injectLoaderStep: Step<AndroidContext> = {
   async rollback(ctx) {
     const content = await readOrNull(ctx.androidPaths.appBuildGradle);
     if (content === null) return;
-    const stripped = stripMarkerBlock(content, LOADER_MARKER_BEGIN, LOADER_MARKER_END);
+    // Tail form written by apply() for a file with no trailing newline:
+    // `<eol>BEGIN…END` at EOF. Remove the separator with it.
+    const tail = new RegExp(
+      `\\r?\\n[ \\t]*${escapeRegex(LOADER_MARKER_BEGIN)}[\\s\\S]*?${escapeRegex(LOADER_MARKER_END)}$`,
+    );
+    const stripped = tail.test(content)
+      ? content.replace(tail, '')
+      : stripMarkerBlock(content, LOADER_MARKER_BEGIN, LOADER_MARKER_END);
     if (stripped !== content) {
       await writeFile(ctx.androidPaths.appBuildGradle, stripped);
     }

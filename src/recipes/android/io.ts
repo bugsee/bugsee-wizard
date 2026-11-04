@@ -41,7 +41,7 @@ export async function writeIfChanged(p: string, contents: string): Promise<boole
  */
 export function stripMarkerBlock(source: string, beginMarker: string, endMarker: string): string {
   const re = new RegExp(
-    `[ \\t]*${escapeRegex(beginMarker)}[\\s\\S]*?${escapeRegex(endMarker)}[ \\t]*\\n?`,
+    `[ \\t]*${escapeRegex(beginMarker)}[\\s\\S]*?${escapeRegex(endMarker)}[ \\t]*\\r?\\n?`,
     'g',
   );
   return source.replace(re, '');

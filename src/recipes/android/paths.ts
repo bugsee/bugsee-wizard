@@ -38,7 +38,7 @@ async function pickDsl(
  * RN-flavoured projects don't get a wrong-shape edit.
  */
 function detectBuildScriptStyle(content: string): BuildScriptStyle {
-  return findBlock(content, 'plugins') ? 'plugins-dsl' : 'legacy-apply';
+  return findBlock(content, 'plugins', { topLevel: true }) ? 'plugins-dsl' : 'legacy-apply';
 }
 
 export async function discoverAndroidPaths(cwd: string): Promise<AndroidPaths> {

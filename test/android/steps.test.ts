@@ -175,6 +175,21 @@ describe('writeBugseePropertiesStep — differing stored token', () => {
   });
 });
 
+describe('writeBugseePropertiesStep — CRLF', () => {
+  it('preserves the CRLF ending of the replaced line and uses CRLF when appending', async () => {
+    fixture = await makeFixture({ 'bugsee.properties': 'a=1\r\napp_token=old\r\nb=2\r\n' });
+    const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'new' } });
+    await writeBugseePropertiesStep.apply(ctx);
+    expect(await readFixture(fixture, 'bugsee.properties')).toBe('a=1\r\napp_token=new\r\nb=2\r\n');
+    await cleanup(fixture);
+    fixture = await makeFixture({ 'bugsee.properties': 'a=1\r\nb=2' });
+    await writeBugseePropertiesStep.apply(
+      makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'n' } }),
+    );
+    expect(await readFixture(fixture, 'bugsee.properties')).toBe('a=1\r\nb=2\r\napp_token=n\r\n');
+  });
+});
+
 describe('ensureGitignoredStep', () => {
   beforeEach(async () => {
     fixture = await makeFixture({});
@@ -293,6 +308,125 @@ describe('injectLoaderStep', () => {
     expect(updated).toContain('def bugseeAppToken =');
     expect(await injectLoaderStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
     await cleanup(dir);
+  });
+});
+
+describe('injectLoaderStep — placement edge cases (Groovy)', () => {
+  const BEGIN = '// bugsee:wizard:loader:begin';
+  const GROOVY_LOADER = (eol: string) =>
+    [
+      BEGIN,
+      'def bugseeProps = new Properties()',
+      "def bugseePropsFile = rootProject.file('bugsee.properties')",
+      'if (bugseePropsFile.exists()) {',
+      '    bugseePropsFile.withInputStream { bugseeProps.load(it) }',
+      '}',
+      "def bugseeAppToken = bugseeProps.getProperty('app_token', '')",
+      '// bugsee:wizard:loader:end',
+      '',
+    ].join(eol);
+
+  async function run(src: string): Promise<{ out: string; restored: string }> {
+    const dir = await makeFixture({ 'app/build.gradle': src });
+    try {
+      const ctx = makeAndroidContext({ cwd: dir, dsl: 'groovy' });
+      await injectLoaderStep.apply(ctx);
+      const out = await readFixture(dir, 'app/build.gradle');
+      await injectLoaderStep.rollback(ctx);
+      return { out, restored: await readFixture(dir, 'app/build.gradle') };
+    } finally {
+      await cleanup(dir);
+    }
+  }
+
+  it('ignores `plugins {` in a line comment before the real block', async () => {
+    const src = "// plugins { not real }\nplugins {\n    id 'a'\n}\nandroid {}\n";
+    const { out, restored } = await run(src);
+    expect(out).toBe(
+      `// plugins { not real }\nplugins {\n    id 'a'\n}\n${GROOVY_LOADER('\n')}android {}\n`,
+    );
+    expect(restored).toBe(src);
+  });
+
+  it('ignores `plugins {` in a block comment before the real block', async () => {
+    const src = "/* plugins {\n  x\n} */\nplugins {\n    id 'a'\n}\nandroid {}\n";
+    const { out } = await run(src);
+    expect(out).toBe(
+      `/* plugins {\n  x\n} */\nplugins {\n    id 'a'\n}\n${GROOVY_LOADER('\n')}android {}\n`,
+    );
+  });
+
+  it('ignores `plugins {` inside a string', async () => {
+    const src = 'def s = "plugins { x"\nplugins {\n    id \'a\'\n}\nandroid {}\n';
+    const { out } = await run(src);
+    expect(out).toBe(
+      `def s = "plugins { x"\nplugins {\n    id 'a'\n}\n${GROOVY_LOADER('\n')}android {}\n`,
+    );
+  });
+
+  it('is not confused by braces inside strings/comments within the block', async () => {
+    const src = 'plugins {\n    // }\n    id \'a\' // {\n    id "}"\n}\nandroid {}\n';
+    const { out } = await run(src);
+    expect(out.startsWith(`plugins {\n    // }\n    id 'a' // {\n    id "}"\n}\n${BEGIN}`)).toBe(
+      true,
+    );
+    expect(out.endsWith('android {}\n')).toBe(true);
+  });
+
+  it('handles a one-line plugins block', async () => {
+    const src = "plugins { id 'x' }\nandroid {}\n";
+    const { out } = await run(src);
+    expect(out).toBe(`plugins { id 'x' }\n${GROOVY_LOADER('\n')}android {}\n`);
+  });
+
+  it('puts the loader after plugins when buildscript {} comes first', async () => {
+    const src =
+      "buildscript {\n    repositories { mavenCentral() }\n}\nplugins {\n    id 'a'\n}\nandroid {}\n";
+    const { out } = await run(src);
+    expect(out).toBe(
+      `buildscript {\n    repositories { mavenCentral() }\n}\nplugins {\n    id 'a'\n}\n${GROOVY_LOADER('\n')}android {}\n`,
+    );
+  });
+
+  it('handles nested braces inside plugins', async () => {
+    const src =
+      "plugins {\n    id 'a' apply(false)\n    alias(libs.plugins.x)\n    foo { bar { baz } }\n}\nandroid {}\n";
+    const { out } = await run(src);
+    expect(out).toBe(
+      `plugins {\n    id 'a' apply(false)\n    alias(libs.plugins.x)\n    foo { bar { baz } }\n}\n${GROOVY_LOADER('\n')}android {}\n`,
+    );
+  });
+
+  it('only matches a top-level plugins block, not a nested one', async () => {
+    const src =
+      "subprojects {\n    plugins {\n        id 'n'\n    }\n}\nplugins {\n    id 'a'\n}\nandroid {}\n";
+    const { out } = await run(src);
+    expect(out).toBe(
+      `subprojects {\n    plugins {\n        id 'n'\n    }\n}\nplugins {\n    id 'a'\n}\n${GROOVY_LOADER('\n')}android {}\n`,
+    );
+  });
+
+  it('keeps CRLF endings (whole result) and rolls back byte-exact', async () => {
+    const src = "plugins {\r\n    id 'a'\r\n}\r\nandroid {}\r\n";
+    const { out, restored } = await run(src);
+    expect(out).toBe(`plugins {\r\n    id 'a'\r\n}\r\n${GROOVY_LOADER('\r\n')}android {}\r\n`);
+    expect(restored).toBe(src);
+  });
+
+  it('plugins block as the last line without a trailing newline: rollback is byte-exact', async () => {
+    for (const src of ["plugins { id 'a' }", "plugins { id 'a' }\r\n".slice(0, -2)]) {
+      const { out, restored } = await run(src);
+      expect(out.startsWith(`${src}\n${BEGIN}`)).toBe(true);
+      expect(out.endsWith('loader:end')).toBe(true);
+      expect(restored).toBe(src);
+    }
+  });
+
+  it('CRLF file without a trailing newline uses CRLF for the separator', async () => {
+    const src = "a\r\nplugins { id 'a' }";
+    const { out, restored } = await run(src);
+    expect(out.startsWith(`a\r\nplugins { id 'a' }\r\n${BEGIN}\r\n`)).toBe(true);
+    expect(restored).toBe(src);
   });
 });
 

@@ -51,15 +51,17 @@ export const writeBugseePropertiesStep: Step<AndroidContext> = {
         if (!TOKEN_LINE_RE.test(line)) {
           lines.push(line);
         } else if (!replaced) {
-          lines.push(`${TOKEN_PROPERTY_KEY}=${token}`);
+          // Keep the line's own ending (a CRLF file stays CRLF).
+          lines.push(`${TOKEN_PROPERTY_KEY}=${token}${line.endsWith('\r') ? '\r' : ''}`);
           replaced = true;
         }
       }
       await writeFile(ctx.androidPaths.bugseeProperties, lines.join('\n'));
       return;
     }
-    const sep = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-    const updated = `${existing}${sep}${TOKEN_PROPERTY_KEY}=${token}\n`;
+    const eol = existing.includes('\r\n') ? '\r\n' : '\n';
+    const sep = existing.length > 0 && !existing.endsWith('\n') ? eol : '';
+    const updated = `${existing}${sep}${TOKEN_PROPERTY_KEY}=${token}${eol}`;
     await writeFile(ctx.androidPaths.bugseeProperties, updated);
   },
 
