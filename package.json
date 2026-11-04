@@ -17,7 +17,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "snapshot"
   ],
   "scripts": {
     "build": "tsup",
@@ -41,6 +42,7 @@
     "magicast": "^0.5.5",
     "open": "^11.0.4",
     "picocolors": "^1.1.1",
+    "semver": "^7.8.6",
     "xcode": "^4.0.0",
     "yaml": "^2.9.1"
   },
@@ -50,7 +52,6 @@
     "@types/semver": "^7.8.0",
     "@types/xcode": "^3.0.0",
     "@vitest/coverage-v8": "^5.1.0",
-    "semver": "^7.8.6",
     "tsup": "^9.0.0",
     "typescript": "^6.0.3",
     "vitest": "^5.1.0"
