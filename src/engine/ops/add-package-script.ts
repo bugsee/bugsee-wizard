@@ -34,7 +34,7 @@ export function addPackageScriptStep(spec: Spec): Step<RecipeContext> {
   const pkgPath = (ctx: RecipeContext): string => join(ctx.packageDir, 'package.json');
   return {
     id: `add-package-script:${spec.name}`,
-    title: `Add the "${spec.name}" script to package.json`,
+    title: `Add the "${spec.name}" script to package.json${spec.chainInto === undefined ? '' : ` and run it after "${spec.chainInto}"`}`,
     async precheck(ctx) {
       if ((await readBytes(pkgPath(ctx))) === null) {
         return { kind: 'blocked', reason: 'package.json not found' };

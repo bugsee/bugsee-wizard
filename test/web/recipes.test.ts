@@ -163,6 +163,7 @@ const CASES: Case[] = [
     'bugseeRollupPlugin',
     'rollup.config.mjs',
   ),
+  cliCase('cli', 'angular-spa', 'npm', 'package.json', false),
   cliCase('tsc', 'tsc-node', 'npm', 'tsconfig.json', true),
   cliCase('esbuild', 'esbuild-node', 'npm', 'package.json', false),
   cliCase('rspack', 'rspack-app', 'pnpm', 'package.json', false),

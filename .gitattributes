@@ -1,0 +1,2 @@
+snapshot/** text eol=lf
+snapshot/**/*.json text eol=lf

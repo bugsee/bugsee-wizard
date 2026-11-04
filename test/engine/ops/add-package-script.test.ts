@@ -40,6 +40,12 @@ describe('add-package-script op', () => {
     expect(step.title).toContain('bugsee:upload');
   });
 
+  it('the plan discloses that the script is chained into build; no chain, no mention', () => {
+    expect(opToStep(spec).title).toContain('run it after "build"');
+    const { chainInto: _drop, ...plain } = spec as typeof spec & { chainInto?: string };
+    expect(opToStep(plain).title).not.toContain('build');
+  });
+
   it('adds the script and chains it into build; preserves format; rollback restores exact bytes', async () => {
     await write(PKG);
     const ctx = makeCtx(tmp.dir, { packageManager: { ...npmAt(tmp.dir), name: 'pnpm' } });

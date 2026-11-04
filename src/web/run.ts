@@ -196,6 +196,7 @@ export async function runJavaScriptInstall(
 
   const recipe: Recipe = { ...resolved.recipe, ops: [...resolved.recipe.ops, IGNORE_MANIFEST_DIR] };
   log.info(planText(recipe));
+  if (recipe.notes !== undefined) log.info(`Notes:\n${recipe.notes}`);
   if (!opts.nonInteractive && !opts.yes && !opts.dryRun) {
     if (!(await deps.prompts.confirm('Apply these changes?'))) throw new CancelledError();
   }

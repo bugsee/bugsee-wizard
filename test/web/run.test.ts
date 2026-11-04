@@ -397,6 +397,30 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptInstall', () => {
       expect(cap.lines).toContain('Using the bundled offline recipe r1.');
     });
 
+    it("shows the recipe's notes to the user, before the plan is applied", async () => {
+      const cap = captureOutput();
+      const resolveRecipe = vi.fn(async () => ({
+        recipe: {
+          ...(await import('./run-helpers.js')).VITE_RECIPE,
+          notes: 'Export BUGSEE_APP_TOKEN in CI.',
+        },
+        revision: 'r1',
+        source: 'snapshot' as const,
+      }));
+      await runJavaScriptInstall(baseOpts(sb.project), makeDeps(cap, { resolveRecipe }));
+      const text = cap.lines.join('\n');
+      expect(text).toContain('Export BUGSEE_APP_TOKEN in CI.');
+      expect(text.indexOf('Export BUGSEE_APP_TOKEN in CI.')).toBeGreaterThan(
+        text.indexOf('Planned changes:'),
+      );
+    });
+
+    it('prints no notes section for a recipe without notes', async () => {
+      const cap = captureOutput();
+      await runJavaScriptInstall(baseOpts(sb.project), makeDeps(cap));
+      expect(cap.lines.join('\n')).not.toMatch(/^Notes/m);
+    });
+
     it('an offline registry resolves recipes for the fallback SDK version', async () => {
       const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('offline'));
       const deps = makeDeps(captureOutput(), {
