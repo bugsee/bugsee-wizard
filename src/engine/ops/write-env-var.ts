@@ -4,13 +4,13 @@ import { basename, join } from 'node:path';
 import type { Step } from '../../core/step.js';
 import { setEnvVar } from '../env-file.js';
 import type { OpSpec, RecipeContext } from '../recipe.js';
-import { manifestPath, readBytes, resolveInside, restoreBytes, text } from './shared.js';
+import { manifestPath, readBytes, resolveInside, restoreBytes } from './shared.js';
 
 type Spec = Extract<OpSpec, { op: 'write-env-var' }>;
 
 /**
  * The token is a secret: it is never placed in a title, log line, snippet, error
- * or manifest entry. The manifest records the file's prior text only (no `after`).
+ * or manifest entry. The manifest records neither the file's text nor the value.
  */
 export function writeEnvVarStep(spec: Spec): Step<RecipeContext> {
   let before: Buffer | null | undefined;
@@ -21,7 +21,7 @@ export function writeEnvVarStep(spec: Spec): Step<RecipeContext> {
       if (ctx.token === '') return { kind: 'blocked', reason: 'No Bugsee token is available' };
       let path: string;
       try {
-        path = resolveInside(ctx.packageDir, spec.file);
+        path = await resolveInside(ctx.packageDir, spec.file);
       } catch (err) {
         return { kind: 'blocked', reason: (err as Error).message };
       }
@@ -39,7 +39,7 @@ export function writeEnvVarStep(spec: Spec): Step<RecipeContext> {
       }
     },
     async apply(ctx) {
-      const path = resolveInside(ctx.packageDir, spec.file);
+      const path = await resolveInside(ctx.packageDir, spec.file);
       before = await readBytes(path);
       const outcome = await setEnvVar(path, spec.key, ctx.token);
       if (outcome === 'conflict') {
@@ -54,17 +54,18 @@ export function writeEnvVarStep(spec: Spec): Step<RecipeContext> {
         };
       }
       if (outcome === 'present') return undefined;
-      const prior = text(before);
       ctx.manifest.record({
         file: manifestPath(ctx, path),
         action: before === null ? 'created' : 'edited',
-        ...(prior !== undefined ? { before: prior } : {}),
+        // no before/after: the file may hold unrelated secrets. The marker lets
+        // uninstall remove just this variable's line.
+        marker: `env:${spec.key}`,
       });
       return undefined;
     },
     async rollback(ctx) {
       if (before === undefined) return;
-      await restoreBytes(resolveInside(ctx.packageDir, spec.file), before);
+      await restoreBytes(await resolveInside(ctx.packageDir, spec.file), before);
     },
   };
 }

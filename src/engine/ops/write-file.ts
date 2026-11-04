@@ -17,7 +17,7 @@ export function writeFileStep(spec: Spec): Step<RecipeContext> {
       }
       let path: string;
       try {
-        path = resolveInside(ctx.packageDir, spec.path);
+        path = await resolveInside(ctx.packageDir, spec.path);
       } catch (err) {
         return { kind: 'blocked', reason: (err as Error).message };
       }
@@ -27,9 +27,14 @@ export function writeFileStep(spec: Spec): Step<RecipeContext> {
       return { kind: 'blocked', reason: `${spec.path} already exists with different content` };
     },
     async apply(ctx) {
-      const path = resolveInside(ctx.packageDir, spec.path);
+      const path = await resolveInside(ctx.packageDir, spec.path);
       const topDir = await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, spec.template, { encoding: 'utf8', flag: 'wx' });
+      try {
+        await writeFile(path, spec.template, { encoding: 'utf8', flag: 'wx' });
+      } catch (err) {
+        await removeCreatedDirs(path, topDir);
+        throw err;
+      }
       created = { path, topDir };
       ctx.manifest.record({
         file: manifestPath(ctx, path),
@@ -42,15 +47,20 @@ export function writeFileStep(spec: Spec): Step<RecipeContext> {
       const { path, topDir } = created;
       await rm(path, { force: true });
       if (topDir === undefined) return;
-      // remove only the directories this step created, innermost first, and only when empty
-      for (let dir = dirname(path); ; dir = dirname(dir)) {
-        try {
-          await rmdir(dir);
-        } catch {
-          return;
-        }
-        if (dir === topDir) return;
-      }
+      await removeCreatedDirs(path, topDir);
     },
   };
+}
+
+/** Remove only the directories this step created, innermost first, and only when empty. */
+async function removeCreatedDirs(path: string, topDir: string | undefined): Promise<void> {
+  if (topDir === undefined) return;
+  for (let dir = dirname(path); ; dir = dirname(dir)) {
+    try {
+      await rmdir(dir);
+    } catch {
+      return;
+    }
+    if (dir === topDir) return;
+  }
 }

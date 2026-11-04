@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { opToStep } from '../../../src/engine/ops/index.js';
@@ -88,5 +88,19 @@ describe('set-json-key op', () => {
     await writeFile(join(tmp.dir, 'tsconfig.json'), ORIGINAL);
     await opToStep(spec).rollback(makeCtx(tmp.dir));
     expect(await readFile(join(tmp.dir, 'tsconfig.json'), 'utf8')).toBe(ORIGINAL);
+  });
+
+  describe.skipIf(process.platform === 'win32')('symlink containment', () => {
+    it('a symlinked json file pointing outside is blocked and never written', async () => {
+      const outside = join(tmp.dir, 'outside.json');
+      await writeFile(outside, '{}');
+      const pkg = join(tmp.dir, 'pkg');
+      await mkdir(pkg);
+      await symlink(outside, join(pkg, 'tsconfig.json'));
+      const ctx = makeCtx(pkg);
+      expect(await opToStep(spec).precheck(ctx)).toMatchObject({ kind: 'blocked' });
+      await expect(opToStep(spec).apply(ctx)).rejects.toThrow(/symlink/);
+      expect(await readFile(outside, 'utf8')).toBe('{}');
+    });
   });
 });

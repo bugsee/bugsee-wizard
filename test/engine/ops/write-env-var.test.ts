@@ -1,4 +1,4 @@
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { opToStep } from '../../../src/engine/ops/index.js';
@@ -34,7 +34,7 @@ describe('write-env-var op', () => {
     expect(res).toBeUndefined();
     expect(await readFile(join(tmp.dir, FILE), 'utf8')).toContain('BUGSEE_TOKEN=tok_SECRET_123');
     expect((await stat(join(tmp.dir, FILE))).mode & 0o777).toBe(0o600);
-    expect(ctx.entries).toEqual([{ file: FILE, action: 'created' }]);
+    expect(ctx.entries).toEqual([{ file: FILE, action: 'created', marker: 'env:BUGSEE_TOKEN' }]);
     expect(JSON.stringify(ctx.entries) + ctx.logs.join('\n')).not.toContain('tok_SECRET');
     expect(await step.precheck(ctx)).toEqual({ kind: 'satisfied' });
     await step.rollback(ctx);
@@ -48,7 +48,9 @@ describe('write-env-var op', () => {
     const step = opToStep(spec);
     await step.apply(ctx);
     expect(await readFile(join(tmp.dir, FILE), 'utf8')).toContain('BUGSEE_TOKEN=tok_SECRET_123');
-    expect(ctx.entries).toEqual([{ file: FILE, action: 'edited', before: original }]);
+    expect(ctx.entries).toEqual([{ file: FILE, action: 'edited', marker: 'env:BUGSEE_TOKEN' }]);
+    // the pre-existing contents (possibly unrelated secrets) never reach the manifest
+    expect(JSON.stringify(ctx.entries)).not.toContain(original);
     await step.rollback(ctx);
     expect(await readFile(join(tmp.dir, FILE), 'utf8')).toBe(original);
   });
@@ -98,5 +100,30 @@ describe('write-env-var op', () => {
     await writeFile(join(tmp.dir, FILE), 'A=1\n');
     await opToStep(spec).rollback(makeCtx(tmp.dir));
     expect(await readFile(join(tmp.dir, FILE), 'utf8')).toBe('A=1\n');
+  });
+
+  describe.skipIf(process.platform === 'win32')('symlink containment', () => {
+    it('a symlinked env file pointing outside is blocked and the target is never written', async () => {
+      const outside = join(tmp.dir, 'zshrc');
+      await writeFile(outside, 'export A=1\n');
+      const pkg = join(tmp.dir, 'pkg');
+      await mkdir(pkg);
+      await symlink(outside, join(pkg, FILE));
+      const ctx = makeCtx(pkg);
+      const step = opToStep(spec);
+      const status = await step.precheck(ctx);
+      expect(status).toMatchObject({ kind: 'blocked' });
+      expect(status.kind === 'blocked' && status.reason).toContain('symlink');
+      await expect(step.apply(ctx)).rejects.toThrow(/symlink/);
+      expect(await readFile(outside, 'utf8')).toBe('export A=1\n');
+    });
+
+    it('a symlink that stays inside the package dir is fine', async () => {
+      await writeFile(join(tmp.dir, 'real.env'), '');
+      await symlink(join(tmp.dir, 'real.env'), join(tmp.dir, FILE));
+      const ctx = makeCtx(tmp.dir);
+      await opToStep(spec).apply(ctx);
+      expect(await readFile(join(tmp.dir, 'real.env'), 'utf8')).toContain('BUGSEE_TOKEN=');
+    });
   });
 });

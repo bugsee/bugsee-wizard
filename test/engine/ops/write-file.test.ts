@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { opToStep } from '../../../src/engine/ops/index.js';
@@ -107,5 +107,20 @@ describe('write-file op', () => {
     expect(await readFile(join(tmp.dir, 'f.txt'), 'utf8')).toBe('old');
     await step.rollback(ctx);
     expect(await readFile(join(tmp.dir, 'f.txt'), 'utf8')).toBe('old');
+  });
+
+  describe.skipIf(process.platform === 'win32')('symlink containment', () => {
+    it('a symlinked directory pointing outside is blocked; nothing is created outside', async () => {
+      const outside = join(tmp.dir, 'out');
+      await mkdir(outside);
+      const pkg = join(tmp.dir, 'pkg');
+      await mkdir(pkg);
+      await symlink(outside, join(pkg, 'config'));
+      const ctx = makeCtx(pkg);
+      const step = opToStep(spec);
+      expect(await step.precheck(ctx)).toMatchObject({ kind: 'blocked' });
+      await expect(step.apply(ctx)).rejects.toThrow(/symlink/);
+      expect(await exists(join(outside, 'deep'))).toBe(false);
+    });
   });
 });

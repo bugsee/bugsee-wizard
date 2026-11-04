@@ -20,7 +20,7 @@ export function setJsonKeyStep(spec: Spec): Step<RecipeContext> {
     async precheck(ctx) {
       let path: string;
       try {
-        path = resolveInside(ctx.packageDir, spec.file);
+        path = await resolveInside(ctx.packageDir, spec.file);
       } catch (err) {
         return { kind: 'blocked', reason: (err as Error).message };
       }
@@ -32,7 +32,7 @@ export function setJsonKeyStep(spec: Spec): Step<RecipeContext> {
         : { kind: 'pending' };
     },
     async apply(ctx) {
-      const path = resolveInside(ctx.packageDir, spec.file);
+      const path = await resolveInside(ctx.packageDir, spec.file);
       const file = manifestPath(ctx, path);
       const current = await readBytes(path);
       if (current === null) {
@@ -60,7 +60,7 @@ export function setJsonKeyStep(spec: Spec): Step<RecipeContext> {
     },
     async rollback(ctx) {
       if (before === undefined) return;
-      await restoreBytes(resolveInside(ctx.packageDir, spec.file), before);
+      await restoreBytes(await resolveInside(ctx.packageDir, spec.file), before);
     },
   };
 }
