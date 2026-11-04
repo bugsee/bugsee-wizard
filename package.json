@@ -37,7 +37,7 @@
     "commander": "^15.0.0",
     "detect-indent": "^7.0.1",
     "fast-glob": "^3.3.2",
-    "magicast": "^0.3.5",
+    "magicast": "^0.5.5",
     "open": "^10.1.0",
     "picocolors": "^1.1.1",
     "xcode": "^3.0.1",
