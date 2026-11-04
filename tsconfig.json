@@ -19,5 +19,5 @@
     "noEmit": true
   },
   "include": ["src/**/*", "test/**/*", "vitest.config.ts", "tsup.config.ts"],
-  "exclude": ["test/fixtures/configs"]
+  "exclude": ["test/fixtures/configs", "test/fixtures/js"]
 }

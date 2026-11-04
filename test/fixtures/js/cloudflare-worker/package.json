@@ -1,0 +1,17 @@
+{
+  "name": "cloudflare-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "hono": "^4.5.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.2024.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^3.70.0"
+  }
+}

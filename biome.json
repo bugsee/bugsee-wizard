@@ -13,7 +13,8 @@
       "!**/coverage",
       "!**/*.md",
       "!**/*.yml",
-      "!**/test/fixtures/configs"
+      "!**/test/fixtures/configs",
+      "!**/test/fixtures/js"
     ]
   },
   "formatter": {
