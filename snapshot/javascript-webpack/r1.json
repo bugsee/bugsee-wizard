@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "id": "javascript-webpack",
+  "kind": "buildtool",
+  "platform": "javascript-webpack",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Bundler-plugin route: bugseeWebpackPlugin from @bugsee/webpack-plugin injects debug ids and uploads source maps at build time. Source maps must be enabled (devtool: 'source-map'); the wizard only reports that switch, it never edits it. The plugin reads the app token from BUGSEE_APP_TOKEN. Reading .env.bugsee-build-plugin itself only lands with JS issue #182: until then, export BUGSEE_APP_TOKEN in CI (and locally to upload from a local build).",
+  "detect": [
+    {
+      "dependency": "webpack"
+    }
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/webpack-plugin"],
+      "dev": true,
+      "tag": "beta"
+    },
+    {
+      "op": "add-bundler-plugin",
+      "target": "webpack",
+      "importFrom": "@bugsee/webpack-plugin",
+      "importName": "bugseeWebpackPlugin",
+      "callArgs": "{ appToken: process.env.BUGSEE_APP_TOKEN }",
+      "ensureSourcemap": true
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env.bugsee-build-plugin",
+      "key": "BUGSEE_APP_TOKEN",
+      "from": "token"
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env.bugsee-build-plugin"
+    }
+  ]
+}

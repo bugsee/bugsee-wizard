@@ -66,6 +66,23 @@ describe('parseRecipe', () => {
     expect('verify' in r).toBe(false);
   });
 
+  describe('notes (human-readable, optional)', () => {
+    it('is kept verbatim when present', () => {
+      const r = parseRecipe({ ...base(), notes: 'Uses the CLI route until JS issue #184.' });
+      expect(r.notes).toBe('Uses the CLI route until JS issue #184.');
+    });
+
+    it('is absent from the parsed recipe when omitted', () => {
+      expect('notes' in parseRecipe(base())).toBe(false);
+    });
+
+    it('must be a non-empty string', () => {
+      expect(violations({ ...base(), notes: 7 })).toEqual(['recipe.notes: must be a string']);
+      expect(violations({ ...base(), notes: '' })).toEqual(['recipe.notes: must not be empty']);
+      expect(violations({ ...base(), notes: ['a'] })).toEqual(['recipe.notes: must be a string']);
+    });
+  });
+
   it('rejects a non-object root', () => {
     expect(violations(null)).toEqual(['recipe: must be an object']);
     expect(violations([])).toEqual(['recipe: must be an object']);

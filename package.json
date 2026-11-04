@@ -25,6 +25,8 @@
     "dev": "tsup --watch",
     "start": "node ./dist/cli.js",
     "typecheck": "tsc --noEmit",
+    "build:snapshot": "node scripts/build-snapshot.mjs",
+    "validate:snapshot": "node scripts/validate-snapshot.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check .",

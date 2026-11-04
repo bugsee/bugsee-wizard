@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-tsc",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "bb1378b84dbc7dc7bf96a420a7f9d9aedcbf20ecae76f42ab541f39208809326",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

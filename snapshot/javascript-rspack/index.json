@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-rspack",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "0283ad28c090c82de8b98f9670d02da2ea10078c4200207b5dd51e46e6af3160",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

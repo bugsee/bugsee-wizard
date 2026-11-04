@@ -31,6 +31,8 @@ export interface Recipe {
   detect: DetectRule[];
   ops: OpSpec[];
   verify?: string[];
+  /** Human-readable context for maintainers (why a route was chosen, linked issues). Never executed. */
+  notes?: string;
 }
 
 export interface RecipeContext extends WizardContext {
@@ -303,6 +305,7 @@ export function parseRecipe(json: unknown): Recipe {
     'detect',
     'ops',
     'verify',
+    'notes',
   ]);
   if (!root) throw new RecipeError(c.errors);
 
@@ -350,6 +353,8 @@ export function parseRecipe(json: unknown): Recipe {
   const verify =
     root.verify === undefined ? undefined : c.strings(root.verify, 'recipe.verify', false);
 
+  const notes = c.optionalString(root, 'notes', 'recipe');
+
   if (c.errors.length > 0 || !id || !kind || !platform || !min || !range)
     throw new RecipeError(c.errors);
   return {
@@ -362,5 +367,6 @@ export function parseRecipe(json: unknown): Recipe {
     detect,
     ops,
     ...(verify ? { verify } : {}),
+    ...(notes !== undefined ? { notes } : {}),
   };
 }

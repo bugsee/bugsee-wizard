@@ -149,7 +149,8 @@ function toFileEntry(e: ManifestEntry, file: string): Pending {
 }
 
 /** Combine an earlier entry for the same file with a later one: latest wins, first "before" survives. */
-function mergeEntry(prev: ManifestFileEntry, next: Pending): Pending {
+function mergeEntry(prevPending: Pending, next: Pending): Pending {
+  const prev = prevPending.entry;
   if (next.entry.action === 'manual' && prev.action !== 'manual') return { entry: prev };
   if (prev.action === 'manual') return next;
   const merged: ManifestFileEntry = { ...next.entry };
@@ -160,7 +161,12 @@ function mergeEntry(prev: ManifestFileEntry, next: Pending): Pending {
   if (prev.beforeSha256 !== undefined) merged.beforeSha256 = prev.beforeSha256;
   if (prev.backup !== undefined) merged.backup = prev.backup;
   if (prev.action === 'created') return { entry: merged };
-  if (prev.beforeSha256 !== undefined) return { entry: merged }; // first before wins; no new backup
+  if (prev.beforeSha256 !== undefined) {
+    // first before wins; no new backup (but one the earlier entry queued in this same batch is kept)
+    return prevPending.backupText !== undefined
+      ? { entry: merged, backupText: prevPending.backupText }
+      : { entry: merged };
+  }
   const out: Pending = { entry: merged };
   if (next.entry.beforeSha256 !== undefined) merged.beforeSha256 = next.entry.beforeSha256;
   if (next.entry.backup !== undefined) merged.backup = next.entry.backup;
@@ -212,7 +218,7 @@ export function createManifestRecorder(
         const key = entryKey(next.entry);
         const prev = byKey.get(key);
         if (prev === undefined) order.push(key);
-        byKey.set(key, prev === undefined ? next : mergeEntry(prev.entry, next));
+        byKey.set(key, prev === undefined ? next : mergeEntry(prev, next));
       }
       const pendings = order.flatMap((k) => byKey.get(k) ?? []);
       for (const p of pendings) {

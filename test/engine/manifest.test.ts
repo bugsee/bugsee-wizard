@@ -85,6 +85,19 @@ describe('createManifestRecorder', () => {
     expect(await exists(join(dir, `.bugsee/backup/${sha('mid')}`))).toBe(false);
   });
 
+  it('two edits to one file in the SAME batch still write the first before-state backup', async () => {
+    const r = createManifestRecorder(dir, META);
+    r.record({ file: 'p.json', action: 'edited', before: 'v0', after: 'v1' });
+    r.record({ file: 'p.json', action: 'edited', before: 'v1', after: 'v2' });
+    await r.flush();
+    await writeFile(join(dir, 'p.json'), 'v2');
+    expect(await readFile(join(dir, '.bugsee', 'backup', sha('v0')), 'utf8')).toBe('v0');
+    const res = await rb();
+    expect(res.failed).toBe(false);
+    expect(res.results).toEqual([{ file: 'p.json', outcome: 'reverted' }]);
+    expect(await readFile(join(dir, 'p.json'), 'utf8')).toBe('v0');
+  });
+
   it('merges across flushes and keeps the original state through a second recorder', async () => {
     const r1 = createManifestRecorder(dir, META);
     r1.record({ file: 'f', action: 'edited', before: 'orig', after: 'mid' });
