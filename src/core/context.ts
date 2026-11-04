@@ -1,6 +1,7 @@
 import type { ProjectKind } from '../project-kind.js';
 import type { Logger } from './logger.js';
 
+/** Never log or stringify options: they may hold the token. */
 export interface WizardOptions {
   readonly cwd: string;
   readonly debug: boolean;

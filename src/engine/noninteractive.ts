@@ -10,6 +10,16 @@ export class MissingInputError extends Error {
   }
 }
 
+/** Ctrl-C / cancel at a prompt: a clean exit, not an error. */
+export class CancelledError extends Error {
+  constructor() {
+    super('cancelled');
+    this.name = 'CancelledError';
+  }
+}
+
+export const CANCELLED_MESSAGE = 'Cancelled.';
+
 /** The single JSON object printed on stdout in `--json` mode. */
 export interface WizardRunResult {
   ok: boolean;
@@ -71,6 +81,11 @@ export interface BuiltOptions {
   readonly token?: string;
 }
 
+/** Empty or whitespace-only strings count as absent. */
+function present(v: string | undefined): string | undefined {
+  return v === undefined || v.trim() === '' ? undefined : v;
+}
+
 /**
  * Pure: an explicitly passed flag wins over the env var (the reverse of
  * Sentry's wizard). The token is flag-only here; `BUGSEE_APP_TOKEN` is read by
@@ -78,7 +93,8 @@ export interface BuiltOptions {
  */
 export function buildOptions(opts: RawCliOptions, env: NodeJS.ProcessEnv): BuiltOptions {
   const e = readEnvFlags(env);
-  const pkg = opts.package ?? e.package;
+  const pkg = present(opts.package) ?? e.package;
+  const token = present(opts.token);
   return {
     cwd: opts.cwd,
     debug: opts.debug,
@@ -88,7 +104,7 @@ export function buildOptions(opts: RawCliOptions, env: NodeJS.ProcessEnv): Built
     ignoreGitChanges: opts.ignoreGitChanges ?? e.ignoreGitChanges,
     yes: opts.yes ?? e.yes,
     ...(pkg === undefined ? {} : { package: pkg }),
-    ...(opts.token === undefined ? {} : { token: opts.token }),
+    ...(token === undefined ? {} : { token }),
   };
 }
 
@@ -119,6 +135,56 @@ export function createStderrLogger(opts: { readonly debug: boolean }): Logger {
       if (opts.debug) w('debug', m);
     },
   };
+}
+
+export interface TokenInputDeps {
+  readonly readStdin: () => Promise<string>;
+  readonly isTTY: boolean;
+}
+
+/** Reads the first line of a stream (the token for `--token -`). */
+export async function readStdinToken(stream: AsyncIterable<string | Uint8Array>): Promise<string> {
+  let data = '';
+  for await (const chunk of stream) {
+    data += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+    if (data.includes('\n')) break;
+  }
+  return data.split('\n')[0] ?? '';
+}
+
+/**
+ * buildOptions plus the one async step: `--token -` reads the token from
+ * stdin (allowed when stdin is not a TTY or `nonInteractive`), so it never
+ * appears in the process list. Errors never carry the value.
+ */
+export async function resolveOptions(
+  opts: RawCliOptions,
+  env: NodeJS.ProcessEnv,
+  deps: TokenInputDeps = {
+    readStdin: () => readStdinToken(process.stdin),
+    isTTY: process.stdin.isTTY === true,
+  },
+): Promise<BuiltOptions> {
+  const built = buildOptions(opts, env);
+  if (built.token !== '-') return built;
+  if (deps.isTTY && !built.nonInteractive) throw new MissingInputError('token');
+  const line = (await deps.readStdin()).trim().split(/\r?\n/)[0]?.trim() ?? '';
+  if (line === '') throw new MissingInputError('token');
+  return { ...built, token: line };
+}
+
+export interface ErrorOutcome {
+  readonly code: 0 | 1 | 2;
+  readonly message: string;
+  readonly level: 'plain' | 'error';
+}
+
+/** Maps a top-level error to exit code and presentation. Cancel is a clean exit. */
+export function outcomeForError(err: unknown): ErrorOutcome {
+  if (err instanceof CancelledError) return { code: 0, message: CANCELLED_MESSAGE, level: 'plain' };
+  const message = err instanceof Error ? err.message : String(err);
+  if (err instanceof MissingInputError) return { code: 2, message, level: 'error' };
+  return { code: 1, message, level: 'error' };
 }
 
 export interface Output {

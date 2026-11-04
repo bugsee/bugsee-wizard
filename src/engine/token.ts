@@ -1,15 +1,10 @@
 import * as clack from '@clack/prompts';
 
-import { MissingInputError } from './noninteractive.js';
+import { CancelledError, MissingInputError } from './noninteractive.js';
+
+export { CancelledError };
 
 export const MAX_TOKEN_LENGTH = 512;
-
-export class CancelledError extends Error {
-  constructor() {
-    super('cancelled');
-    this.name = 'CancelledError';
-  }
-}
 
 /**
  * Where the app token comes from. `kind` is a closed union today; a browser
