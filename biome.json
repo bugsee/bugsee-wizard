@@ -6,7 +6,15 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules", "!**/coverage", "!**/*.md", "!**/*.yml"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/coverage",
+      "!**/*.md",
+      "!**/*.yml",
+      "!**/test/fixtures/configs"
+    ]
   },
   "formatter": {
     "enabled": true,
