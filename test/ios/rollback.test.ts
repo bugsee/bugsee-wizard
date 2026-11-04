@@ -182,6 +182,8 @@ describe('runIosRecipe result', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
       token: 'TOK',
       silent: true,
       options: { ...baseOptions, distribution: 'cocoapods' },
@@ -195,6 +197,8 @@ describe('runIosRecipe result', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
       token: 'TOK',
       silent: true,
       options: { ...baseOptions, distribution: 'spm' },
@@ -204,7 +208,14 @@ describe('runIosRecipe result', () => {
 
   it("returns 'failed' when no iOS project is found", async () => {
     fixture = await makeFixture({ 'README.md': '' });
-    const res = await runIosRecipe({ cwd: fixture, debug: false, dryRun: false, token: 'T' });
+    const res = await runIosRecipe({
+      cwd: fixture,
+      debug: false,
+      dryRun: false,
+      nonInteractive: false,
+      json: false,
+      token: 'T',
+    });
     expect(res).toBe('failed');
   });
 });

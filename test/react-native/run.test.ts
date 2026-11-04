@@ -35,7 +35,13 @@ import {
 } from './helpers.js';
 
 let fixture: string;
-const opts = () => ({ cwd: fixture, debug: false, dryRun: false });
+const opts = () => ({
+  cwd: fixture,
+  debug: false,
+  dryRun: false,
+  nonInteractive: false,
+  json: false,
+});
 
 beforeEach(async () => {
   vi.clearAllMocks();

@@ -167,7 +167,13 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
     // The loader rollback's writeFile throws (mocked; independent of file modes/root).
     failWrites.suffix = 'app/build.gradle.kts';
     try {
-      const ran = await runAndroidRollback({ cwd: fixture, debug: false, dryRun: false });
+      const ran = await runAndroidRollback({
+        cwd: fixture,
+        debug: false,
+        dryRun: false,
+        nonInteractive: false,
+        json: false,
+      });
       expect(ran).toBe('failed');
     } finally {
       failWrites.suffix = null;
@@ -187,6 +193,8 @@ describe('runAndroidRecipe result', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
       token: 'T',
       silent: true,
       options: { initMode: 'automatic', ndk: false, feedback: false, sizeAnalysis: false },
@@ -200,6 +208,8 @@ describe('runAndroidRecipe result', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
       token: 'T',
       options: { initMode: 'automatic', ndk: false, feedback: false, sizeAnalysis: false },
     });
