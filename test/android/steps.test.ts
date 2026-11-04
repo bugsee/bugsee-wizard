@@ -130,6 +130,51 @@ describe('writeBugseePropertiesStep', () => {
   });
 });
 
+describe('writeBugseePropertiesStep — differing stored token', () => {
+  it('is satisfied when the stored token equals the supplied one (even with spaces/CRLF)', async () => {
+    fixture = await makeFixture({ 'bugsee.properties': 'app_token = tok-1 \r\n' });
+    const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'tok-1' } });
+    expect(await writeBugseePropertiesStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+  });
+
+  it('is pending when the stored token differs, and apply replaces it in place', async () => {
+    fixture = await makeFixture({
+      'bugsee.properties': 'a=1\napp_token=old-token\nb=2\n',
+    });
+    const ctx = makeAndroidContext({
+      cwd: fixture,
+      dsl: 'kotlin',
+      tokens: { android: 'new-token' },
+    });
+    expect(await writeBugseePropertiesStep.precheck(ctx)).toEqual({ kind: 'pending' });
+    await writeBugseePropertiesStep.apply(ctx);
+    expect(await readFixture(fixture, 'bugsee.properties')).toBe('a=1\napp_token=new-token\nb=2\n');
+    expect(await writeBugseePropertiesStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+  });
+
+  it('replaces duplicate token lines with a single one', async () => {
+    fixture = await makeFixture({ 'bugsee.properties': 'app_token=a\napp_token=b\n' });
+    const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'c' } });
+    await writeBugseePropertiesStep.apply(ctx);
+    expect(await readFixture(fixture, 'bugsee.properties')).toBe('app_token=c\n');
+  });
+
+  it('rollback after a replace removes the token line', async () => {
+    fixture = await makeFixture({ 'bugsee.properties': 'a=1\napp_token=old\n' });
+    const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'new' } });
+    await writeBugseePropertiesStep.apply(ctx);
+    await writeBugseePropertiesStep.rollback(ctx);
+    expect(await readFixture(fixture, 'bugsee.properties')).not.toContain('app_token');
+    expect(await readFixture(fixture, 'bugsee.properties')).toContain('a=1');
+  });
+
+  it('is satisfied (nothing to compare) when no token was supplied but one is stored', async () => {
+    fixture = await makeFixture({ 'bugsee.properties': 'app_token=old\n' });
+    const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: {} });
+    expect(await writeBugseePropertiesStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+  });
+});
+
 describe('ensureGitignoredStep', () => {
   beforeEach(async () => {
     fixture = await makeFixture({});

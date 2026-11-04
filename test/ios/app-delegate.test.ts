@@ -155,3 +155,30 @@ describe('injectAppDelegateStep — Objective-C', () => {
     expect(await readFixture(fixture, REL)).toBe(original);
   });
 });
+
+describe('injectAppDelegateStep — existing launch with a different token', () => {
+  it.each([
+    ['swift', 'MyApp/AppDelegate.swift', SAMPLE_APP_DELEGATE_SWIFT],
+    ['objc', 'MyApp/AppDelegate.m', SAMPLE_APP_DELEGATE_OBJC],
+  ] as const)('warns (%s) but stays satisfied', async (language, rel, source) => {
+    fixture = await makeFixture({ [rel]: source });
+    const make = (token: string) =>
+      makeIosContext({
+        cwd: fixture as string,
+        schemeName: 'MyApp',
+        appDelegate: { path: `${fixture}/${rel}`, language },
+        iosOptions: { autoInjectAppDelegate: true },
+        tokens: { ios: token },
+      });
+    await injectAppDelegateStep.apply(make('OLD'));
+    const warn = vi.mocked((await import('@clack/prompts')).log.warn);
+    warn.mockClear();
+
+    expect(await injectAppDelegateStep.precheck(make('OLD'))).toEqual({ kind: 'satisfied' });
+    expect(warn).not.toHaveBeenCalled();
+
+    expect(await injectAppDelegateStep.precheck(make('NEW'))).toEqual({ kind: 'satisfied' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(/different token/i);
+  });
+});

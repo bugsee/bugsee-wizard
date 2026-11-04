@@ -16,6 +16,13 @@ const LAUNCH_PRESENT_RE = {
   objc: /\[\s*Bugsee\s+launchWithToken\s*:/,
 } as const;
 
+// Captures the literal token of an existing launch call, to detect a re-run
+// with a different one.
+const LAUNCH_TOKEN_RE = {
+  swift: /\bBugsee\.launch\(\s*token:\s*"([^"]*)"/,
+  objc: /\[\s*Bugsee\s+launchWithToken\s*:\s*@"([^"]*)"/,
+} as const;
+
 const IMPORT_PRESENT_RE = {
   swift: /^\s*import\s+Bugsee\s*$/m,
   objc: /^\s*#import\s+<Bugsee\/Bugsee\.h>\s*$/m,
@@ -85,6 +92,14 @@ export const injectAppDelegateStep: Step<IosContext> = {
     }
     const lang = ctx.iosPaths.appDelegateLanguage;
     if (LAUNCH_PRESENT_RE[lang].test(content) && IMPORT_PRESENT_RE[lang].test(content)) {
+      // Not replaced automatically (the call may be hand-edited); just say so.
+      const existing = LAUNCH_TOKEN_RE[lang].exec(content)?.[1];
+      const supplied = ctx.tokens.ios;
+      if (existing !== undefined && supplied && existing !== supplied) {
+        ctx.log.warn(
+          'AppDelegate already launches Bugsee with a different token than the one you entered; left unchanged — update it manually if needed.',
+        );
+      }
       return { kind: 'satisfied' };
     }
     // AppDelegate exists but lacks the canonical launch function (e.g. it's a

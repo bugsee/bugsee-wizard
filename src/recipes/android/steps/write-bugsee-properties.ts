@@ -5,6 +5,13 @@ import { readOrNull } from '../io.js';
 import { type AndroidContext, TOKEN_PROPERTY_KEY } from '../types.js';
 
 const TOKEN_LINE_RE = new RegExp(`^${TOKEN_PROPERTY_KEY.replace(/\./g, '\\.')}\\s*=`, 'm');
+const TOKEN_VALUE_RE = new RegExp(`^${TOKEN_PROPERTY_KEY.replace(/\./g, '\\.')}\\s*=(.*)$`, 'm');
+
+/** The stored token (trimmed; tolerates CRLF), or null when no token line exists. */
+function storedToken(content: string): string | null {
+  const m = TOKEN_VALUE_RE.exec(content);
+  return m ? (m[1] ?? '').trim() : null;
+}
 
 /**
  * Write the app token to `<root>/bugsee.properties`. Dedicated file so the
@@ -21,10 +28,13 @@ export const writeBugseePropertiesStep: Step<AndroidContext> = {
 
   async precheck(ctx): Promise<StepStatus> {
     const content = await readOrNull(ctx.androidPaths.bugseeProperties);
-    if (content !== null && TOKEN_LINE_RE.test(content)) {
-      return { kind: 'satisfied' };
-    }
-    return { kind: 'pending' };
+    const stored = content === null ? null : storedToken(content);
+    if (stored === null) return { kind: 'pending' };
+    // A different stored token (wrong/staging paste, re-run with the right
+    // one) must be replaced, not silently kept. With no supplied token there
+    // is nothing to compare against.
+    const supplied = ctx.tokens.android?.trim();
+    return supplied && supplied !== stored ? { kind: 'pending' } : { kind: 'satisfied' };
   },
 
   async apply(ctx) {
@@ -33,6 +43,21 @@ export const writeBugseePropertiesStep: Step<AndroidContext> = {
       throw new Error('Android app token not provided in wizard context');
     }
     const existing = (await readOrNull(ctx.androidPaths.bugseeProperties)) ?? '';
+    if (TOKEN_LINE_RE.test(existing)) {
+      // Replace the first token line in place; drop any duplicates.
+      let replaced = false;
+      const lines: string[] = [];
+      for (const line of existing.split('\n')) {
+        if (!TOKEN_LINE_RE.test(line)) {
+          lines.push(line);
+        } else if (!replaced) {
+          lines.push(`${TOKEN_PROPERTY_KEY}=${token}`);
+          replaced = true;
+        }
+      }
+      await writeFile(ctx.androidPaths.bugseeProperties, lines.join('\n'));
+      return;
+    }
     const sep = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
     const updated = `${existing}${sep}${TOKEN_PROPERTY_KEY}=${token}\n`;
     await writeFile(ctx.androidPaths.bugseeProperties, updated);
