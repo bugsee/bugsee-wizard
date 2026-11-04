@@ -41,6 +41,8 @@ const opts = () => ({
   dryRun: false,
   nonInteractive: false,
   json: false,
+  ignoreGitChanges: false,
+  yes: false,
 });
 
 beforeEach(async () => {

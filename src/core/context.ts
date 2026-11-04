@@ -7,6 +7,12 @@ export interface WizardOptions {
   readonly dryRun: boolean;
   readonly nonInteractive: boolean;
   readonly json: boolean;
+  readonly ignoreGitChanges: boolean;
+  /** Confirms destructive/uninstall actions in non-interactive mode. */
+  readonly yes: boolean;
+  readonly package?: string;
+  /** Explicit `--token` value; `BUGSEE_APP_TOKEN` is resolved by selectTokenSource and never stored here. */
+  readonly token?: string;
 }
 
 export interface WizardContext extends WizardOptions {

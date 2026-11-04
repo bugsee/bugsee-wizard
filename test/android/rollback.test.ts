@@ -103,6 +103,8 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
     });
     expect(ran).toBe('ok');
 
@@ -135,6 +137,8 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
     });
     expect(ran).toBe('ok');
 
@@ -151,6 +155,8 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
     });
     expect(ran).toBe('not-found');
   });
@@ -173,6 +179,8 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
         dryRun: false,
         nonInteractive: false,
         json: false,
+        ignoreGitChanges: false,
+        yes: false,
       });
       expect(ran).toBe('failed');
     } finally {
@@ -195,6 +203,8 @@ describe('runAndroidRecipe result', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
       token: 'T',
       silent: true,
       options: { initMode: 'automatic', ndk: false, feedback: false, sizeAnalysis: false },
@@ -210,6 +220,8 @@ describe('runAndroidRecipe result', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
       token: 'T',
       options: { initMode: 'automatic', ndk: false, feedback: false, sizeAnalysis: false },
     });

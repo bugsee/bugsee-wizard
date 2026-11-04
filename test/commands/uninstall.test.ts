@@ -31,7 +31,15 @@ vi.mock('../../src/detectors/index.js', () => ({ registerAllDetectors: () => {} 
 
 import { runUninstall } from '../../src/commands/uninstall.js';
 
-const opts = { cwd: '/x', debug: false, dryRun: false, nonInteractive: false, json: false };
+const opts = {
+  cwd: '/x',
+  debug: false,
+  dryRun: false,
+  nonInteractive: false,
+  json: false,
+  ignoreGitChanges: false,
+  yes: false,
+};
 const outros = () => clack.outro.mock.calls.map((c) => String(c[0]));
 
 beforeEach(() => {

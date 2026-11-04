@@ -22,6 +22,8 @@ function makeContext(overrides: Partial<WizardContext> = {}): WizardContext {
     dryRun: false,
     nonInteractive: false,
     json: false,
+    ignoreGitChanges: false,
+    yes: false,
     kind: 'unknown',
     tokens: {},
     log: createLogger({ debug: false }),

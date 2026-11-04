@@ -109,6 +109,8 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
     });
     expect(ran).toBe('ok');
 
@@ -141,6 +143,8 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
     });
     expect(ran).toBe('ok');
 
@@ -155,6 +159,8 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
     });
     expect(ran).toBe('not-found');
   });
@@ -184,6 +190,8 @@ describe('runIosRecipe result', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
       token: 'TOK',
       silent: true,
       options: { ...baseOptions, distribution: 'cocoapods' },
@@ -199,6 +207,8 @@ describe('runIosRecipe result', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
       token: 'TOK',
       silent: true,
       options: { ...baseOptions, distribution: 'spm' },
@@ -214,6 +224,8 @@ describe('runIosRecipe result', () => {
       dryRun: false,
       nonInteractive: false,
       json: false,
+      ignoreGitChanges: false,
+      yes: false,
       token: 'T',
     });
     expect(res).toBe('failed');

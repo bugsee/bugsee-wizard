@@ -47,6 +47,8 @@ export async function makeRnContext(opts: MakeRnContextOpts): Promise<RnContext>
     dryRun: false,
     nonInteractive: false,
     json: false,
+    ignoreGitChanges: false,
+    yes: false,
     kind: 'react-native',
     tokens: opts.tokens ?? { android: 'AND_TOK', ios: 'IOS_TOKEN' },
     log: createLogger({ debug: false }),

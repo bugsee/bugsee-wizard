@@ -28,6 +28,8 @@ export function makeCtx(dir: string, over: Partial<RecipeContext> = {}): LoggedC
     dryRun: false,
     nonInteractive: true,
     json: false,
+    ignoreGitChanges: false,
+    yes: false,
     kind: 'web',
     tokens: {},
     log: { info: sink, warn: sink, error: sink, success: sink, step: sink, debug: sink },
