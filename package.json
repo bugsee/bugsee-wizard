@@ -48,7 +48,7 @@
     "@types/node": "^22.20.5",
     "@types/xcode": "^3.0.0",
     "@vitest/coverage-v8": "^5.1.0",
-    "tsup": "^8.3.5",
+    "tsup": "^9.0.0",
     "typescript": "^5.7.2",
     "vitest": "^5.1.0"
   }
