@@ -221,6 +221,8 @@ async function hasNativeMarker(dir: string): Promise<boolean> {
 export interface DetectOptions {
   homeDir?: string;
   hasGit?: (dir: string) => Promise<boolean>;
+  /** Treated as the filesystem root (default: the real root, found by `dirname(d) === d`). */
+  rootDir?: string;
 }
 
 async function hasProjectFile(dir: string): Promise<boolean> {
@@ -245,7 +247,10 @@ async function findProjectDir(cwd: string, options: DetectOptions): Promise<stri
   for (let i = 0; i < MAX_WALK; i++) {
     if (await hasGit(current)) return undefined;
     const parent = path.dirname(current);
-    if (parent === current || parent === home) return undefined;
+    // Never examine the filesystem root (e.g. a `/package.json` from `WORKDIR /`) or the home directory.
+    const atRoot =
+      options.rootDir !== undefined ? parent === options.rootDir : path.dirname(parent) === parent;
+    if (parent === current || parent === home || atRoot) return undefined;
     current = parent;
     if (await hasProjectFile(current)) return current;
   }

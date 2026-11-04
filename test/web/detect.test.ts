@@ -642,6 +642,30 @@ describe('detectJavaScript rules (synthetic projects)', () => {
     ).toBe(home);
   });
 
+  it('never examines the filesystem root when walking up (injectable root)', async () => {
+    const dir = await project({
+      'fakeroot/package.json': { name: 'root-pkg' },
+      'fakeroot/a/b/file.txt': '',
+    });
+    const root = path.join(dir, 'fakeroot');
+    const start = path.join(root, 'a', 'b');
+    expect(await detectJavaScript(start, { rootDir: root })).toBeNull();
+    // a project strictly below the root is still found
+    await writeFile(path.join(root, 'a', 'package.json'), JSON.stringify({ name: 'a' }));
+    expect((await detectJavaScript(start, { rootDir: root }))?.packageDir).toBe(
+      path.join(root, 'a'),
+    );
+    // the same tree without the injection treats fakeroot as an ordinary directory
+    await rm(path.join(root, 'a', 'package.json'));
+    expect((await detectJavaScript(start))?.packageDir).toBe(root);
+  });
+
+  it('a cwd that is itself the root still checks only cwd', async () => {
+    const dir = await project({ 'fakeroot/package.json': { name: 'root-pkg' } });
+    const root = path.join(dir, 'fakeroot');
+    expect((await detectJavaScript(root, { rootDir: root }))?.packageDir).toBe(root);
+  });
+
   it('never executes or imports user files', async () => {
     const dir = await project({
       'package.json': { name: 'x', devDependencies: { vite: '5.0.0' } },
