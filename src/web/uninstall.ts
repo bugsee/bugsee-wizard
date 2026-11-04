@@ -1,5 +1,5 @@
 import { access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 import type { WizardOptions } from '../core/context.js';
 import { loadManifest, type RollbackResult } from '../engine/manifest.js';
@@ -34,6 +34,45 @@ function changeList(results: readonly RollbackResult[]): string {
 }
 
 /**
+ * The directory whose manifest to roll back. `--package` decides when given. Otherwise the detected
+ * project, unless it has no manifest and is a workspace root: then the packages that do have one
+ * (one: used and named; several: `--package` non-interactively, a choice interactively).
+ */
+async function locateManifestDir(
+  opts: WizardOptions,
+  deps: Deps,
+): Promise<{ dir: string } | { result: WizardRunResult }> {
+  if (opts.package !== undefined) {
+    const located = await locatePackage(opts, deps);
+    return 'result' in located ? located : { dir: located.det.packageDir };
+  }
+  const det = await deps.detect(opts.cwd);
+  if (det === null) {
+    return { result: failed('no-project', `No JavaScript project found in ${opts.cwd}.`) };
+  }
+  const hasManifest = (d: string): Promise<boolean> => exists(join(d, MANIFEST));
+  if (await hasManifest(det.packageDir)) return { dir: det.packageDir };
+  const root = det.workspace?.root ?? det.packageDir;
+  const found: { dir: string; name: string }[] = [];
+  for (const p of det.workspace?.packages ?? []) {
+    if (await hasManifest(p.dir)) found.push(p);
+  }
+  const show = (d: string): string => relative(root, d).split('\\').join('/');
+  const [only] = found;
+  if (only === undefined) return { dir: det.packageDir };
+  if (found.length === 1) {
+    deps.output.log.info(`Using the wizard changes recorded in ${show(only.dir)}.`);
+    return { dir: only.dir };
+  }
+  if (opts.nonInteractive) throw new MissingInputError('package');
+  const dir = await deps.prompts.select(
+    'Bugsee was set up in several packages. Which one should it be removed from?',
+    found.map((p) => ({ value: p.dir, label: `${show(p.dir)} (${p.name})` })),
+  );
+  return { dir };
+}
+
+/**
  * Reverse what the wizard recorded in `.bugsee/wizard-manifest.json`. Always shows the list of
  * changes first and asks (non-interactive runs need `--yes`); an unreadable manifest is a failure,
  * never a silent "nothing to do".
@@ -45,12 +84,12 @@ export async function runJavaScriptUninstall(
   const deps = defaultDeps(opts, overrides);
   const log = deps.output.log;
 
-  const located = await locatePackage(opts, deps);
+  const located = await locateManifestDir(opts, deps);
   if ('result' in located) {
     log.error(located.result.message ?? '');
     return located.result;
   }
-  const dir = located.det.packageDir;
+  const dir = located.dir;
 
   if ((await loadManifest(dir)) === null) {
     if (await exists(join(dir, MANIFEST))) {

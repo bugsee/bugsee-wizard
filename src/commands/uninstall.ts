@@ -50,6 +50,8 @@ export async function runUninstall(opts: WizardOptions): Promise<void> {
   }
 
   const results: RollbackResult[] = [];
+  /** Files a JavaScript rollback left for the user (changed since the wizard wrote them). */
+  const remaining: string[] = [];
   for (const target of targets) {
     if (target === 'android') {
       results.push(await runAndroidRollback(opts));
@@ -63,7 +65,8 @@ export async function runUninstall(opts: WizardOptions): Promise<void> {
         clack.cancel('Cancelled.');
         return;
       }
-      results.push(js);
+      results.push(js.result);
+      remaining.push(...js.remaining);
     } else {
       log.warn(`No rollback implemented for ${PROJECT_KIND_LABELS[target]} yet.`);
     }
@@ -82,12 +85,26 @@ export async function runUninstall(opts: WizardOptions): Promise<void> {
     return;
   }
 
+  // nothing was removed, or not all of it: say so, and do not ask why the user is leaving
+  if (opts.dryRun) {
+    clack.outro('Dry run — nothing was changed.');
+    return;
+  }
+  if (remaining.length > 0) {
+    clack.outro(
+      `Bugsee was partly removed. These files need a manual step:\n${remaining.map((f) => `  ${f}`).join('\n')}`,
+    );
+    return;
+  }
+
   await runExitPoll();
   clack.outro('Bugsee removed.');
 }
 
-/** The JavaScript uninstall as a RollbackResult; null when the user cancelled. */
-async function javascriptRollback(opts: WizardOptions): Promise<RollbackResult | null> {
+/** The JavaScript uninstall as a RollbackResult plus the files it left; null when cancelled. */
+async function javascriptRollback(
+  opts: WizardOptions,
+): Promise<{ result: RollbackResult; remaining: string[] } | null> {
   let r: WizardRunResult;
   try {
     r = await runJavaScriptUninstall(opts);
@@ -95,8 +112,9 @@ async function javascriptRollback(opts: WizardOptions): Promise<RollbackResult |
     if (err instanceof CancelledError) return null;
     throw err;
   }
-  if (!r.ok) return 'failed';
-  return r.steps.length === 0 ? 'not-found' : 'ok';
+  const remaining = r.steps.filter((s) => s.outcome === 'manual').map((s) => s.id);
+  if (!r.ok) return { result: 'failed', remaining };
+  return { result: r.steps.length === 0 ? 'not-found' : 'ok', remaining };
 }
 
 /**

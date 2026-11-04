@@ -22,7 +22,13 @@ import { WIZARD_VERSION } from '../engine/telemetry.js';
 import { selectTokenSource } from '../engine/token.js';
 import { detectJavaScript, type JsDetection } from './detect.js';
 import { choosePackage } from './package-choice.js';
-import { checkGit, type GitState, probeGit, withoutWizardChanges } from './preconditions.js';
+import {
+  checkGit,
+  describeGitState,
+  type GitState,
+  probeGit,
+  withoutWizardChanges,
+} from './preconditions.js';
 import { clackPrompts, type Prompts } from './prompts.js';
 import { resolveSdkVersion, type SdkVersionQuery } from './sdk-version.js';
 import { checkSupported, SDK_TAG } from './versions.js';
@@ -62,6 +68,35 @@ export function defaultDeps(opts: WizardOptions, over: Partial<Deps> = {}): Deps
  * ordinary recorded step (not the recorder's own side effect) so uninstall reverts it with the rest.
  */
 const IGNORE_MANIFEST_DIR: OpSpec = { op: 'ensure-gitignore', line: '.bugsee/' };
+
+/** Stands in for the token in a dry run without one. Never written or printed (nothing is, in a dry run). */
+const DRY_RUN_TOKEN = 'dry-run-token';
+
+/**
+ * The git precondition. `--ignore-git-changes` skips the probe entirely; a dry run only notes the
+ * state; otherwise the wizard's own earlier changes are excused and checkGit decides.
+ */
+async function gitPrecondition(
+  opts: WizardOptions,
+  deps: Deps,
+  packageDir: string,
+): Promise<WizardRunResult | undefined> {
+  const log = deps.output.log;
+  if (opts.ignoreGitChanges) {
+    log.warn('Skipping the git check (--ignore-git-changes).');
+    return undefined;
+  }
+  const state = await withoutWizardChanges(await deps.git(packageDir), packageDir);
+  if (opts.dryRun) {
+    const note = describeGitState(state);
+    if (note !== undefined) log.info(`${note}\n(dry run: not a reason to stop)`);
+    return undefined;
+  }
+  const git = await checkGit(state, opts, { confirm: (m) => deps.prompts.confirm(m), log });
+  if (git.ok) return undefined;
+  log.error(git.message);
+  return failed(git.error, git.message);
+}
 
 export const failed = (error: string, message: string): WizardRunResult => ({
   ok: false,
@@ -125,26 +160,17 @@ export async function runJavaScriptInstall(
   const packageDir = det.packageDir;
   for (const w of checkSupported(det).warnings) log.warn(w);
 
-  const git = await checkGit(
-    await withoutWizardChanges(await deps.git(packageDir), packageDir),
-    opts,
-    {
-      confirm: (m) => deps.prompts.confirm(m),
-      log,
-    },
-  );
-  if (!git.ok) {
-    log.error(git.message);
-    return failed(git.error, git.message);
-  }
+  const blocked = await gitPrecondition(opts, deps, packageDir);
+  if (blocked !== undefined) return blocked;
 
-  const token = await deps
-    .selectTokenSource({
-      ...(opts.token === undefined ? {} : { flag: opts.token }),
-      env: deps.env,
-      nonInteractive: opts.nonInteractive,
-    })
-    .get();
+  const tokenSource = deps.selectTokenSource({
+    ...(opts.token === undefined ? {} : { flag: opts.token }),
+    env: deps.env,
+    nonInteractive: opts.nonInteractive,
+  });
+  // a dry run writes nothing, so it never asks for a token: the placeholder only feeds the plan
+  const token =
+    opts.dryRun && tokenSource.kind === 'paste' ? DRY_RUN_TOKEN : await tokenSource.get();
 
   const packageManager = await deps.detectPackageManager(packageDir);
   const sdkVersion = await deps.resolveSdkVersion({

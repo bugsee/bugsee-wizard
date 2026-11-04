@@ -123,6 +123,32 @@ describe('runUninstall (javascript, interactive)', () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it('--dry-run: says nothing was changed, never "removed", no exit poll', async () => {
+    web.runJavaScriptUninstall.mockResolvedValue(removed);
+    await runUninstall({ ...opts, dryRun: true });
+    expect(outros()).toEqual(['Dry run — nothing was changed.']);
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('incomplete: lists what remains, never "removed", no exit poll', async () => {
+    web.runJavaScriptUninstall.mockResolvedValue({
+      ok: true,
+      incomplete: true,
+      steps: [
+        { id: 'package.json', outcome: 'reverted' },
+        { id: 'vite.config.ts', outcome: 'manual' },
+      ],
+    });
+    await runUninstall(opts);
+    expect(outros()).toHaveLength(1);
+    expect(outros()[0]).toContain('vite.config.ts');
+    expect(outros()[0]).not.toContain('package.json');
+    expect(outros()[0]).not.toMatch(/Bugsee removed/);
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
+  });
+
   it('nothing to uninstall: no exit poll', async () => {
     web.runJavaScriptUninstall.mockResolvedValue({ ok: true, incomplete: false, steps: [] });
     await runUninstall(opts);

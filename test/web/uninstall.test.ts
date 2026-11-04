@@ -1,12 +1,19 @@
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { recordEntry } from '../../src/engine/manifest.js';
 import { CancelledError, exitCodeFor, MissingInputError } from '../../src/engine/noninteractive.js';
 import { runJavaScriptInstall } from '../../src/web/run.js';
 import { runJavaScriptUninstall } from '../../src/web/uninstall.js';
 import { baseOpts, captureOutput, makeDeps, type Sandbox, sandbox, tree } from './run-helpers.js';
+
+const exists = (p: string): Promise<boolean> =>
+  access(p).then(
+    () => true,
+    () => false,
+  );
 
 describe.skipIf(process.platform === 'win32')('runJavaScriptUninstall', () => {
   let sb: Sandbox;
@@ -151,5 +158,109 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptUninstall', () => {
       makeDeps(captureOutput()),
     );
     expect(r).toMatchObject({ ok: false, error: 'no-project' });
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('uninstall from a workspace root', () => {
+  let sb: Sandbox;
+  afterEach(async () => {
+    await sb.cleanup();
+  });
+
+  /** A wizard manifest in `pkg` that created `bugsee.txt` (and the file itself). */
+  const installedIn = async (pkg: string): Promise<void> => {
+    await writeFile(join(pkg, 'bugsee.txt'), 'hi\n');
+    await recordEntry(
+      pkg,
+      { file: 'bugsee.txt', action: 'created', after: 'hi\n' },
+      { wizard: '0.0.0', recipes: [] },
+      { ignoreInGit: false },
+    );
+  };
+  const web = () => join(sb.project, 'apps', 'web');
+  const api = () => join(sb.project, 'apps', 'api');
+
+  it('tooling root: finds the one package with a manifest and removes from it', async () => {
+    sb = await sandbox('pnpm-monorepo');
+    await installedIn(web());
+    const cap = captureOutput();
+    // the choice is reported at a visible level, not only in --debug
+    const output = { ...cap.output, log: { ...cap.output.log, debug: () => undefined } };
+    const r = await runJavaScriptUninstall(
+      baseOpts(sb.project, { yes: true }),
+      makeDeps(cap, { output }),
+    );
+    expect(r).toMatchObject({ ok: true, steps: [{ id: 'bugsee.txt', outcome: 'deleted' }] });
+    expect(await exists(join(web(), 'bugsee.txt'))).toBe(false);
+    expect(cap.lines.join('\n')).toContain('apps/web');
+  });
+
+  it('app-like root without its own manifest: also looks in the packages', async () => {
+    sb = await sandbox('pnpm-monorepo');
+    const pkgPath = join(sb.project, 'package.json');
+    const pkg = JSON.parse(await readFile(pkgPath, 'utf8'));
+    pkg.dependencies = { react: '^18.3.1' };
+    await writeFile(pkgPath, JSON.stringify(pkg, null, 2));
+    await installedIn(web());
+    const r = await runJavaScriptUninstall(
+      baseOpts(sb.project, { yes: true }),
+      makeDeps(captureOutput()),
+    );
+    expect(r.steps).toEqual([{ id: 'bugsee.txt', outcome: 'deleted' }]);
+  });
+
+  it('several packages with a manifest: non-interactive needs --package', async () => {
+    sb = await sandbox('pnpm-monorepo');
+    await installedIn(web());
+    await installedIn(api());
+    await expect(
+      runJavaScriptUninstall(baseOpts(sb.project, { yes: true }), makeDeps(captureOutput())),
+    ).rejects.toEqual(new MissingInputError('package'));
+    const r = await runJavaScriptUninstall(
+      baseOpts(sb.project, { yes: true, package: 'apps/api' }),
+      makeDeps(captureOutput()),
+    );
+    expect(r.steps).toEqual([{ id: 'bugsee.txt', outcome: 'deleted' }]);
+    expect(await exists(join(web(), 'bugsee.txt'))).toBe(true);
+  });
+
+  it('several packages with a manifest: interactive asks among those only', async () => {
+    sb = await sandbox('pnpm-monorepo');
+    await installedIn(web());
+    await installedIn(api());
+    const select = vi.fn(async (_m: string, o: readonly { value: string; label: string }[]) => {
+      expect(o.map((x) => x.label).join(' ')).not.toContain('docs');
+      expect(o).toHaveLength(2);
+      return web();
+    });
+    const r = await runJavaScriptUninstall(
+      baseOpts(sb.project, { yes: true, nonInteractive: false }),
+      makeDeps(captureOutput(), { prompts: { confirm: vi.fn(async () => true), select } }),
+    );
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(r.ok).toBe(true);
+    expect(await exists(join(web(), 'bugsee.txt'))).toBe(false);
+    expect(await exists(join(api(), 'bugsee.txt'))).toBe(true);
+  });
+
+  it('a manifest at the root itself wins over the packages', async () => {
+    sb = await sandbox('pnpm-monorepo');
+    await installedIn(sb.project);
+    await installedIn(web());
+    const r = await runJavaScriptUninstall(
+      baseOpts(sb.project, { yes: true }),
+      makeDeps(captureOutput()),
+    );
+    expect(r.steps).toEqual([{ id: 'bugsee.txt', outcome: 'deleted' }]);
+    expect(await exists(join(sb.project, 'bugsee.txt'))).toBe(false);
+    expect(await exists(join(web(), 'bugsee.txt'))).toBe(true);
+  });
+
+  it('no manifest anywhere: nothing to uninstall, no package question', async () => {
+    sb = await sandbox('pnpm-monorepo');
+    const cap = captureOutput();
+    const r = await runJavaScriptUninstall(baseOpts(sb.project, { yes: true }), makeDeps(cap));
+    expect(r).toEqual({ ok: true, incomplete: false, steps: [] });
+    expect(cap.lines.join('\n')).toMatch(/nothing to uninstall/i);
   });
 });

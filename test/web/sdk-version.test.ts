@@ -137,6 +137,12 @@ describe('--sdk-version / BUGSEE_WIZARD_SDK_VERSION', () => {
     );
     expect(o.sdkVersion).toBe('0.3.0');
   });
+  it('passes the normalized version on (a leading v and surrounding whitespace dropped)', () => {
+    expect(buildOptions({ ...base, sdkVersion: 'v1.2.3' }, {}).sdkVersion).toBe('1.2.3');
+    expect(buildOptions(base, { BUGSEE_WIZARD_SDK_VERSION: ' 1.2.3-beta.1 ' }).sdkVersion).toBe(
+      '1.2.3-beta.1',
+    );
+  });
   it('rejects a value that is not a semantic version (flag or env)', () => {
     expect(() => buildOptions({ ...base, sdkVersion: 'beta' }, {})).toThrow(/sdk version/i);
     expect(() => buildOptions(base, { BUGSEE_WIZARD_SDK_VERSION: '^1.0.0' })).toThrow(

@@ -210,6 +210,69 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptInstall', () => {
       expect(r.ok).toBe(true);
     });
 
+    it('--ignore-git-changes never runs the git probe (a failing git cannot stop the run)', async () => {
+      const git = vi.fn(async () => {
+        throw new Error('git status: output too large');
+      });
+      const r = await runJavaScriptInstall(
+        baseOpts(sb.project, { ignoreGitChanges: true }),
+        makeDeps(captureOutput(), { git }),
+      );
+      expect(r.ok).toBe(true);
+      expect(git).not.toHaveBeenCalled();
+    });
+
+    it('--dry-run needs no token and the placeholder is never printed', async () => {
+      const before = await tree(sb.project);
+      const cap = captureOutput();
+      const r = await runJavaScriptInstall(
+        baseOpts(sb.project, { dryRun: true }),
+        makeDeps(cap, { env: {} }),
+      );
+      expect(r.ok).toBe(true);
+      expect(r.steps.map((s) => s.id)).toContain(
+        'write-env-var:.env.bugsee-build-plugin:BUGSEE_APP_TOKEN',
+      );
+      expect(await tree(sb.project)).toEqual(before);
+      expect(cap.lines.join('\n')).not.toMatch(/placeholder/i);
+    });
+
+    it('--dry-run with a token available uses it (an existing env var is reported as done)', async () => {
+      await runJavaScriptInstall(baseOpts(sb.project), makeDeps(captureOutput()));
+      const r = await runJavaScriptInstall(
+        baseOpts(sb.project, { dryRun: true }),
+        makeDeps(captureOutput()),
+      );
+      expect(r.steps.find((s) => s.id.startsWith('write-env-var'))?.outcome).toBe('skipped');
+    });
+
+    it('--dry-run on a clean repository adds no git note', async () => {
+      const cap = captureOutput();
+      await runJavaScriptInstall(
+        baseOpts(sb.project, { dryRun: true }),
+        makeDeps(cap, { git: async () => ({ repo: true, changed: [], root: sb.project }) }),
+      );
+      expect(cap.lines.join('\n')).not.toMatch(/uncommitted|version control/);
+    });
+
+    it('--dry-run is not stopped by a dirty tree or a missing repository (only a note)', async () => {
+      for (const state of [
+        { repo: true, changed: ['src/dirty.ts'], root: sb.project },
+        { repo: false, changed: [] },
+      ]) {
+        const cap = captureOutput();
+        const confirm = vi.fn(async () => false);
+        const r = await runJavaScriptInstall(
+          baseOpts(sb.project, { dryRun: true, nonInteractive: false }),
+          makeDeps(cap, { git: async () => state, prompts: { confirm, select: vi.fn() } }),
+        );
+        expect(r.ok).toBe(true);
+        expect(confirm).not.toHaveBeenCalled();
+        if (state.repo) expect(cap.lines.join('\n')).toContain('src/dirty.ts');
+        else expect(cap.lines.join('\n')).toMatch(/version control/);
+      }
+    });
+
     it('not a git repository fails non-interactively, asks interactively', async () => {
       const git = vi.fn(async () => ({ repo: false, changed: [] }));
       const r = await runJavaScriptInstall(

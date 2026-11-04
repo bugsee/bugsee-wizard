@@ -99,6 +99,13 @@ function listFiles(files: readonly string[]): string {
   return [...shown, ...(more > 0 ? [`  …and ${more} more`] : [])].join('\n');
 }
 
+/** A one-line-per-problem note on the git state (for runs that do not stop on it), or undefined. */
+export function describeGitState(state: GitState): string | undefined {
+  if (!state.repo) return 'This project is not under version control (git).';
+  if (state.changed.length === 0) return undefined;
+  return `The git working tree has uncommitted changes:\n${listFiles(state.changed)}`;
+}
+
 /**
  * The version-control precondition: the wizard edits files, so a clean git tree is the user's undo.
  * `--ignore-git-changes` proceeds; otherwise interactive runs ask and non-interactive runs fail.

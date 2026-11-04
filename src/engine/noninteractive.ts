@@ -105,9 +105,11 @@ export function buildOptions(opts: RawCliOptions, env: NodeJS.ProcessEnv): Built
   const e = readEnvFlags(env);
   const pkg = present(opts.package) ?? e.package;
   const token = present(opts.token);
-  const sdkVersion = present(opts.sdkVersion) ?? present(env.BUGSEE_WIZARD_SDK_VERSION);
-  if (sdkVersion !== undefined && semver.valid(sdkVersion) === null) {
-    throw new Error(`Invalid SDK version "${sdkVersion}": expected an exact semantic version`);
+  const rawSdk = present(opts.sdkVersion) ?? present(env.BUGSEE_WIZARD_SDK_VERSION);
+  // normalized: `v1.2.3` and ` 1.2.3 ` both become `1.2.3`
+  const sdkVersion = rawSdk === undefined ? undefined : semver.valid(rawSdk.trim());
+  if (sdkVersion === null) {
+    throw new Error(`Invalid SDK version "${rawSdk}": expected an exact semantic version`);
   }
   return {
     cwd: opts.cwd,
