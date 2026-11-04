@@ -61,6 +61,76 @@ end
   });
 });
 
+describe('findTargetBlock with Ruby blocks', () => {
+  const span = (src: string) => {
+    const b = findTargetBlock(src, 'App');
+    if (!b) throw new Error('target not found');
+    return b;
+  };
+
+  it('does not close the target on the end of an inner if', () => {
+    const src = `target 'App' do
+  use_frameworks!
+  if ENV['FOO'] == '1'
+    pod 'Optional'
+  end
+  pod 'Other'
+end
+`;
+    const b = span(src);
+    expect(src.slice(b.bodyStart, b.bodyEnd)).toContain("pod 'Other'");
+    expect(src.slice(b.end)).toBe('\n');
+  });
+
+  it('handles unless/case/begin/def/while/until/for, incl. loops with do', () => {
+    const src = `target 'App' do
+  unless ENV['A']
+    pod 'A'
+  end
+  case ENV['B']
+  when 'x'
+    pod 'B'
+  end
+  begin
+    pod 'C'
+  rescue StandardError
+    nil
+  end
+  def helper
+    1
+  end
+  while false do
+    pod 'W'
+  end
+  until true
+    pod 'U'
+  end
+  for i in 1..2 do
+    pod 'F'
+  end
+  x = if ENV['Z'] then 1 else 2 end
+  pod 'Last'
+end
+`;
+    const b = span(src);
+    expect(src.slice(b.bodyStart, b.bodyEnd)).toContain("pod 'Last'");
+    expect(src.slice(b.end)).toBe('\n');
+  });
+
+  it('does not count modifier forms or keywords in comments/strings', () => {
+    const src = `target 'App' do
+  pod 'A' if ENV['A']
+  pod 'B' unless ENV['B']
+  # if this were counted we would never close
+  pod 'C', :path => "if/while"
+end
+`;
+    const b = span(src);
+    expect(src.slice(b.bodyStart, b.bodyEnd)).toContain("pod 'C'");
+    expect(src.slice(b.end)).toBe('\n');
+  });
+});
+
 let fixture: string | undefined;
 afterEach(async () => {
   if (fixture) {
@@ -103,6 +173,31 @@ describe('addPodStep', () => {
     if (podIdx > innerTargetIdx) {
       expect(podIdx).toBeGreaterThan(innerEndIdx);
     }
+  });
+
+  it('inserts after an inner if block and re-run precheck is satisfied', async () => {
+    const podfile = `target 'App' do
+  use_frameworks!
+  if ENV['FOO'] == '1'
+    pod 'Optional'
+  end
+  pod 'Other'
+end
+`;
+    fixture = await makeFixture({ Podfile: podfile });
+    const ctx = makeIosContext({
+      cwd: fixture,
+      schemeName: 'App',
+      podfilePath: `${fixture}/Podfile`,
+      iosOptions: { distribution: 'cocoapods' },
+    });
+    expect(await addPodStep.precheck(ctx)).toEqual({ kind: 'pending' });
+    await addPodStep.apply(ctx);
+    const updated = await readFixture(fixture, 'Podfile');
+    expect(updated.indexOf("pod 'Bugsee'")).toBeGreaterThan(updated.indexOf("pod 'Other'"));
+    expect(await addPodStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+    await addPodStep.rollback(ctx);
+    expect(await readFixture(fixture, 'Podfile')).toBe(podfile);
   });
 
   it('rolls back to original Podfile', async () => {
