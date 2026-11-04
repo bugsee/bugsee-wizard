@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { discoverAndroidPaths } from '../../src/recipes/android/paths.js';
 import {
+  cleanup,
+  makeFixture,
   SAMPLE_GROOVY_APP_BUILD,
   SAMPLE_GROOVY_PROJECT_BUILD,
   SAMPLE_GROOVY_SETTINGS_NO_MAVEN,
@@ -11,8 +13,6 @@ import {
   SAMPLE_KOTLIN_SETTINGS_WITH_MAVEN,
   SAMPLE_RN_APP_BUILD,
   SAMPLE_RN_PROJECT_BUILD,
-  cleanup,
-  makeFixture,
 } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({

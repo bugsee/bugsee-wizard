@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "ignore": ["dist", "node_modules", "coverage"]
+    "includes": ["**", "!**/dist", "!**/node_modules", "!**/coverage", "!**/*.md", "!**/*.yml"]
   },
   "formatter": {
     "enabled": true,
@@ -25,7 +25,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "style": {
         "useImportType": "error",
         "useNodejsImportProtocol": "error",

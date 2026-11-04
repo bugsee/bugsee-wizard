@@ -2,7 +2,7 @@ import * as clack from '@clack/prompts';
 
 import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
-import { type Step, runRollback, runSteps } from '../../core/step.js';
+import { runRollback, runSteps, type Step } from '../../core/step.js';
 import { discoverIosPaths } from './paths.js';
 import { isPodOnPath } from './pod.js';
 import { addPodStep } from './steps/add-pod.js';

@@ -10,6 +10,10 @@ import { injectManifestMetaStep } from '../../src/recipes/android/steps/inject-m
 import { injectManifestPlaceholderStep } from '../../src/recipes/android/steps/inject-manifest-placeholder.js';
 import { writeBugseePropertiesStep } from '../../src/recipes/android/steps/write-bugsee-properties.js';
 import {
+  cleanup,
+  makeAndroidContext,
+  makeFixture,
+  readFixture,
   SAMPLE_GROOVY_APP_BUILD,
   SAMPLE_GROOVY_SETTINGS_NO_MAVEN,
   SAMPLE_KOTLIN_APP_BUILD,
@@ -19,10 +23,6 @@ import {
   SAMPLE_MANIFEST,
   SAMPLE_RN_APP_BUILD,
   SAMPLE_RN_PROJECT_BUILD,
-  cleanup,
-  makeAndroidContext,
-  makeFixture,
-  readFixture,
 } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({

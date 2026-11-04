@@ -1,7 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
 import { cp } from 'node:fs/promises';
 import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { runIosRollback } from '../../src/recipes/ios/run.js';
 import { addPodStep } from '../../src/recipes/ios/steps/add-pod.js';
@@ -9,13 +8,13 @@ import { addSchemePostActionStep } from '../../src/recipes/ios/steps/add-scheme-
 import { addSpmDependencyStep } from '../../src/recipes/ios/steps/add-spm-dependency.js';
 import { injectAppDelegateStep } from '../../src/recipes/ios/steps/inject-app-delegate.js';
 import {
-  SAMPLE_APP_DELEGATE_SWIFT,
-  SAMPLE_RN_PODFILE,
-  SAMPLE_XCSCHEME,
   cleanup,
   makeFixture,
   makeIosContext,
   readFixture,
+  SAMPLE_APP_DELEGATE_SWIFT,
+  SAMPLE_RN_PODFILE,
+  SAMPLE_XCSCHEME,
 } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({

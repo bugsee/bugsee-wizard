@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { discoverIosPaths } from '../../src/recipes/ios/paths.js';
 import {
+  cleanup,
+  makeFixture,
   SAMPLE_APP_DELEGATE_SWIFT,
   SAMPLE_RN_PODFILE,
   SAMPLE_XCSCHEME,
-  cleanup,
-  makeFixture,
 } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({

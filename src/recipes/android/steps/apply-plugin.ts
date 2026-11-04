@@ -4,9 +4,9 @@ import type { Step, StepStatus } from '../../../core/step.js';
 import { findBlock } from '../blocks.js';
 import { readOrNull, stripMarkerBlock } from '../io.js';
 import {
+  type AndroidContext,
   APPLY_PLUGIN_MARKER_BEGIN,
   APPLY_PLUGIN_MARKER_END,
-  type AndroidContext,
   BUGSEE_PLUGIN_ID,
   BUGSEE_PLUGIN_VERSION,
   type GradleDsl,

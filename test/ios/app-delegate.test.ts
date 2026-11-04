@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { injectAppDelegateStep } from '../../src/recipes/ios/steps/inject-app-delegate.js';
 import {
-  SAMPLE_APP_DELEGATE_OBJC,
-  SAMPLE_APP_DELEGATE_SWIFT,
   cleanup,
   makeFixture,
   makeIosContext,
   readFixture,
+  SAMPLE_APP_DELEGATE_OBJC,
+  SAMPLE_APP_DELEGATE_SWIFT,
 } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({

@@ -4,13 +4,13 @@ import { ensureRnBugseePackageStep } from '../../src/recipes/react-native/steps/
 import { injectJsEntryStep } from '../../src/recipes/react-native/steps/inject-js-entry.js';
 import { runPackageInstallStep } from '../../src/recipes/react-native/steps/run-package-install.js';
 import {
-  SAMPLE_APP_TSX,
-  SAMPLE_INDEX_JS,
-  SAMPLE_RN_PACKAGE_JSON,
   cleanup,
   makeFixture,
   makeRnContext,
   readFixture,
+  SAMPLE_APP_TSX,
+  SAMPLE_INDEX_JS,
+  SAMPLE_RN_PACKAGE_JSON,
 } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({

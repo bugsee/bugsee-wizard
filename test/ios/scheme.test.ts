@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { addSchemePostActionStep } from '../../src/recipes/ios/steps/add-scheme-postaction.js';
 import {
-  SAMPLE_XCSCHEME,
-  SAMPLE_XCSCHEME_SELFCLOSING_ARCHIVE,
-  SAMPLE_XCSCHEME_WITH_USER_POSTACTION,
   cleanup,
   makeFixture,
   makeIosContext,
   readFixture,
+  SAMPLE_XCSCHEME,
+  SAMPLE_XCSCHEME_SELFCLOSING_ARCHIVE,
+  SAMPLE_XCSCHEME_WITH_USER_POSTACTION,
 } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({

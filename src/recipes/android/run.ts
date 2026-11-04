@@ -1,9 +1,8 @@
-import * as clack from '@clack/prompts';
-
 import { readFile } from 'node:fs/promises';
+import * as clack from '@clack/prompts';
 import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
-import { type Step, runRollback, runSteps } from '../../core/step.js';
+import { runRollback, runSteps, type Step } from '../../core/step.js';
 
 import { discoverAndroidPaths } from './paths.js';
 import { detectProcessConfig } from './process-config.js';

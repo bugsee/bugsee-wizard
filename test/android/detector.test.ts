@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { androidDetector } from '../../src/detectors/android.js';
 import {
-  SAMPLE_KOTLIN_APP_BUILD,
-  SAMPLE_KOTLIN_SETTINGS_WITH_MAVEN,
   cleanup,
   makeFixture,
+  SAMPLE_KOTLIN_APP_BUILD,
+  SAMPLE_KOTLIN_SETTINGS_WITH_MAVEN,
 } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({

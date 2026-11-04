@@ -3,12 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { findTargetBlock } from '../../src/recipes/ios/podfile.js';
 import { addPodStep } from '../../src/recipes/ios/steps/add-pod.js';
 import {
-  SAMPLE_RN_PODFILE,
-  SAMPLE_SIMPLE_PODFILE,
   cleanup,
   makeFixture,
   makeIosContext,
   readFixture,
+  SAMPLE_RN_PODFILE,
+  SAMPLE_SIMPLE_PODFILE,
 } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({

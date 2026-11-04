@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { injectProviderOverrideStep } from '../../src/recipes/android/steps/inject-provider-override.js';
 import {
-  SAMPLE_MANIFEST,
   cleanup,
   makeAndroidContext,
   makeFixture,
   readFixture,
+  SAMPLE_MANIFEST,
 } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({

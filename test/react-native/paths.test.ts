@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { discoverJsEntry, discoverRnPaths } from '../../src/recipes/react-native/paths.js';
-import { SAMPLE_APP_TSX, SAMPLE_INDEX_JS, cleanup, makeFixture } from './helpers.js';
+import { cleanup, makeFixture, SAMPLE_APP_TSX, SAMPLE_INDEX_JS } from './helpers.js';
 
 vi.mock('@clack/prompts', () => ({
   log: {

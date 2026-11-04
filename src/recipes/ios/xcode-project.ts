@@ -1,9 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
-
-import * as xcode from 'xcode';
-
 import type { PBXNativeTarget, UUID, XcodeProject as XcodeProjectInternal } from 'xcode';
+import * as xcode from 'xcode';
 
 /** Loose alias used while traversing the parsed pbxproj graph. */
 type Section = Record<string, Record<string, unknown> | string>;

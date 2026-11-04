@@ -13,7 +13,7 @@ import {
 } from '../types.js';
 
 const CLASSPATH_PRESENT_RE = new RegExp(
-  `["']${BUGSEE_GRADLE_PLUGIN_ARTIFACT.replace(/[.:\-]/g, (c) => `\\${c}`)}`,
+  `["']${BUGSEE_GRADLE_PLUGIN_ARTIFACT.replace(/[.:-]/g, (c) => `\\${c}`)}`,
 );
 
 function classpathBlock(dsl: GradleDsl): string {

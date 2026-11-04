@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { WizardContext } from '../src/core/context.js';
 import { createLogger } from '../src/core/logger.js';
-import { type Step, runRollback, runSteps } from '../src/core/step.js';
+import { runRollback, runSteps, type Step } from '../src/core/step.js';
 
 vi.mock('@clack/prompts', () => ({
   log: {
