@@ -18,6 +18,14 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*", "test/**/*", "vitest.config.ts", "tsup.config.ts"],
+  "include": [
+    "src/**/*",
+    "test/**/*",
+    "e2e/**/*.ts",
+    "e2e/**/*.d.mts",
+    "vitest.config.ts",
+    "vitest.e2e.config.ts",
+    "tsup.config.ts"
+  ],
   "exclude": ["test/fixtures/configs", "test/fixtures/js"]
 }
