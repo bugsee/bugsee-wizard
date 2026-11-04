@@ -183,4 +183,10 @@ describe('program definition', () => {
     expect(parse(['--no-ignore-git-changes']).ignoreGitChanges).toBe(false);
     expect(parse(['--no-non-interactive']).nonInteractive).toBe(false);
   });
+  it('--sdk-version carries a string through to buildOptions and names its env var', () => {
+    const p = createBaseProgram().exitOverride();
+    p.parse(['--sdk-version', '0.1.0-beta.7'], { from: 'user' });
+    expect(buildOptions(p.opts(), {}).sdkVersion).toBe('0.1.0-beta.7');
+    expect(help).toContain('BUGSEE_WIZARD_SDK_VERSION');
+  });
 });

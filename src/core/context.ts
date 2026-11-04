@@ -14,6 +14,8 @@ export interface WizardOptions {
   readonly package?: string;
   /** Explicit `--token` value; `BUGSEE_APP_TOKEN` is resolved by selectTokenSource and never stored here. */
   readonly token?: string;
+  /** `--sdk-version` / `BUGSEE_WIZARD_SDK_VERSION`: the SDK version recipes are resolved for. */
+  readonly sdkVersion?: string;
 }
 
 export interface WizardContext extends WizardOptions {

@@ -38,6 +38,10 @@ export function createBaseProgram() {
       'confirm destructive actions such as uninstall in non-interactive mode (env: BUGSEE_WIZARD_YES)',
     )
     .option('--no-yes', 'override the env var and turn this off')
+    .option(
+      '--sdk-version <version>',
+      'resolve recipes for this exact SDK version instead of the npm "beta" tag (env: BUGSEE_WIZARD_SDK_VERSION)',
+    )
     .addHelpText(
       'after',
       '\nPrecedence: an explicit flag always wins over its environment variable.\nTruthy env values: 1, true, yes.',

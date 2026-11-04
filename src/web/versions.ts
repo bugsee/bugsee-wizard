@@ -2,6 +2,11 @@ import semver from 'semver';
 
 import type { JsDetection } from './detect.js';
 
+/** The npm dist-tag the wizard installs while the SDK is in beta (spec C5). */
+export const SDK_TAG = 'beta';
+/** The SDK version used to pick recipes when the npm registry cannot be reached. */
+export const SDK_FALLBACK_VERSION = '0.1.0-beta.5';
+
 /**
  * The supported-version table (one place). Keys are the package names that identify a tool;
  * `node` / `bun` / `deno` are runtime floors. `min` is the lowest supported version.

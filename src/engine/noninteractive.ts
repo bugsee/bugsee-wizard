@@ -1,3 +1,5 @@
+import semver from 'semver';
+
 import { createLogger, type Logger } from '../core/logger.js';
 
 /** Missing required input in non-interactive mode (exit code 2). Never carries a value, only the field name. */
@@ -67,6 +69,7 @@ export interface RawCliOptions {
   readonly token?: string | undefined;
   readonly ignoreGitChanges?: boolean | undefined;
   readonly yes?: boolean | undefined;
+  readonly sdkVersion?: string | undefined;
 }
 
 export interface BuiltOptions {
@@ -79,6 +82,8 @@ export interface BuiltOptions {
   readonly yes: boolean;
   readonly package?: string;
   readonly token?: string;
+  /** Pins the SDK version recipes are resolved for (skips the npm registry lookup). */
+  readonly sdkVersion?: string;
 }
 
 /** Empty or whitespace-only strings count as absent. */
@@ -95,6 +100,10 @@ export function buildOptions(opts: RawCliOptions, env: NodeJS.ProcessEnv): Built
   const e = readEnvFlags(env);
   const pkg = present(opts.package) ?? e.package;
   const token = present(opts.token);
+  const sdkVersion = present(opts.sdkVersion) ?? present(env.BUGSEE_WIZARD_SDK_VERSION);
+  if (sdkVersion !== undefined && semver.valid(sdkVersion) === null) {
+    throw new Error(`Invalid SDK version "${sdkVersion}": expected an exact semantic version`);
+  }
   return {
     cwd: opts.cwd,
     debug: opts.debug,
@@ -105,6 +114,7 @@ export function buildOptions(opts: RawCliOptions, env: NodeJS.ProcessEnv): Built
     yes: opts.yes ?? e.yes,
     ...(pkg === undefined ? {} : { package: pkg }),
     ...(token === undefined ? {} : { token }),
+    ...(sdkVersion === undefined ? {} : { sdkVersion }),
   };
 }
 
