@@ -10,14 +10,21 @@ export interface EditResult {
 
 /** Write `content` to `path` via a temp file in the same directory + rename. */
 export async function writeFileAtomic(path: string, content: string): Promise<void> {
-  // Write through symlinks: the temp file lives beside the real target.
-  const target = await realpath(path);
+  // Write through symlinks: the temp file lives beside the real target. A target that does not
+  // exist yet is created (still via temp + rename, so a crash never leaves a truncated file).
+  let target = path;
+  let mode: number | undefined;
+  try {
+    target = await realpath(path);
+    mode = (await stat(target)).mode & 0o777;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
   const tmp = join(dirname(target), `.${basename(target)}.${randomBytes(6).toString('hex')}.tmp`);
   try {
-    const mode = (await stat(target)).mode & 0o777;
-    await writeFile(tmp, content, { encoding: 'utf8', mode });
+    await writeFile(tmp, content, mode === undefined ? 'utf8' : { encoding: 'utf8', mode });
     // writeFile's mode is masked by the umask; restore the original permissions exactly.
-    await chmod(tmp, mode);
+    if (mode !== undefined) await chmod(tmp, mode);
     await rename(tmp, target);
   } catch (err) {
     await rm(tmp, { force: true });

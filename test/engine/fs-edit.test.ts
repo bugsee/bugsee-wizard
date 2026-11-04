@@ -125,3 +125,16 @@ describe('editTextFile', () => {
     expect((await stat(p)).mode & 0o777).toBe(0o664);
   });
 });
+
+describe('writeFileAtomic on a new file', () => {
+  it('creates the file, leaving no temp files', async () => {
+    const { dir, cleanup } = await makeTmp();
+    try {
+      await writeFileAtomic(join(dir, 'fresh.json'), 'hello');
+      expect(await readFile(join(dir, 'fresh.json'), 'utf8')).toBe('hello');
+      expect(await readdir(dir)).toEqual(['fresh.json']);
+    } finally {
+      await cleanup();
+    }
+  });
+});

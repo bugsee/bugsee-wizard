@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -423,6 +423,7 @@ describe('rollbackFromManifest', () => {
   it('resolves monorepo-root files outside the manifest dir', async () => {
     const pkg = join(dir, 'pkg');
     await mkdir(pkg);
+    await mkdir(join(dir, '.git'));
     await writeFile(join(dir, 'lock.json'), 'newlock');
     const r = createManifestRecorder(pkg, META, { cwd: pkg });
     r.record({
@@ -439,5 +440,293 @@ describe('rollbackFromManifest', () => {
     });
     expect(out.results[0]?.outcome).toBe('reverted');
     expect(await readFile(join(dir, 'lock.json'), 'utf8')).toBe('oldlock');
+  });
+});
+
+const H = (c: string): string => sha(c);
+const hand = async (entries: unknown[]): Promise<void> => {
+  await mkdir(join(dir, '.bugsee', 'backup'), { recursive: true });
+  await writeFile(mpath(), JSON.stringify({ schema: 1, wizard: 'x', recipes: [], entries }));
+};
+
+describe('containment (crafted manifests)', () => {
+  const base = (over: Record<string, unknown>) => ({ file: 'a', action: 'created', ...over });
+  it.each([
+    [
+      'backup not a hash name',
+      { action: 'edited', beforeSha256: H('m'), backup: '.bugsee/backup/anything' },
+    ],
+    [
+      'backup does not match beforeSha256',
+      { action: 'edited', beforeSha256: H('m'), backup: `.bugsee/backup/${H('n')}` },
+    ],
+    ['backup without before hash', { action: 'edited', backup: `.bugsee/backup/${H('m')}` }],
+    [
+      'uppercase hash',
+      {
+        action: 'edited',
+        beforeSha256: H('m').toUpperCase(),
+        backup: `.bugsee/backup/${H('m').toUpperCase()}`,
+      },
+    ],
+    [
+      'backup with dotdot',
+      { action: 'edited', beforeSha256: H('m'), backup: `.bugsee/backup/../${H('m')}` },
+    ],
+    [
+      'backup with backslash',
+      { action: 'edited', beforeSha256: H('m'), backup: `.bugsee\\backup\\${H('m')}` },
+    ],
+    ['file with NUL', { file: 'a\0b' }],
+    ['file with backslash', { file: '..\\x' }],
+  ])('loadManifest rejects: %s', async (_n, over) => {
+    await hand([base(over)]);
+    expect(await loadManifest(dir)).toBeNull();
+  });
+
+  it('the package.json/backup overwrite attack is rejected at load; nothing is touched', async () => {
+    await writeFile(join(dir, 'package.json'), '{"name":"real"}');
+    await hand([
+      {
+        file: 'package.json',
+        action: 'edited',
+        afterSha256: H('{"name":"real"}'),
+        beforeSha256: H('evil'),
+        backup: '.bugsee/backup/anything',
+      },
+    ]);
+    await writeFile(join(dir, '.bugsee/backup/anything'), 'evil');
+    expect(await rb()).toEqual({ results: [], failed: false });
+    expect(await readFile(join(dir, 'package.json'), 'utf8')).toBe('{"name":"real"}');
+  });
+
+  describe('root containment', () => {
+    let proj: string;
+    beforeEach(async () => {
+      proj = join(dir, 'proj');
+      await mkdir(join(proj, '.git'), { recursive: true });
+    });
+    const rbp = () => rollbackFromManifest({ dir: proj, log: makeCtx(proj).log, dryRun: false });
+    const handp = async (entries: unknown[]): Promise<void> => {
+      await mkdir(join(proj, '.bugsee'), { recursive: true });
+      await writeFile(
+        join(proj, '.bugsee', 'wizard-manifest.json'),
+        JSON.stringify({ schema: 1, wizard: 'x', recipes: [], entries }),
+      );
+    };
+
+    it('an env entry aimed outside the root is manual and strips nothing', async () => {
+      await writeFile(join(dir, '.bashrc'), 'PATH=/x\nA=1\n');
+      await handp([{ file: '../.bashrc', action: 'edited', marker: 'env:PATH' }]);
+      const out = await rbp();
+      expect(out.results[0]?.outcome).toBe('manual');
+      expect(out.results[0]?.note).toBeTruthy();
+      expect(await readFile(join(dir, '.bashrc'), 'utf8')).toBe('PATH=/x\nA=1\n');
+    });
+
+    it('a created entry escaping the root with a matching hash is not deleted', async () => {
+      await writeFile(join(dir, 'victim'), 'known');
+      await handp([{ file: '../victim', action: 'created', afterSha256: H('known') }]);
+      const out = await rbp();
+      expect(out.results[0]?.outcome).toBe('manual');
+      expect(await readFile(join(dir, 'victim'), 'utf8')).toBe('known');
+    });
+
+    it('an edited entry escaping the root is not restored', async () => {
+      await writeFile(join(dir, 'victim'), 'cur');
+      await mkdir(join(proj, '.bugsee', 'backup'), { recursive: true });
+      await writeFile(join(proj, '.bugsee', 'backup', H('evil')), 'evil');
+      await handp([
+        {
+          file: '../victim',
+          action: 'edited',
+          afterSha256: H('cur'),
+          beforeSha256: H('evil'),
+          backup: `.bugsee/backup/${H('evil')}`,
+        },
+      ]);
+      const out = await rbp();
+      expect(out.results[0]?.outcome).toBe('manual');
+      expect(await readFile(join(dir, 'victim'), 'utf8')).toBe('cur');
+    });
+
+    it('env rollback only applies to .env* files and valid keys', async () => {
+      await writeFile(join(proj, 'package.json'), 'PATH=1\n');
+      await writeFile(join(proj, '.env'), 'A B=1\nK=1\n');
+      await handp([
+        { file: 'package.json', action: 'edited', marker: 'env:PATH' },
+        { file: '.env', action: 'edited', marker: 'env:A B' },
+      ]);
+      const out = await rbp();
+      expect(out.results.map((r) => r.outcome)).toEqual(['manual', 'manual']);
+      expect(await readFile(join(proj, 'package.json'), 'utf8')).toBe('PATH=1\n');
+      expect(await readFile(join(proj, '.env'), 'utf8')).toBe('A B=1\nK=1\n');
+    });
+
+    it.skipIf(process.platform === 'win32')(
+      'a symlink pointing outside the root is not followed',
+      async () => {
+        await writeFile(join(dir, 'secret'), 'known');
+        await symlink(join(dir, 'secret'), join(proj, 'link'));
+        await mkdir(join(dir, 'outdir'));
+        await writeFile(join(dir, 'outdir', 'f'), 'known');
+        await symlink(join(dir, 'outdir'), join(proj, 'dlink'));
+        await handp([
+          { file: 'link', action: 'created', afterSha256: H('known') },
+          { file: 'dlink/f', action: 'created', afterSha256: H('known') },
+        ]);
+        const out = await rbp();
+        expect(out.results.map((r) => r.outcome)).toEqual(['manual', 'manual']);
+        expect(await readFile(join(dir, 'secret'), 'utf8')).toBe('known');
+        expect(await readFile(join(dir, 'outdir', 'f'), 'utf8')).toBe('known');
+      },
+    );
+
+    it.skipIf(process.platform === 'win32')(
+      'a backup dir symlinked outside the root is not read',
+      async () => {
+        await mkdir(join(dir, 'outbk'));
+        await writeFile(join(dir, 'outbk', H('evil')), 'evil');
+        await mkdir(join(proj, '.bugsee'), { recursive: true });
+        await symlink(join(dir, 'outbk'), join(proj, '.bugsee', 'backup'));
+        await writeFile(join(proj, 'f.txt'), 'cur');
+        await handp([
+          {
+            file: 'f.txt',
+            action: 'edited',
+            afterSha256: H('cur'),
+            beforeSha256: H('evil'),
+            backup: `.bugsee/backup/${H('evil')}`,
+          },
+        ]);
+        const out = await rbp();
+        expect(out.results[0]?.outcome).toBe('manual');
+        expect(await readFile(join(proj, 'f.txt'), 'utf8')).toBe('cur');
+      },
+    );
+
+    it('a workspace root above the package dir is the allowed root', async () => {
+      await rm(join(proj, '.git'), { recursive: true });
+      await writeFile(join(proj, 'package.json'), JSON.stringify({ workspaces: ['pkg'] }));
+      const pkg = join(proj, 'pkg');
+      await mkdir(pkg);
+      await writeFile(join(proj, 'lock.json'), 'new');
+      await mkdir(join(pkg, '.bugsee', 'backup'), { recursive: true });
+      await writeFile(join(pkg, '.bugsee', 'backup', H('old')), 'old');
+      await writeFile(
+        join(pkg, '.bugsee', 'wizard-manifest.json'),
+        JSON.stringify({
+          schema: 1,
+          wizard: 'x',
+          recipes: [],
+          entries: [
+            {
+              file: '../lock.json',
+              action: 'edited',
+              beforeSha256: H('old'),
+              afterSha256: H('new'),
+              backup: `.bugsee/backup/${H('old')}`,
+            },
+          ],
+        }),
+      );
+      const out = await rollbackFromManifest({ dir: pkg, log: makeCtx(pkg).log, dryRun: false });
+      expect(out.results[0]?.outcome).toBe('reverted');
+      expect(await readFile(join(proj, 'lock.json'), 'utf8')).toBe('old');
+    });
+  });
+});
+
+describe('idempotent partial rollback', () => {
+  it('re-running after a partial rollback converges and cleans up', async () => {
+    await writeFile(join(dir, 'a.txt'), 'a-new');
+    await writeFile(join(dir, 'b.txt'), 'b-new');
+    await writeFile(join(dir, 'c.txt'), 'c-new');
+    const r = createManifestRecorder(dir, META);
+    r.record({ file: 'a.txt', action: 'edited', before: 'a-old', after: 'a-new' });
+    r.record({ file: 'b.txt', action: 'edited', before: 'b-old', after: 'b-new' });
+    r.record({ file: 'c.txt', action: 'created', after: 'c-new' });
+    r.record({ file: 'm.txt', action: 'manual' });
+    await r.flush();
+    await writeFile(join(dir, 'b.txt'), 'user edit');
+    const one = await rb();
+    expect(one.results.map((x) => x.outcome)).toEqual(['reverted', 'manual', 'deleted', 'manual']);
+    expect(await exists(mpath())).toBe(true);
+    // resolved entries are pruned from the kept manifest
+    expect((await loadManifest(dir))?.entries.map((e) => e.file)).toEqual(['b.txt', 'm.txt']);
+    expect(await readdir(join(dir, '.bugsee', 'backup'))).toEqual([H('b-old')]);
+    const two = await rb();
+    expect(two.results.map((x) => x.file)).toEqual(['b.txt', 'm.txt']);
+    expect(two.results[0]?.outcome).toBe('manual');
+    expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('a-old');
+    await writeFile(join(dir, 'b.txt'), 'b-new'); // the user puts it back
+    const three = await rb();
+    expect(three.results.map((x) => x.outcome)).toEqual(['reverted', 'manual']);
+    expect(await readFile(join(dir, 'b.txt'), 'utf8')).toBe('b-old');
+    expect(await exists(join(dir, '.bugsee'))).toBe(false);
+  });
+
+  it('an edited file already back at its pre-wizard content counts as reverted', async () => {
+    await writeFile(join(dir, 'a.txt'), 'a-old');
+    await recordEntry(dir, { file: 'a.txt', action: 'edited', before: 'a-old', after: 'a-new' });
+    const out = await rb();
+    expect(out.results[0]?.outcome).toBe('reverted');
+    expect(await exists(join(dir, '.bugsee'))).toBe(false);
+  });
+
+  it('a dry run prunes nothing', async () => {
+    await writeFile(join(dir, 'a.txt'), 'a-new');
+    await writeFile(join(dir, 'b.txt'), 'user');
+    const r = createManifestRecorder(dir, META);
+    r.record({ file: 'a.txt', action: 'created', after: 'a-new' });
+    r.record({ file: 'b.txt', action: 'created', after: 'b-new' });
+    await r.flush();
+    await rb(true);
+    expect((await loadManifest(dir))?.entries).toHaveLength(2);
+  });
+});
+
+describe('flush safety', () => {
+  it('quarantines an invalid existing manifest instead of overwriting it', async () => {
+    await mkdir(join(dir, '.bugsee'));
+    const bad = JSON.stringify({ schema: 2, wizard: 'future', recipes: [], entries: [] });
+    await writeFile(mpath(), bad);
+    const r = createManifestRecorder(dir, META);
+    r.record({ file: 'a', action: 'created', after: 'x' });
+    const res = await r.flush();
+    expect(res.quarantined).toMatch(/wizard-manifest\.json\.bad-/);
+    expect(await readFile(join(dir, res.quarantined ?? ''), 'utf8')).toBe(bad);
+    expect((await loadManifest(dir))?.entries).toHaveLength(1);
+    await writeFile(mpath(), '{trunc');
+    const r2 = createManifestRecorder(dir, META);
+    r2.record({ file: 'b', action: 'created', after: 'x' });
+    const res2 = await r2.flush();
+    expect(res2.quarantined).not.toBe(res.quarantined);
+    expect(await readFile(join(dir, res.quarantined ?? ''), 'utf8')).toBe(bad);
+  });
+
+  it('reports no quarantine when the manifest is fine or missing', async () => {
+    const r = createManifestRecorder(dir, META);
+    r.record({ file: 'a', action: 'created', after: 'x' });
+    expect((await r.flush()).quarantined).toBeUndefined();
+    r.record({ file: 'b', action: 'created', after: 'x' });
+    expect((await r.flush()).quarantined).toBeUndefined();
+  });
+
+  it('writes the manifest atomically (no temp files left, first write included)', async () => {
+    await recordEntry(dir, { file: 'a', action: 'created', after: 'x' });
+    expect(await readdir(join(dir, '.bugsee'))).toEqual(['wizard-manifest.json']);
+  });
+
+  it('does not duplicate the .gitignore line across flushes', async () => {
+    const r = createManifestRecorder(dir, META);
+    r.record({ file: 'a', action: 'created', after: 'x' });
+    await r.flush();
+    r.record({ file: 'b', action: 'created', after: 'x' });
+    await r.flush();
+    const lines = (await readFile(join(dir, '.gitignore'), 'utf8'))
+      .split('\n')
+      .filter((l) => l === '.bugsee/');
+    expect(lines).toHaveLength(1);
   });
 });

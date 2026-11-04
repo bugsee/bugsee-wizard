@@ -1,9 +1,11 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, rm, rmdir, stat, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Logger } from '../core/logger.js';
 import { writeFileAtomic } from './fs-edit.js';
 import { ensureGitignoreLine } from './gitignore.js';
+import { resolveInside } from './ops/shared.js';
+import { findWorkspace } from './workspace.js';
 
 /** What ops hand to the recorder. `file` is relative to the wizard's cwd; before/after are file TEXT. */
 export interface ManifestEntry {
@@ -56,20 +58,29 @@ const entryKey = (e: { file: string; marker?: string | undefined }): string =>
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
+/** NUL or a backslash (a Windows separator that `..\\` could hide behind). */
+const UNSAFE_PATH = /[\0\\]/;
+const SHA256_RE = /^[0-9a-f]{64}$/;
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const optString = (v: unknown): boolean => v === undefined || typeof v === 'string';
 
 function validEntry(e: unknown): e is ManifestFileEntry {
   if (!isRecord(e)) return false;
-  if (typeof e['file'] !== 'string' || e['file'] === '' || isAbsolute(e['file'])) return false;
+  const file = e['file'];
+  if (typeof file !== 'string' || file === '' || isAbsolute(file) || UNSAFE_PATH.test(file)) {
+    return false;
+  }
   if (e['action'] !== 'created' && e['action'] !== 'edited' && e['action'] !== 'manual')
     return false;
   if (!optString(e['beforeSha256']) || !optString(e['afterSha256']) || !optString(e['marker'])) {
     return false;
   }
+  // the backup name is derived, never free-form: exactly `.bugsee/backup/<beforeSha256>`
   const backup = e['backup'];
   if (backup !== undefined) {
-    if (typeof backup !== 'string') return false;
-    if (!backup.startsWith(`${BACKUP_DIR}/`) || backup.split('/').includes('..')) return false;
+    const before = e['beforeSha256'];
+    if (typeof before !== 'string' || !SHA256_RE.test(before)) return false;
+    if (backup !== `${BACKUP_DIR}/${before}`) return false;
   }
   return true;
 }
@@ -160,23 +171,24 @@ function mergeEntry(prev: ManifestFileEntry, next: Pending): Pending {
 async function persist(dir: string, manifest: Manifest, opts: RecorderOptions): Promise<void> {
   const path = join(dir, MANIFEST_FILE);
   await mkdir(dirname(path), { recursive: true });
-  const body = `${JSON.stringify(manifest, null, 2)}\n`;
-  if (
-    await stat(path).then(
-      () => true,
-      () => false,
-    )
-  )
-    await writeFileAtomic(path, body);
-  else await writeFile(path, body, 'utf8');
+  await writeFileAtomic(path, `${JSON.stringify(manifest, null, 2)}\n`);
   if (opts.ignoreInGit ?? true) await ensureGitignoreLine(dir, `${BUGSEE_DIR}/`);
+}
+
+/** Move an existing-but-invalid manifest aside (never overwrite it); returns the new relative path. */
+async function quarantine(dir: string): Promise<string | undefined> {
+  const path = join(dir, MANIFEST_FILE);
+  if ((await readIfExists(path)) === null) return undefined;
+  const rel = `${MANIFEST_FILE}.bad-${Date.now()}-${randomBytes(3).toString('hex')}`;
+  await rename(path, join(dir, rel));
+  return rel;
 }
 
 export function createManifestRecorder(
   dir: string,
   meta: { wizard: string; recipes: { id: string; revision: string }[] },
   opts: RecorderOptions = {},
-): ManifestRecorder & { flush(): Promise<void> } {
+): ManifestRecorder & { flush(): Promise<{ quarantined?: string }> } {
   const queue: ManifestEntry[] = [];
   const base = resolve(opts.cwd ?? dir);
   return {
@@ -186,6 +198,8 @@ export function createManifestRecorder(
     async flush() {
       const batch = queue.splice(0);
       const existing = await loadManifest(dir);
+      // an existing manifest we cannot read still holds the only record of the pre-wizard state
+      const quarantined = existing === null ? await quarantine(dir) : undefined;
       const order: string[] = [];
       const byKey = new Map<string, Pending>();
       for (const e of existing?.entries ?? []) {
@@ -220,6 +234,7 @@ export function createManifestRecorder(
         },
         opts,
       );
+      return quarantined === undefined ? {} : { quarantined };
     },
   };
 }
@@ -250,19 +265,50 @@ async function readIfExists(path: string): Promise<string | null> {
   }
 }
 
+/** The root rollback may touch: workspace root, else nearest `.git` ancestor, else the manifest dir. */
+async function allowedRoot(dir: string): Promise<string> {
+  const ws = await findWorkspace(dir);
+  if (ws !== null) return ws.root;
+  let cur = resolve(dir);
+  for (;;) {
+    if (await pathExists(join(cur, '.git'))) return cur;
+    const parent = dirname(cur);
+    if (parent === cur) return resolve(dir);
+    cur = parent;
+  }
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  return lstat(p).then(
+    () => true,
+    () => false,
+  );
+}
+
+const manual = (file: string, note: string): RollbackResult => ({ file, outcome: 'manual', note });
+
 async function rollbackEntry(
   dir: string,
+  root: string,
   e: ManifestFileEntry,
   dryRun: boolean,
 ): Promise<RollbackResult> {
   const file = e.file;
-  if (e.action === 'manual') return { file, outcome: 'manual', note: 'needs a manual step' };
-  const abs = resolve(dir, e.file);
+  if (e.action === 'manual') return manual(file, 'needs a manual step');
+  let abs: string;
+  try {
+    abs = await resolveInside(root, resolve(dir, e.file));
+  } catch {
+    return manual(file, 'resolves outside the project; left untouched');
+  }
   const current = await readIfExists(abs);
   if (current === null) return { file, outcome: 'missing' };
 
   if (isEnvMarker(e.marker)) {
     const key = e.marker.slice('env:'.length);
+    if (!basename(abs).startsWith('.env') || !ENV_KEY_RE.test(key)) {
+      return manual(file, 'not an env file or not a valid variable name; left untouched');
+    }
     const lines = current.split('\n');
     const kept = lines.filter((l) => KEY_LINE.exec(l)?.[1] !== key);
     if (kept.length === lines.length) {
@@ -277,38 +323,31 @@ async function rollbackEntry(
     return { file, outcome: 'reverted' };
   }
 
+  // already back at its pre-wizard content (an earlier, partial rollback): nothing left to do
+  if (e.action === 'edited' && e.beforeSha256 !== undefined && sha256(current) === e.beforeSha256) {
+    return { file, outcome: 'reverted', note: 'already reverted' };
+  }
   if (e.afterSha256 === undefined) {
-    return {
-      file,
-      outcome: 'manual',
-      note: 'no content hash was recorded; left untouched',
-    };
+    return manual(file, 'no content hash was recorded; left untouched');
   }
   if (sha256(current) !== e.afterSha256) {
-    return {
-      file,
-      outcome: 'manual',
-      note: 'changed since the wizard wrote it; left untouched',
-    };
+    return manual(file, 'changed since the wizard wrote it; left untouched');
   }
   if (e.action === 'created') {
     if (!dryRun) await rm(abs);
     return { file, outcome: 'deleted' };
   }
   if (e.backup === undefined || e.beforeSha256 === undefined) {
-    return {
-      file,
-      outcome: 'manual',
-      note: 'no backup was recorded; revert by hand',
-    };
+    return manual(file, 'no backup was recorded; revert by hand');
   }
-  const backup = await readIfExists(join(dir, e.backup));
+  let backup: string | null;
+  try {
+    backup = await readIfExists(await resolveInside(root, join(dir, e.backup)));
+  } catch {
+    return manual(file, 'backup resolves outside the project; revert by hand');
+  }
   if (backup === null || sha256(backup) !== e.beforeSha256) {
-    return {
-      file,
-      outcome: 'manual',
-      note: 'backup is missing or altered; revert by hand',
-    };
+    return manual(file, 'backup is missing or altered; revert by hand');
   }
   if (!dryRun) await writeFileAtomic(abs, backup);
   return { file, outcome: 'reverted' };
@@ -321,29 +360,55 @@ export async function rollbackFromManifest(ctx: {
 }): Promise<{ results: RollbackResult[]; failed: boolean }> {
   const manifest = await loadManifest(ctx.dir);
   if (manifest === null) return { results: [], failed: false };
+  const root = await allowedRoot(ctx.dir);
   const results: RollbackResult[] = [];
-  let failed = false;
+  const errored = new Set<number>();
   // reverse order: later changes are undone before the earlier ones they build on
-  for (const e of [...manifest.entries].reverse()) {
+  const order = manifest.entries.map((_, i) => i).reverse();
+  const byIndex = new Map<number, RollbackResult>();
+  for (const i of order) {
+    const e = manifest.entries[i];
+    if (e === undefined) continue;
     try {
-      results.push(await rollbackEntry(ctx.dir, e, ctx.dryRun));
+      byIndex.set(i, await rollbackEntry(ctx.dir, root, e, ctx.dryRun));
     } catch (err) {
-      failed = true;
+      errored.add(i);
       const note = err instanceof Error ? err.message : String(err);
       ctx.log.error(`Could not roll back ${e.file}: ${note}`);
-      results.push({ file: e.file, outcome: 'skipped', note });
+      byIndex.set(i, { file: e.file, outcome: 'skipped', note });
     }
   }
-  results.reverse();
-  // user-changed files stay listed (outcome 'manual' from a real entry) so a retry is possible
-  const unresolved = results.some(
-    (r, i) => r.outcome === 'manual' && manifest.entries[i]?.action !== 'manual',
-  );
-  if (!failed && !ctx.dryRun && !unresolved) {
+  const keep: ManifestFileEntry[] = [];
+  let unresolved = false;
+  manifest.entries.forEach((e, i) => {
+    const r = byIndex.get(i);
+    if (r === undefined) return;
+    results.push(r);
+    if (errored.has(i)) {
+      keep.push(e);
+    } else if (r.outcome === 'manual') {
+      keep.push(e);
+      if (e.action !== 'manual') unresolved = true; // a user-changed file: a retry may still resolve it
+    }
+  });
+  const failed = errored.size > 0;
+  if (!ctx.dryRun && !failed && !unresolved) {
     await rm(join(ctx.dir, MANIFEST_FILE), { force: true });
     await rm(join(ctx.dir, BACKUP_DIR), { recursive: true, force: true });
     const left = await readdir(join(ctx.dir, BUGSEE_DIR)).catch(() => null);
     if (left !== null && left.length === 0) await rmdir(join(ctx.dir, BUGSEE_DIR));
+  } else if (!ctx.dryRun && keep.length < manifest.entries.length) {
+    // partial rollback: keep only what is left, so a later run deals with just that
+    await writeFileAtomic(
+      join(ctx.dir, MANIFEST_FILE),
+      `${JSON.stringify({ ...manifest, entries: keep }, null, 2)}\n`,
+    );
+    const wanted = new Set(
+      keep.flatMap((e) => (e.backup === undefined ? [] : [basename(e.backup)])),
+    );
+    for (const name of await readdir(join(ctx.dir, BACKUP_DIR)).catch(() => [])) {
+      if (!wanted.has(name)) await rm(join(ctx.dir, BACKUP_DIR, name), { force: true });
+    }
   }
   return { results, failed };
 }
