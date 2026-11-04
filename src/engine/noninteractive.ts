@@ -202,6 +202,47 @@ export function outcomeForError(err: unknown): ErrorOutcome {
   return { code: 1, message, level: 'error' };
 }
 
+export interface ErrorIo {
+  stdout(s: string): void;
+  stderr(s: string): void;
+  error(message: string): void;
+}
+
+const defaultErrorIo = (): ErrorIo => ({
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  error: (m) => createLogger({ debug: false }).error(m),
+});
+
+/**
+ * Present a top-level error and return the exit code. With `--json` stdout carries exactly one
+ * result object (`missing-input` + field for MissingInputError); a cancel is a plain stderr line.
+ */
+export function reportError(
+  err: unknown,
+  opts: { readonly json: boolean },
+  io: ErrorIo = defaultErrorIo(),
+): 0 | 1 | 2 {
+  const outcome = outcomeForError(err);
+  if (outcome.level === 'plain') {
+    io.stderr(`${outcome.message}\n`);
+  } else if (opts.json) {
+    const result: WizardRunResult = {
+      ok: false,
+      incomplete: false,
+      steps: [],
+      ...(err instanceof MissingInputError
+        ? { error: 'missing-input', field: err.field }
+        : { error: 'error' }),
+      message: outcome.message,
+    };
+    io.stdout(`${JSON.stringify(result)}\n`);
+  } else {
+    io.error(outcome.message);
+  }
+  return outcome.code;
+}
+
 export interface Output {
   readonly log: Logger;
   result(result: WizardRunResult): void;

@@ -6,6 +6,7 @@ import {
   MissingInputError,
   outcomeForError,
   readStdinToken,
+  reportError,
   resolveOptions,
 } from '../../src/engine/noninteractive.js';
 import { CancelledError } from '../../src/engine/token.js';
@@ -188,5 +189,66 @@ describe('program definition', () => {
     p.parse(['--sdk-version', '0.1.0-beta.7'], { from: 'user' });
     expect(buildOptions(p.opts(), {}).sdkVersion).toBe('0.1.0-beta.7');
     expect(help).toContain('BUGSEE_WIZARD_SDK_VERSION');
+  });
+});
+
+describe('reportError (top-level CLI errors)', () => {
+  const io = () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const logged: string[] = [];
+    return {
+      out,
+      err,
+      logged,
+      io: {
+        stdout: (s: string) => out.push(s),
+        stderr: (s: string) => err.push(s),
+        error: (m: string) => logged.push(m),
+      },
+    };
+  };
+
+  it('--json: MissingInputError is one JSON object on stdout, exit 2, never the value', () => {
+    const c = io();
+    expect(reportError(new MissingInputError('token'), { json: true }, c.io)).toBe(2);
+    expect(c.out).toHaveLength(1);
+    expect(JSON.parse(c.out.join(''))).toEqual({
+      ok: false,
+      incomplete: false,
+      steps: [],
+      error: 'missing-input',
+      field: 'token',
+      message: 'missing required input: token',
+    });
+    expect(c.logged).toEqual([]);
+  });
+
+  it('--json: any other error is one JSON object, exit 1', () => {
+    const c = io();
+    expect(reportError(new Error('boom'), { json: true }, c.io)).toBe(1);
+    expect(JSON.parse(c.out.join(''))).toEqual({
+      ok: false,
+      incomplete: false,
+      steps: [],
+      error: 'error',
+      message: 'boom',
+    });
+  });
+
+  it('cancel: exit 0, a plain message on stderr, nothing on stdout (json or not)', () => {
+    for (const json of [true, false]) {
+      const c = io();
+      expect(reportError(new CancelledError(), { json }, c.io)).toBe(0);
+      expect(c.out).toEqual([]);
+      expect(c.err.join('')).toBe('Cancelled.\n');
+    }
+  });
+
+  it('without --json: errors go to the error logger, stdout untouched', () => {
+    const c = io();
+    expect(reportError(new MissingInputError('package'), { json: false }, c.io)).toBe(2);
+    expect(c.logged).toEqual(['missing required input: package']);
+    expect(c.out).toEqual([]);
   });
 });
