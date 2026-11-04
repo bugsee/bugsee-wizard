@@ -145,7 +145,7 @@ Further calls (from the builder check; each is mine, change any):
 - **C12.** Supported versions v1 (centralised in `src/web/versions.ts`, anything older gets a warning and a
   manual-docs link): Next.js 14+ (App and Pages Router), Nuxt 3.7+ and 4, SvelteKit 2, Astro 5+, Remix 2 and React
   Router 7, Angular 17+ (standalone), Vite 5+, webpack 5 (4 detected but unsupported for auto-edit), Rollup 4,
-  esbuild 0.2x, Node 20+, Bun 1.x, Deno 2.x. Revisit when the table is first written.
+  esbuild 0.2x, Node 22+, Bun 1.x, Deno 2.x. Revisit when the table is first written.
 - **C13.** E2E fixtures: the wizard repo's CI checks out `bugsee/bugsee-javascript` at a pinned ref and copies
   `samples/*` and `*-e2e` into temp dirs; the builds install `@bugsee/*` from the public registry at the `beta`
   tag. No submodule, no vendored copies.
