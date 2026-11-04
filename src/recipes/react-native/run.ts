@@ -193,10 +193,15 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     return 'failed';
   }
 
-  // 7. Delegate to platform recipes with launch-path-aware overrides.
+  // 7. Delegate to platform recipes with launch-path-aware overrides. Stop
+  // at the first failure: the RN-level edits are rolled back below, so
+  // configuring further platforms would only leave more half-applied state.
+  const configured: string[] = [];
+  let failedPlatform: string | null = null;
+  let platformOutcome: RecipeResult = 'failed';
   if (targets.includes('android') && paths.androidPath && androidToken) {
     clack.log.step('Configuring Android…');
-    await runAndroidRecipe({
+    const res = await runAndroidRecipe({
       ...input,
       cwd: paths.androidPath,
       token: androidToken,
@@ -209,10 +214,15 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
       },
       silent: true,
     });
+    if (res === 'ok') configured.push('Android');
+    else {
+      failedPlatform = 'Android';
+      platformOutcome = res;
+    }
   }
-  if (targets.includes('ios') && paths.iosPath && iosToken) {
+  if (failedPlatform === null && targets.includes('ios') && paths.iosPath && iosToken) {
     clack.log.step('Configuring iOS…');
-    await runIosRecipe({
+    const res = await runIosRecipe({
       ...input,
       cwd: paths.iosPath,
       token: iosToken,
@@ -226,6 +236,31 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
       },
       silent: true,
     });
+    if (res === 'ok') configured.push('iOS');
+    else {
+      failedPlatform = 'iOS';
+      platformOutcome = res;
+    }
+  }
+
+  if (failedPlatform !== null) {
+    // The JS side must not call into a native module that was never wired
+    // up, so undo the RN-level edits (package.json, JS entry, install step).
+    clack.log.error(
+      `${failedPlatform} setup ${platformOutcome === 'cancelled' ? 'was cancelled' : 'failed'}; rolling back the React Native changes.`,
+    );
+    const undo = await runRollback(rnSteps, rnCtx);
+    if (undo.failed) {
+      clack.log.error(
+        'Some React Native changes could not be rolled back — check package.json and your JS entry file.',
+      );
+    }
+    if (configured.length > 0) {
+      clack.log.warn(
+        `${configured.join(' + ')} native changes were kept; run \`bugsee-wizard uninstall\` to remove them.`,
+      );
+    }
+    return platformOutcome;
   }
 
   // 8. Final unified summary.
