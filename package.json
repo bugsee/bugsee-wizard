@@ -47,9 +47,9 @@
     "@biomejs/biome": "^2.6.4",
     "@types/node": "^22.20.5",
     "@types/xcode": "^3.0.0",
-    "@vitest/coverage-v8": "^2.1.8",
+    "@vitest/coverage-v8": "^5.1.0",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^5.1.0"
   }
 }

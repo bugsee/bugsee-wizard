@@ -1,7 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { vi } from 'vitest';
 
 import type { WizardContext } from '../../src/core/context.js';
 import { createLogger } from '../../src/core/logger.js';
@@ -260,18 +259,3 @@ export const SAMPLE_GROOVY_PROJECT_BUILD = `plugins {
     id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
 }
 `;
-
-// All step modules touch @clack/prompts via their imports of the logger,
-// which forwards to clack.log.*. Tests mock clack so prompts can't hang.
-export function mockClack(): void {
-  vi.mock('@clack/prompts', () => ({
-    log: {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      success: vi.fn(),
-      step: vi.fn(),
-      message: vi.fn(),
-    },
-  }));
-}

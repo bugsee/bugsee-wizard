@@ -2,8 +2,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { vi } from 'vitest';
-
 import type { WizardContext } from '../../src/core/context.js';
 import { createLogger } from '../../src/core/logger.js';
 import { discoverRnPaths } from '../../src/recipes/react-native/paths.js';
@@ -92,19 +90,3 @@ import { name as appName } from './app.json';
 
 AppRegistry.registerComponent(appName, () => App);
 `;
-
-// Suppress clack noise across the RN suite.
-export function _mockClack(): void {
-  vi.mock('@clack/prompts', () => ({
-    log: {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      success: vi.fn(),
-      step: vi.fn(),
-      message: vi.fn(),
-    },
-    cancel: vi.fn(),
-    spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
-  }));
-}

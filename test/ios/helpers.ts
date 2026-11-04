@@ -2,8 +2,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { vi } from 'vitest';
-
 import type { WizardContext } from '../../src/core/context.js';
 import { createLogger } from '../../src/core/logger.js';
 import type {
@@ -239,17 +237,3 @@ export const SAMPLE_APP_DELEGATE_OBJC = `#import "AppDelegate.h"
 
 @end
 `;
-
-// Minimal silencer for clack — same pattern as the Android suite.
-export function _mockClack(): void {
-  vi.mock('@clack/prompts', () => ({
-    log: {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      success: vi.fn(),
-      step: vi.fn(),
-      message: vi.fn(),
-    },
-  }));
-}
