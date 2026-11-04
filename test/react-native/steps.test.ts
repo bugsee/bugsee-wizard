@@ -22,7 +22,7 @@ vi.mock('@clack/prompts', () => ({
     step: vi.fn(),
     message: vi.fn(),
   },
-  spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
+  spinner: () => ({ start: vi.fn(), stop: vi.fn(), error: vi.fn() }),
 }));
 
 // Mock the package-manager probe so precheck branches are deterministic.

@@ -14,8 +14,8 @@ import { RN_PACKAGE_NAME, type RnContext, type RnLaunchPath, type RnOptions } fr
 
 export interface ReactNativeRecipeInput extends WizardOptions {}
 
-const TOKEN_VALIDATE = (v: string): string | undefined => {
-  const trimmed = v.trim();
+const TOKEN_VALIDATE = (v: string | undefined): string | undefined => {
+  const trimmed = (v ?? '').trim();
   if (trimmed.length === 0) return 'Token is required';
   if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
     return 'Tokens are alphanumeric (with `.`, `_`, `-` permitted) — looks like extra characters got pasted';

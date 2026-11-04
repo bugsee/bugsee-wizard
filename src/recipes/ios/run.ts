@@ -75,7 +75,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
       message: 'Bugsee app token (iOS)',
       placeholder: 'paste from your Bugsee dashboard',
       validate: (v) => {
-        const trimmed = v.trim();
+        const trimmed = (v ?? '').trim();
         if (trimmed.length === 0) return 'Token is required';
         // The token is interpolated raw into Swift/ObjC source and into the
         // post-action shell line. Restrict to a safe character set so we

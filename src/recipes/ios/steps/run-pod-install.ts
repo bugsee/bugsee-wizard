@@ -39,7 +39,7 @@ export const runPodInstallStep: Step<IosContext> = {
       await runChild('pod', ['install'], podDir, ctx.debug);
       spinner.stop('pod install complete');
     } catch (err) {
-      spinner.stop('pod install failed', 1);
+      spinner.error('pod install failed');
       throw err;
     }
   },

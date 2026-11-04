@@ -12,7 +12,7 @@ vi.mock('@clack/prompts', () => ({
     step: vi.fn(),
     message: vi.fn(),
   },
-  spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
+  spinner: () => ({ start: vi.fn(), stop: vi.fn(), error: vi.fn() }),
 }));
 
 // Mock the pod-on-PATH probe so we can drive the precheck branches

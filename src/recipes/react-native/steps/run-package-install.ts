@@ -44,7 +44,7 @@ export const runPackageInstallStep: Step<RnContext> = {
       await runInstall(manager, ctx.cwd, ctx.debug);
       spinner.stop(`${manager} install complete`);
     } catch (err) {
-      spinner.stop(`${manager} install failed`, 1);
+      spinner.error(`${manager} install failed`);
       throw err;
     }
   },

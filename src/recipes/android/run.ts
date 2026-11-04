@@ -61,7 +61,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
     const tokenAnswer = await clack.text({
       message: 'Bugsee app token (Android)',
       placeholder: 'paste from your Bugsee dashboard',
-      validate: (v) => (v.trim().length === 0 ? 'Token is required' : undefined),
+      validate: (v) => ((v ?? '').trim().length === 0 ? 'Token is required' : undefined),
     });
     if (clack.isCancel(tokenAnswer)) {
       clack.cancel('Cancelled.');

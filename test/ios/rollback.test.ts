@@ -27,7 +27,7 @@ vi.mock('@clack/prompts', () => ({
     message: vi.fn(),
   },
   cancel: vi.fn(),
-  spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
+  spinner: () => ({ start: vi.fn(), stop: vi.fn(), error: vi.fn() }),
 }));
 
 const FIXTURE_PROJECT = path.resolve(__dirname, '../fixtures/ios/MinimalApp.xcodeproj');
