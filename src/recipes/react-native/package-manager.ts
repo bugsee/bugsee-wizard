@@ -1,6 +1,8 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
+
+import { runChild } from '../../core/run-child.js';
 
 export type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
 
@@ -61,40 +63,8 @@ export async function runInstall(
   cwd: string,
   forwardStdout: boolean,
 ): Promise<void> {
-  // Each manager's "install everything in package.json" command. We've
-  // already edited package.json to add the dep, so a plain install is
-  // enough — no need for the manager-specific `add` subcommand which
-  // would double-write the version specifier.
-  const args: string[] =
-    manager === 'yarn'
-      ? ['install']
-      : manager === 'pnpm'
-        ? ['install']
-        : manager === 'bun'
-          ? ['install']
-          : ['install'];
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(manager, [...args], {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stderr = '';
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    if (forwardStdout) {
-      child.stdout?.on('data', (chunk: Buffer) => {
-        process.stdout.write(chunk);
-      });
-    }
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      const tail = stderr.trim().split('\n').slice(-10).join('\n');
-      reject(new Error(`${manager} install exited with code ${code}${tail ? `\n${tail}` : ''}`));
-    });
-  });
+  // Every manager's "install everything in package.json" command is plain
+  // `install`. We've already edited package.json to add the dep, so no
+  // manager-specific `add` subcommand (which would double-write the version).
+  await runChild(manager, ['install'], { cwd, forwardStdout });
 }

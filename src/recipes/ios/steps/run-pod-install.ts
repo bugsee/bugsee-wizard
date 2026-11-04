@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 import * as clack from '@clack/prompts';
 
+import { runChild } from '../../../core/run-child.js';
 import type { Step, StepStatus } from '../../../core/step.js';
 import { isPodOnPath } from '../pod.js';
 import type { IosContext } from '../types.js';
@@ -36,7 +36,7 @@ export const runPodInstallStep: Step<IosContext> = {
     const spinner = clack.spinner();
     spinner.start('Running pod install — this can take a minute');
     try {
-      await runChild('pod', ['install'], podDir, ctx.debug);
+      await runChild('pod', ['install'], { cwd: podDir, forwardStdout: ctx.debug });
       spinner.stop('pod install complete');
     } catch (err) {
       spinner.error('pod install failed');
@@ -51,37 +51,3 @@ export const runPodInstallStep: Step<IosContext> = {
     // our pod line; running `pod install` again afterwards re-syncs cleanly.
   },
 };
-
-async function runChild(
-  cmd: string,
-  args: readonly string[],
-  cwd: string,
-  forwardStdout: boolean,
-): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(cmd, [...args], {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stderr = '';
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    if (forwardStdout) {
-      child.stdout?.on('data', (chunk: Buffer) => {
-        process.stdout.write(chunk);
-      });
-    }
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      const tail = stderr.trim().split('\n').slice(-10).join('\n');
-      reject(
-        new Error(`${cmd} ${args.join(' ')} exited with code ${code}${tail ? `\n${tail}` : ''}`),
-      );
-    });
-  });
-}
