@@ -35,7 +35,7 @@ export async function setEnvVar(
     src = await readFile(file, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    await writeFile(file, `${entry}${EOL}`, { encoding: 'utf8', mode: 0o600 });
+    await writeFile(file, `${entry}${EOL}`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     return 'added';
   }
 

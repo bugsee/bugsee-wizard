@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 export interface EditResult {
@@ -10,11 +10,15 @@ export interface EditResult {
 
 /** Write `content` to `path` via a temp file in the same directory + rename. */
 export async function writeFileAtomic(path: string, content: string): Promise<void> {
-  const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`);
+  // Write through symlinks: the temp file lives beside the real target.
+  const target = await realpath(path);
+  const tmp = join(dirname(target), `.${basename(target)}.${randomBytes(6).toString('hex')}.tmp`);
   try {
-    const mode = (await stat(path)).mode & 0o777;
+    const mode = (await stat(target)).mode & 0o777;
     await writeFile(tmp, content, { encoding: 'utf8', mode });
-    await rename(tmp, path);
+    // writeFile's mode is masked by the umask; restore the original permissions exactly.
+    await chmod(tmp, mode);
+    await rename(tmp, target);
   } catch (err) {
     await rm(tmp, { force: true });
     throw err;

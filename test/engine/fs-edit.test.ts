@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { editTextFile, writeFileAtomic } from '../../src/engine/fs-edit.js';
@@ -96,5 +96,32 @@ describe('editTextFile', () => {
     await chmod(p, 0o600);
     await editTextFile(p, () => 'y', { validate: () => true });
     expect((await stat(p)).mode & 0o777).toBe(0o600);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'writes through a symlink, leaving it a symlink',
+    async () => {
+      const real = join(dir, 'real.txt');
+      const link = join(dir, 'link.txt');
+      await writeFile(real, 'x');
+      await symlink(real, link);
+      await editTextFile(link, () => 'y', { validate: () => true });
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+      expect(await readFile(real, 'utf8')).toBe('y');
+      expect((await readdir(dir)).sort()).toEqual(['link.txt', 'real.txt']);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')('preserves mode 0664 despite a 022 umask', async () => {
+    const p = join(dir, 'a.txt');
+    await writeFile(p, 'x');
+    await chmod(p, 0o664);
+    const old = process.umask(0o022);
+    try {
+      await editTextFile(p, () => 'y', { validate: () => true });
+    } finally {
+      process.umask(old);
+    }
+    expect((await stat(p)).mode & 0o777).toBe(0o664);
   });
 });
