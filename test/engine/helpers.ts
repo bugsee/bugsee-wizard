@@ -30,7 +30,7 @@ export function makeCtx(dir: string, over: Partial<RecipeContext> = {}): LoggedC
     json: false,
     ignoreGitChanges: false,
     yes: false,
-    kind: 'web',
+    kind: 'javascript',
     tokens: {},
     log: { info: sink, warn: sink, error: sink, success: sink, step: sink, debug: sink },
     packageDir: dir,

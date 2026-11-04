@@ -3,7 +3,7 @@ export const PROJECT_KINDS = [
   'ios',
   'react-native',
   'flutter',
-  'web',
+  'javascript',
   'unknown',
 ] as const;
 
@@ -14,6 +14,6 @@ export const PROJECT_KIND_LABELS: Record<ProjectKind, string> = {
   ios: 'iOS (native)',
   'react-native': 'React Native',
   flutter: 'Flutter',
-  web: 'Web / JavaScript',
+  javascript: 'JavaScript / TypeScript',
   unknown: 'Other / unknown',
 };

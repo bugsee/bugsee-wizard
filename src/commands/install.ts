@@ -60,7 +60,7 @@ export async function runInstall(opts: WizardOptions): Promise<void> {
       result = await runReactNativeRecipe(opts);
       break;
     case 'flutter':
-    case 'web':
+    case 'javascript':
     case 'unknown':
       clack.note(`Recipe for ${PROJECT_KIND_LABELS[chosen]} is not implemented yet.`, 'Next');
       clack.outro('Nothing was installed.');
