@@ -454,12 +454,72 @@ describe('addBundlerPlugin: details', () => {
   });
 });
 
-describe('addBundlerPlugin: aliased bindings', () => {
-  it('an import that merely aliases another export to the same local name is not ours', () => {
+describe('addBundlerPlugin: names already bound elsewhere', () => {
+  const esmCases: Array<[string, string]> = [
+    ['default import', "import bugsee from '@bugsee/vite-plugin';"],
+    ['namespace import', "import * as bugsee from '@bugsee/vite-plugin';"],
+    ['same name from another module', "import { bugsee } from 'other-pkg';"],
+    ['aliased from the same package', "import { other as bugsee } from '@bugsee/vite-plugin';"],
+    ['type-only declaration', "import type { bugsee } from '@bugsee/vite-plugin';"],
+    ['type-only specifier', "import { type bugsee } from '@bugsee/vite-plugin';"],
+    ['local const', 'const bugsee = () => 1;'],
+    ['local function', 'function bugsee() {}'],
+    ['local class', 'class bugsee {}'],
+    ['exported local const', 'export const bugsee = 1;'],
+    ['destructured local', 'const { x: bugsee } = foo;'],
+    ['array destructured local', 'const [bugsee] = foo;'],
+    ['destructured local with a default', 'const { x: bugsee = 1 } = foo;'],
+  ];
+  it.each(esmCases)('ESM: %s => manual, nothing changed', (_n, decl) => {
+    const src = `${decl}\nexport default { plugins: [] };\n`;
+    const r = addBundlerPlugin(src, 'vite', spec);
+    expect(r).toHaveProperty('manual');
+    expect(r).not.toHaveProperty('code');
+  });
+
+  const cjsCases: Array<[string, string]> = [
+    ['require of another module', "const { bugsee } = require('other-pkg');"],
+    ['plain require binding', "const bugsee = require('@bugsee/vite-plugin');"],
+    ['aliased destructure', "const { other: bugsee } = require('@bugsee/vite-plugin');"],
+    ['local const', 'const bugsee = 1;'],
+    [
+      'extra bindings in the same declarator',
+      "const { bugsee, ...rest } = require('@bugsee/vite-plugin');",
+    ],
+  ];
+  it.each(cjsCases)('CJS: %s => manual, nothing changed', (_n, decl) => {
+    const r = addBundlerPlugin(`${decl}\nmodule.exports = { plugins: [] };\n`, 'webpack', spec);
+    expect(r).toHaveProperty('manual');
+    expect(r).not.toHaveProperty('code');
+  });
+
+  it('the exact runtime binding (import or destructured require) is still fine', () => {
+    const esm = "import { bugsee } from '@bugsee/vite-plugin';\nexport default { plugins: [] };\n";
+    expect(addBundlerPlugin(esm, 'vite', spec)).toHaveProperty('code');
+    const cjs =
+      "const { bugsee } = require('@bugsee/vite-plugin');\nmodule.exports = { plugins: [] };\n";
+    expect(addBundlerPlugin(cjs, 'webpack', spec)).toHaveProperty('code');
+  });
+
+  it('an unrelated type-only import with a different name is ignored', () => {
+    const r = addBundlerPlugin(
+      "import type { Foo } from '@bugsee/vite-plugin';\nexport default { plugins: [] };\n",
+      'vite',
+      spec,
+    );
+    expect(r).toHaveProperty('code');
+  });
+
+  it('a binding declared twice is a conflict even when both look like ours', () => {
     const src =
-      "import { other as bugsee } from '@bugsee/vite-plugin';\nexport default { plugins: [bugsee()] };\n";
-    // not our binding, so the wizard must not claim success; a duplicate declaration cannot re-parse
+      "import { bugsee } from '@bugsee/vite-plugin';\nconst { bugsee } = require('@bugsee/vite-plugin');\nexport default { plugins: [] };\n";
     expect(addBundlerPlugin(src, 'vite', spec)).toHaveProperty('manual');
+  });
+
+  it('an already-configured file with mixed line endings comes back byte-identical', () => {
+    const src =
+      "import { bugsee } from '@bugsee/vite-plugin';\r\nexport default {\r\n  plugins: [bugsee()],\n};\r\n";
+    expect(addBundlerPlugin(src, 'vite', spec)).toEqual({ code: src });
   });
 });
 

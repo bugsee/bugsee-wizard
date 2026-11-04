@@ -311,37 +311,91 @@ function importEdit(
   return { at: 0, remove: 0, text: `${line}${eol}` };
 }
 
-/** True when `importName` is bound from `importFrom` by an ESM import or a destructured require. */
-function importBound(body: Node[], spec: PluginSpec): boolean {
-  const isFrom = (n: Node | undefined): boolean => name(n) === spec.importFrom;
-  for (const stmt of body) {
-    if (stmt.type === 'ImportDeclaration' && isFrom(child(stmt, 'source'))) {
-      const bound = children(stmt, 'specifiers').some(
-        (sp) =>
-          sp?.type === 'ImportSpecifier' &&
-          name(child(sp, 'imported')) === spec.importName &&
-          name(child(sp, 'local')) === spec.importName,
-      );
-      if (bound) return true;
-    }
-    if (stmt.type !== 'VariableDeclaration') continue;
-    for (const d of children(stmt, 'declarations')) {
-      const init = d ? child(d, 'init') : undefined;
-      const id = d ? child(d, 'id') : undefined;
-      if (init?.type !== 'CallExpression' || name(child(init, 'callee')) !== 'require') continue;
-      if (!isFrom(children(init, 'arguments')[0] ?? undefined) || id?.type !== 'ObjectPattern') {
-        continue;
+function collectBoundNames(node: Node | undefined, out: string[]): void {
+  if (!node) return;
+  switch (node.type) {
+    case 'Identifier':
+      if (typeof node.name === 'string') out.push(node.name);
+      return;
+    case 'ObjectPattern':
+      for (const p of children(node, 'properties')) {
+        collectBoundNames(p?.type === 'ObjectProperty' ? child(p, 'value') : (p ?? undefined), out);
       }
-      const bound = children(id, 'properties').some(
-        (pr) =>
-          pr?.type === 'ObjectProperty' &&
-          name(child(pr, 'key')) === spec.importName &&
-          name(child(pr, 'value')) === spec.importName,
-      );
-      if (bound) return true;
+      return;
+    case 'ArrayPattern':
+      for (const e of children(node, 'elements')) collectBoundNames(e ?? undefined, out);
+      return;
+    case 'RestElement':
+      collectBoundNames(child(node, 'argument'), out);
+      return;
+    case 'AssignmentPattern':
+      collectBoundNames(child(node, 'left'), out);
+      return;
+    default:
+      return;
+  }
+}
+
+/**
+ * How `importName` is bound at the top level of the file:
+ * - `none`: not bound;
+ * - `exact`: only by the runtime binding we would add (`import { importName } from importFrom` or
+ *   `const { importName } = require(importFrom)`);
+ * - `conflict`: by anything else (default/namespace/type-only import, other module, a local
+ *   declaration), where adding our import would redeclare the name.
+ */
+function bindingOf(body: Node[], spec: PluginSpec): 'none' | 'exact' | 'conflict' {
+  const isFrom = (n: Node | undefined): boolean => name(n) === spec.importFrom;
+  let exact = 0;
+  let other = 0;
+  const note = (isExact: boolean): void => {
+    if (isExact) exact++;
+    else other++;
+  };
+  for (const raw of body) {
+    const stmt = raw.type === 'ExportNamedDeclaration' ? (child(raw, 'declaration') ?? raw) : raw;
+    if (stmt.type === 'ImportDeclaration') {
+      const declTypeOnly = stmt.importKind === 'type' || stmt.importKind === 'typeof';
+      for (const sp of children(stmt, 'specifiers')) {
+        if (name(child(sp ?? stmt, 'local')) !== spec.importName) continue;
+        note(
+          !declTypeOnly &&
+            sp?.type === 'ImportSpecifier' &&
+            sp.importKind !== 'type' &&
+            sp.importKind !== 'typeof' &&
+            isFrom(child(stmt, 'source')) &&
+            name(child(sp, 'imported')) === spec.importName,
+        );
+      }
+    } else if (stmt.type === 'VariableDeclaration') {
+      for (const d of children(stmt, 'declarations')) {
+        const id = d ? child(d, 'id') : undefined;
+        const names: string[] = [];
+        collectBoundNames(id, names);
+        if (!d || !names.includes(spec.importName)) continue;
+        const init = child(d, 'init');
+        const viaRequire =
+          init?.type === 'CallExpression' &&
+          name(child(init, 'callee')) === 'require' &&
+          isFrom(children(init, 'arguments')[0] ?? undefined) &&
+          id?.type === 'ObjectPattern' &&
+          children(id, 'properties').some(
+            (pr) =>
+              pr?.type === 'ObjectProperty' &&
+              name(child(pr, 'key')) === spec.importName &&
+              name(child(pr, 'value')) === spec.importName,
+          );
+        note(viaRequire === true && names.length === 1);
+      }
+    } else if (
+      (stmt.type === 'FunctionDeclaration' || stmt.type === 'ClassDeclaration') &&
+      name(child(stmt, 'id')) === spec.importName
+    ) {
+      note(false);
     }
   }
-  return false;
+  if (other > 0 || exact > 1) return 'conflict';
+  return exact === 1 ? 'exact' : 'none';
 }
 
 function isRequireDeclaration(stmt: Node): boolean {
@@ -417,11 +471,15 @@ export function addBundlerPlugin(
   const config = resolveConfigObject(body, exported.expr);
   if (!config) return manualFor(cjs);
 
+  // never add a second declaration of a name the file already binds some other way
+  const binding = bindingOf(body, spec);
+  if (binding === 'conflict') return manualFor(cjs);
+
   const eol = '\n';
   const plugin = pluginEdit(source, config, spec, eol);
   if (!plugin) return manualFor(cjs);
   const edits = [...plugin];
-  if (!importBound(body, spec)) {
+  if (binding === 'none') {
     edits.push(importEdit(directives, body, exported.esm, spec, eol, source));
   }
   // already wired up by hand (import + call, no marker): nothing to do
