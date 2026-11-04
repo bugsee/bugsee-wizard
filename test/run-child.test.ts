@@ -28,6 +28,23 @@ describe('runChild', () => {
     }
   });
 
+  it('forwards the child stdout to our stderr when asked (keeps our stdout clean)', async () => {
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await runChild(node, ['-e', `process.stdout.write('to-stderr')`], {
+        cwd: process.cwd(),
+        forwardStdout: true,
+        forwardTo: 'stderr',
+      });
+      expect(err.mock.calls.map((c) => String(c[0])).join('')).toContain('to-stderr');
+      expect(out.mock.calls.map((c) => String(c[0])).join('')).not.toContain('to-stderr');
+    } finally {
+      out.mockRestore();
+      err.mockRestore();
+    }
+  });
+
   it('does not forward stdout when not asked', async () => {
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     try {

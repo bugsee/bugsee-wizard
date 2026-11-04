@@ -6,6 +6,8 @@ export interface RunChildOptions {
   readonly cwd: string;
   /** Mirror the child's stdout to ours (debug mode). Otherwise it is discarded. */
   readonly forwardStdout: boolean;
+  /** Where forwarded child stdout goes (default our stdout). `stderr` keeps a JSON stdout clean. */
+  readonly forwardTo?: 'stdout' | 'stderr';
   /** Override the host platform (tests); defaults to `process.platform`. */
   readonly platform?: NodeJS.Platform;
 }
@@ -29,7 +31,12 @@ export async function runChild(
   args: readonly string[],
   options: RunChildOptions,
 ): Promise<void> {
-  await spawnChild(cmd, args, options, options.forwardStdout ? 'forward' : 'ignore');
+  const mode: StdoutMode = !options.forwardStdout
+    ? 'ignore'
+    : options.forwardTo === 'stderr'
+      ? 'forward-stderr'
+      : 'forward';
+  await spawnChild(cmd, args, options, mode);
 }
 
 export interface RunChildOutputOptions {
@@ -50,7 +57,7 @@ export async function runChildOutput(
   return spawnChild(cmd, args, options, { capture: options.maxBytes ?? DEFAULT_OUTPUT_CAP });
 }
 
-type StdoutMode = 'ignore' | 'forward' | { readonly capture: number };
+type StdoutMode = 'ignore' | 'forward' | 'forward-stderr' | { readonly capture: number };
 
 function spawnChild(
   cmd: string,
@@ -83,9 +90,10 @@ function spawnChild(
     const captured: Buffer[] = [];
     let size = 0;
     let overflow = false;
-    if (stdout === 'forward') {
+    if (stdout === 'forward' || stdout === 'forward-stderr') {
+      const sink = stdout === 'forward' ? process.stdout : process.stderr;
       child.stdout?.on('data', (chunk: Buffer) => {
-        process.stdout.write(chunk);
+        sink.write(chunk);
       });
     } else if (typeof stdout === 'object') {
       child.stdout?.on('data', (chunk: Buffer) => {

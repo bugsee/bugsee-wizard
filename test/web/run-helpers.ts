@@ -58,6 +58,8 @@ for (const a of args.filter((x) => x !== 'install' && !x.startsWith('-'))) {
   pkg[field][at > 0 ? a.slice(0, at) : a] = '0.1.0-beta.9';
 }
 fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\n');
+// real npm talks on stdout: that must never reach the wizard's own stdout
+console.log('added 1 package, and audited 2 packages in 1s');
 fs.writeFileSync('package-lock.json', JSON.stringify({ lockfileVersion: 3, n: Object.keys(pkg[field]).length }) + '\\n');
 `;
 

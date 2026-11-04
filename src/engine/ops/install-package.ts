@@ -56,6 +56,8 @@ export function installPackageStep(spec: Spec): Step<RecipeContext> {
         await runChild(pm.name, pm.installArgs(pkgs, spec.dev === true), {
           cwd: ctx.packageDir,
           forwardStdout: ctx.debug,
+          // JavaScript runs may print a JSON result on stdout: the package manager talks on stderr
+          forwardTo: 'stderr',
         });
       } catch (err) {
         // leave nothing of the failed install in the repo

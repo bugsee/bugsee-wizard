@@ -102,6 +102,13 @@ describe.skipIf(process.platform === 'win32')('runInstall --json', () => {
     expect([...stdout, ...stderr].join('')).not.toContain(TOKEN);
   });
 
+  it('--json --debug: the package manager output is forwarded to stderr, stdout stays one JSON', async () => {
+    sb = await sandbox('vite-react-spa');
+    await runInstall(baseOpts(sb.project, { json: true, debug: true }));
+    expect(onlyJson()).toMatchObject({ ok: true });
+    expect(stderr.join('')).toContain('added 1 package');
+  });
+
   it('incomplete: exit 3 with the snippet in the JSON', async () => {
     sb = await sandbox('vite-react-spa');
     await writeFile(
