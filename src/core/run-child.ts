@@ -29,19 +29,50 @@ export async function runChild(
   args: readonly string[],
   options: RunChildOptions,
 ): Promise<void> {
+  await spawnChild(cmd, args, options, options.forwardStdout ? 'forward' : 'ignore');
+}
+
+export interface RunChildOutputOptions {
+  readonly cwd: string;
+  /** Reject once stdout grows past this many bytes (default 1 MB). */
+  readonly maxBytes?: number;
+  readonly platform?: NodeJS.Platform;
+}
+
+const DEFAULT_OUTPUT_CAP = 1024 * 1024;
+
+/** Like runChild, but resolves with the child's stdout (capped) instead of discarding it. */
+export async function runChildOutput(
+  cmd: string,
+  args: readonly string[],
+  options: RunChildOutputOptions,
+): Promise<string> {
+  return spawnChild(cmd, args, options, { capture: options.maxBytes ?? DEFAULT_OUTPUT_CAP });
+}
+
+type StdoutMode = 'ignore' | 'forward' | { readonly capture: number };
+
+function spawnChild(
+  cmd: string,
+  args: readonly string[],
+  options: { readonly cwd: string; readonly platform?: NodeJS.Platform },
+  stdout: StdoutMode,
+): Promise<string> {
   const shell = (options.platform ?? process.platform) === 'win32' && SHELL_COMMANDS.has(cmd);
   if (shell) {
     for (const arg of args) {
       if (!SAFE_SHELL_ARG.test(arg)) {
-        throw new Error(`Refusing to run ${cmd}: unsafe argument ${JSON.stringify(arg)}`);
+        return Promise.reject(
+          new Error(`Refusing to run ${cmd}: unsafe argument ${JSON.stringify(arg)}`),
+        );
       }
     }
   }
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     const child = spawn(cmd, [...args], {
       cwd: options.cwd,
       shell,
-      stdio: ['ignore', options.forwardStdout ? 'pipe' : 'ignore', 'pipe'],
+      stdio: ['ignore', stdout === 'ignore' ? 'ignore' : 'pipe', 'pipe'],
     });
     // Rolling tail: only the last few lines are ever reported, so never hold
     // more than STDERR_TAIL_BYTES however much the child writes.
@@ -49,15 +80,32 @@ export async function runChild(
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = (stderr + chunk.toString()).slice(-STDERR_TAIL_BYTES);
     });
-    if (options.forwardStdout) {
+    const captured: Buffer[] = [];
+    let size = 0;
+    let overflow = false;
+    if (stdout === 'forward') {
       child.stdout?.on('data', (chunk: Buffer) => {
         process.stdout.write(chunk);
+      });
+    } else if (typeof stdout === 'object') {
+      child.stdout?.on('data', (chunk: Buffer) => {
+        size += chunk.byteLength;
+        if (size > stdout.capture) {
+          overflow = true;
+          child.kill();
+          return;
+        }
+        captured.push(chunk);
       });
     }
     child.on('error', reject);
     child.on('close', (code) => {
+      if (overflow && typeof stdout === 'object') {
+        reject(new Error(`${cmd} ${args.join(' ')} wrote more than ${stdout.capture} bytes`));
+        return;
+      }
       if (code === 0) {
-        resolve();
+        resolve(Buffer.concat(captured).toString('utf8'));
         return;
       }
       const tail = stderr.trim().split('\n').slice(-10).join('\n');

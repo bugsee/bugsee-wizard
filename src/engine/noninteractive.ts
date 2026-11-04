@@ -27,8 +27,13 @@ export interface WizardRunResult {
   ok: boolean;
   incomplete: boolean;
   steps: { id: string; outcome: string }[];
+  /** A machine-readable code (`missing-input`, `dirty-git-tree`, ...). */
   error?: string;
   field?: string;
+  /** Human-readable detail for `error`. Never carries the token. */
+  message?: string;
+  /** Changes the wizard could not make itself (incomplete runs). */
+  snippets?: { file: string; title: string; code: string }[];
 }
 
 export interface EnvFlags {

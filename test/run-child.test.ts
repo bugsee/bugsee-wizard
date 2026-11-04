@@ -1,6 +1,9 @@
+import { realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+
 import { describe, expect, it, vi } from 'vitest';
 
-import { runChild } from '../src/core/run-child.js';
+import { runChild, runChildOutput } from '../src/core/run-child.js';
 
 const node = process.execPath;
 
@@ -87,4 +90,39 @@ process.stderr.write('LAST-LINE\\n'); process.exit(4);`;
     expect(msg.length).toBeLessThan(64 * 1024 + 200);
     expect(msg.length).toBeGreaterThan(60 * 1024);
   }, 20_000);
+});
+
+describe('runChildOutput', () => {
+  it('resolves with the child stdout and never writes it to ours', async () => {
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      const out = await runChildOutput(node, ['-e', `process.stdout.write('a\\0b')`], {
+        cwd: process.cwd(),
+      });
+      expect(out).toBe('a\0b');
+      expect(write.mock.calls.map((c) => String(c[0])).join('')).not.toContain('a');
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it('runs in the given cwd', async () => {
+    const out = await runChildOutput(node, ['-e', 'process.stdout.write(process.cwd())'], {
+      cwd: tmpdir(),
+    });
+    expect(await realpath(out)).toBe(await realpath(tmpdir()));
+  });
+
+  it('rejects with the exit code on failure', async () => {
+    await expect(
+      runChildOutput(node, ['-e', 'process.exit(7)'], { cwd: process.cwd() }),
+    ).rejects.toThrow(/exited with code 7/);
+  });
+
+  it('rejects when stdout exceeds the cap', async () => {
+    const script = `process.stdout.write('x'.repeat(2048))`;
+    await expect(
+      runChildOutput(node, ['-e', script], { cwd: process.cwd(), maxBytes: 1024 }),
+    ).rejects.toThrow(/more than 1024 bytes/);
+  });
 });
