@@ -185,3 +185,25 @@ describe('no persistence, no transport', () => {
     );
   });
 });
+
+describe('closed id shape', () => {
+  const sendStep = (over: Record<string, unknown>) => {
+    const { s, sent } = sink();
+    createTelemetry({ flag: true, env: {}, sink: s }).emit({ name: 'step', ...over } as never);
+    return sent[0] as TelemetryEvent;
+  };
+  it.each(['javascript', 'react-native', 'install-sdk', 'v1.2', 'a'])('keeps %s', (id) => {
+    const e = sendStep({ recipe: id, step: id });
+    expect(e.recipe).toBe(id);
+    expect(e.step).toBe(id);
+  });
+  it.each(['my_app', 'MyApp', '-x', 'x-', 'a--b', 'a..b', '.x', 'a b'])('drops %s', (id) => {
+    const e = sendStep({ recipe: id, step: id });
+    expect('recipe' in e).toBe(false);
+    expect('step' in e).toBe(false);
+  });
+  it('limits ids to 48 characters', () => {
+    expect(sendStep({ step: 'a'.repeat(48) }).step).toHaveLength(48);
+    expect('step' in sendStep({ step: 'a'.repeat(49) })).toBe(false);
+  });
+});

@@ -12,8 +12,17 @@ export const WIZARD_VERSION = '0.0.0';
 const NAMES = ['run', 'step'] as const;
 const OUTCOMES = ['applied', 'skipped', 'manual', 'failed'] as const;
 const CATEGORIES = ['parse', 'io', 'network', 'install', 'unsupported', 'other'] as const;
-/** Recipe/step ids: short identifiers only, so free text (paths, messages) cannot ride along. */
-const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/**
+ * Recipe/step ids: closed lowercase kebab/dotted shape, max 48 chars, so free
+ * text (paths, messages) cannot ride along. Call sites must pass recipe/step
+ * ids only, never op discriminators.
+ */
+const ID_RE = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+const ID_MAX = 48;
+
+function validId(v: unknown): string | undefined {
+  return typeof v === 'string' && v.length <= ID_MAX && ID_RE.test(v) ? v : undefined;
+}
 
 export type TelemetryEvent = {
   name: (typeof NAMES)[number];
@@ -64,10 +73,8 @@ export function createTelemetry(opts: {
       if (name === undefined) return;
       const outcome = oneOf(OUTCOMES, input.outcome);
       const errorCategory = oneOf(CATEGORIES, input.errorCategory);
-      const recipe =
-        typeof input.recipe === 'string' && ID_RE.test(input.recipe) ? input.recipe : undefined;
-      const step =
-        typeof input.step === 'string' && ID_RE.test(input.step) ? input.step : undefined;
+      const recipe = validId(input.recipe);
+      const step = validId(input.step);
       sink.send({
         name,
         wizard: WIZARD_VERSION,
