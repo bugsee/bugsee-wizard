@@ -76,6 +76,8 @@ export function makeAndroidContext(opts: MakeContextOpts): AndroidContext {
     cwd: opts.cwd,
     debug: false,
     dryRun: opts.dryRun ?? false,
+    nonInteractive: false,
+    json: false,
     kind: 'android',
     tokens: opts.tokens ?? { android: 'TEST_TOKEN' },
     log: createLogger({ debug: false }),

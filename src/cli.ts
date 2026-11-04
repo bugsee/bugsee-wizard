@@ -18,7 +18,13 @@ program
   .description('install and configure Bugsee in the current project')
   .action(async () => {
     const opts = program.opts();
-    await runInstall({ cwd: opts.cwd, debug: opts.debug, dryRun: opts.dryRun });
+    await runInstall({
+      cwd: opts.cwd,
+      debug: opts.debug,
+      dryRun: opts.dryRun,
+      nonInteractive: false,
+      json: false,
+    });
   });
 
 program
@@ -26,7 +32,13 @@ program
   .description('remove Bugsee configuration from the current project')
   .action(async () => {
     const opts = program.opts();
-    await runUninstall({ cwd: opts.cwd, debug: opts.debug, dryRun: opts.dryRun });
+    await runUninstall({
+      cwd: opts.cwd,
+      debug: opts.debug,
+      dryRun: opts.dryRun,
+      nonInteractive: false,
+      json: false,
+    });
   });
 
 try {

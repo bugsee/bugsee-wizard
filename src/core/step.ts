@@ -9,22 +9,37 @@ export interface Step<Ctx extends WizardContext = WizardContext> {
   readonly id: string;
   readonly title: string;
   precheck(ctx: Ctx): Promise<StepStatus>;
-  apply(ctx: Ctx): Promise<void>;
+  // biome-ignore lint/suspicious/noConfusingVoidType: existing steps return nothing; void keeps them assignable.
+  apply(ctx: Ctx): Promise<ApplyResult | void>;
   rollback(ctx: Ctx): Promise<void>;
 }
 
-export type StepOutcome = 'applied' | 'skipped' | 'blocked' | 'failed' | 'rolled-back';
+export type StepOutcome = 'applied' | 'skipped' | 'blocked' | 'failed' | 'rolled-back' | 'manual';
+
+/** A code change the wizard could not apply itself; the user must make it. */
+export interface ManualSnippet {
+  readonly file: string;
+  readonly title: string;
+  readonly code: string;
+}
+
+export interface ApplyResult {
+  readonly manual?: ManualSnippet;
+}
 
 export interface StepResult {
   readonly id: string;
   readonly outcome: StepOutcome;
   readonly note?: string;
   readonly error?: Error;
+  readonly snippet?: ManualSnippet;
 }
 
 export interface RunStepsResult {
   readonly results: readonly StepResult[];
   readonly failed: boolean;
+  /** True when at least one step needs a manual follow-up. */
+  readonly incomplete: boolean;
 }
 
 export async function runSteps<Ctx extends WizardContext>(
@@ -33,6 +48,7 @@ export async function runSteps<Ctx extends WizardContext>(
 ): Promise<RunStepsResult> {
   const results: StepResult[] = [];
   const applied: Step<Ctx>[] = [];
+  let incomplete = false;
 
   for (const step of steps) {
     const status = await step.precheck(ctx);
@@ -51,28 +67,35 @@ export async function runSteps<Ctx extends WizardContext>(
       results.push({ id: step.id, outcome: 'blocked', note: status.reason });
       ctx.log.error(`${step.title} — blocked: ${status.reason}`);
       await rollbackAll(applied, ctx, results);
-      return { results, failed: true };
+      return { results, failed: true, incomplete };
     }
 
     try {
       if (ctx.dryRun) {
         ctx.log.step(`${step.title} (dry-run)`);
+        results.push({ id: step.id, outcome: 'applied' });
       } else {
-        await step.apply(ctx);
-        applied.push(step);
-        ctx.log.success(step.title);
+        const res = await step.apply(ctx);
+        if (res?.manual) {
+          incomplete = true;
+          results.push({ id: step.id, outcome: 'manual', snippet: res.manual });
+          ctx.log.warn(`${step.title} — manual step required`);
+        } else {
+          applied.push(step);
+          results.push({ id: step.id, outcome: 'applied' });
+          ctx.log.success(step.title);
+        }
       }
-      results.push({ id: step.id, outcome: 'applied' });
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       results.push({ id: step.id, outcome: 'failed', error });
       ctx.log.error(`${step.title} — failed: ${error.message}`);
       await rollbackAll(applied, ctx, results);
-      return { results, failed: true };
+      return { results, failed: true, incomplete };
     }
   }
 
-  return { results, failed: false };
+  return { results, failed: false, incomplete };
 }
 
 async function rollbackAll<Ctx extends WizardContext>(

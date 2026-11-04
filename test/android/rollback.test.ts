@@ -101,6 +101,8 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
     });
     expect(ran).toBe('ok');
 
@@ -131,6 +133,8 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
     });
     expect(ran).toBe('ok');
 
@@ -145,6 +149,8 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
     });
     expect(ran).toBe('not-found');
   });

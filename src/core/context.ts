@@ -5,6 +5,8 @@ export interface WizardOptions {
   readonly cwd: string;
   readonly debug: boolean;
   readonly dryRun: boolean;
+  readonly nonInteractive: boolean;
+  readonly json: boolean;
 }
 
 export interface WizardContext extends WizardOptions {

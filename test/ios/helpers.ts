@@ -71,6 +71,8 @@ export function makeIosContext(opts: MakeIosContextOpts): IosContext {
     cwd: opts.cwd,
     debug: false,
     dryRun: opts.dryRun ?? false,
+    nonInteractive: false,
+    json: false,
     kind: 'ios',
     tokens: opts.tokens ?? { ios: 'TEST_TOKEN' },
     log: createLogger({ debug: false }),

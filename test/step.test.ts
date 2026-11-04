@@ -20,6 +20,8 @@ function makeContext(overrides: Partial<WizardContext> = {}): WizardContext {
     cwd: '/tmp',
     debug: false,
     dryRun: false,
+    nonInteractive: false,
+    json: false,
     kind: 'unknown',
     tokens: {},
     log: createLogger({ debug: false }),
@@ -100,6 +102,60 @@ describe('runSteps', () => {
 
     expect(result.failed).toBe(false);
     expect(trace.calls).toEqual([]);
+  });
+});
+
+describe('runSteps manual outcome', () => {
+  const snippet = { file: 'App.tsx', title: 'Add init', code: 'Bugsee.launch()' };
+
+  it('records manual, does not roll it back, continues, and marks incomplete', async () => {
+    const trace: Trace = { calls: [] };
+    const a = makeStep('a', trace);
+    const m = makeStep('m', trace, { apply: async () => ({ manual: snippet }) });
+    const c = makeStep('c', trace);
+    const result = await runSteps([a, m, c], makeContext());
+    expect(result.failed).toBe(false);
+    expect(result.incomplete).toBe(true);
+    expect(result.results).toEqual([
+      { id: 'a', outcome: 'applied' },
+      { id: 'm', outcome: 'manual', snippet },
+      { id: 'c', outcome: 'applied' },
+    ]);
+    expect(trace.calls).toEqual(['apply:a', 'apply:c']);
+  });
+
+  it('a later throw rolls back applied steps but not manual ones', async () => {
+    const trace: Trace = { calls: [] };
+    const a = makeStep('a', trace);
+    const m = makeStep('m', trace, { apply: async () => ({ manual: snippet }) });
+    const bad = makeStep('bad', trace, {
+      apply: async () => {
+        throw new Error('boom');
+      },
+    });
+    const result = await runSteps([a, m, bad], makeContext());
+    expect(result.failed).toBe(true);
+    expect(trace.calls).toEqual(['apply:a', 'rollback:a']);
+    expect(result.results.map((r) => `${r.id}:${r.outcome}`)).toEqual([
+      'a:applied',
+      'm:manual',
+      'bad:failed',
+      'a:rolled-back',
+    ]);
+  });
+
+  it('incomplete is false when nothing is manual', async () => {
+    const trace: Trace = { calls: [] };
+    const result = await runSteps([makeStep('a', trace)], makeContext());
+    expect(result.incomplete).toBe(false);
+  });
+
+  it('never calls apply under dry-run, even for a manual-returning step', async () => {
+    const apply = vi.fn(async () => ({ manual: snippet }));
+    const m = makeStep('m', { calls: [] }, { apply });
+    const result = await runSteps([m], makeContext({ dryRun: true }));
+    expect(apply).not.toHaveBeenCalled();
+    expect(result.incomplete).toBe(false);
   });
 });
 
