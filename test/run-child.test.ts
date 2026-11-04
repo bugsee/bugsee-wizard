@@ -59,4 +59,32 @@ describe('runChild', () => {
       }),
     ).rejects.toThrow(/ENOENT/);
   });
+
+  it('keeps only a bounded tail of stderr but still reports the last lines', async () => {
+    const script = `const big = 'e'.repeat(1000) + '\\n';
+for (let i = 0; i < 20000; i++) process.stderr.write(big);
+process.stderr.write('LAST-LINE\\n'); process.exit(4);`;
+    const err = await runChild(node, ['-e', script], {
+      cwd: process.cwd(),
+      forwardStdout: false,
+    }).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    const msg = (err as Error).message;
+    expect(msg).toContain('exited with code 4');
+    expect(msg).toContain('LAST-LINE');
+    // 10 lines of ~1000 chars at most, nowhere near the 20 MB written.
+    expect(msg.length).toBeLessThan(20_000);
+  }, 20_000);
+
+  it('caps the retained stderr tail at 64 KB (observable on one huge line)', async () => {
+    const script = `process.stderr.write('z'.repeat(300 * 1024)); process.exit(5);`;
+    const err = await runChild(node, ['-e', script], {
+      cwd: process.cwd(),
+      forwardStdout: false,
+    }).catch((e: Error) => e);
+    const msg = (err as Error).message;
+    expect(msg).toContain('exited with code 5');
+    expect(msg.length).toBeLessThan(64 * 1024 + 200);
+    expect(msg.length).toBeGreaterThan(60 * 1024);
+  }, 20_000);
 });

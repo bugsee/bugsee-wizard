@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 
+const STDERR_TAIL_BYTES = 64 * 1024;
+
 export interface RunChildOptions {
   readonly cwd: string;
   /** Mirror the child's stdout to ours (debug mode). Otherwise it is discarded. */
@@ -24,9 +26,11 @@ export async function runChild(
       cwd: options.cwd,
       stdio: ['ignore', options.forwardStdout ? 'pipe' : 'ignore', 'pipe'],
     });
+    // Rolling tail: only the last few lines are ever reported, so never hold
+    // more than STDERR_TAIL_BYTES however much the child writes.
     let stderr = '';
     child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderr = (stderr + chunk.toString()).slice(-STDERR_TAIL_BYTES);
     });
     if (options.forwardStdout) {
       child.stdout?.on('data', (chunk: Buffer) => {
