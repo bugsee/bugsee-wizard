@@ -204,6 +204,72 @@ describe.skipIf(process.platform === 'win32')('install-package op', () => {
     expect((await fs.stat(pkg)).isDirectory()).toBe(true);
   });
 
+  // pnpm >= 10 writes `allowBuilds` (or a "set this to true or false" placeholder) into
+  // pnpm-workspace.yaml during `pnpm add` — found by the e2e suite on pnpm 11.3 — so that file is
+  // part of what an install changes, exactly like the lockfile.
+  describe('pnpm-workspace.yaml (pnpm side file)', () => {
+    const pnpmAt = (root: string) => ({ ...npmAt(root), name: 'pnpm' as const });
+    const fakePnpm = async (body: string) => {
+      await writeFile(join(tmp.dir, 'bin', 'pnpm'), `#!/bin/sh\n${body}\n`);
+      await chmod(join(tmp.dir, 'bin', 'pnpm'), 0o755);
+    };
+    const yamlPath = () => join(project, 'pnpm-workspace.yaml');
+    const one: OpSpec = { op: 'install-package', packages: ['@bugsee/cli'], dev: true };
+
+    beforeEach(async () => {
+      await writeFile(join(project, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    });
+
+    it('a failed install restores an edited pnpm-workspace.yaml', async () => {
+      await writeFile(yamlPath(), 'allowBuilds:\n  esbuild: true\n');
+      await fakePnpm(
+        [
+          `printf 'allowBuilds:\\n  esbuild: true\\n  "@bugsee/cli": set this to true or false\\n' > pnpm-workspace.yaml`,
+          'echo "ERR_PNPM_IGNORED_BUILDS" >&2; exit 1',
+        ].join('\n'),
+      );
+      const ctx = makeCtx(tmp.dir, { packageDir: project, packageManager: pnpmAt(project) });
+      await expect(opToStep(one).apply(ctx)).rejects.toThrow('ERR_PNPM_IGNORED_BUILDS');
+      expect(await readFile(yamlPath(), 'utf8')).toBe('allowBuilds:\n  esbuild: true\n');
+    });
+
+    it('a failed install deletes a pnpm-workspace.yaml it created', async () => {
+      await fakePnpm('echo "allowBuilds: {}" > pnpm-workspace.yaml; exit 1');
+      const ctx = makeCtx(tmp.dir, { packageDir: project, packageManager: pnpmAt(project) });
+      await expect(opToStep(one).apply(ctx)).rejects.toThrow();
+      const fs = await import('node:fs/promises');
+      await expect(fs.access(yamlPath())).rejects.toThrow();
+    });
+
+    it('a successful install records the edit (for uninstall) and rollback restores it', async () => {
+      await writeFile(yamlPath(), 'allowBuilds:\n  esbuild: true\n');
+      await fakePnpm(
+        [
+          `printf '{"devDependencies":{"@bugsee/cli":"0.8.2"}}\\n' > package.json`,
+          `printf 'allowBuilds:\\n  esbuild: true\\n  "@bugsee/cli": true\\n' > pnpm-workspace.yaml`,
+        ].join('\n'),
+      );
+      const ctx = makeCtx(tmp.dir, { packageDir: project, packageManager: pnpmAt(project) });
+      const step = opToStep(one);
+      await step.apply(ctx);
+      const entry = ctx.entries.find((e) => e.file === 'project/pnpm-workspace.yaml');
+      expect(entry).toMatchObject({
+        action: 'edited',
+        before: 'allowBuilds:\n  esbuild: true\n',
+        after: 'allowBuilds:\n  esbuild: true\n  "@bugsee/cli": true\n',
+      });
+      await step.rollback(ctx);
+      expect(await readFile(yamlPath(), 'utf8')).toBe('allowBuilds:\n  esbuild: true\n');
+    });
+
+    it('is not touched or recorded for other package managers', async () => {
+      await writeFile(yamlPath(), 'allowBuilds: {}\n');
+      const ctx = ctxFor();
+      await opToStep(spec).apply(ctx);
+      expect(ctx.entries.map((e) => e.file)).not.toContain('project/pnpm-workspace.yaml');
+    });
+  });
+
   it('rollback before apply is a no-op', async () => {
     await opToStep(spec).rollback(ctxFor());
     expect(await readFile(join(project, 'package.json'), 'utf8')).toBe('{"name":"x"}\n');

@@ -8,10 +8,14 @@ import { manifestPath, readBytes, restoreBytes, text } from './shared.js';
 
 type Spec = Extract<OpSpec, { op: 'install-package' }>;
 
+/**
+ * Files at the package manager root that an install may rewrite besides package.json: the lockfile
+ * and, for pnpm >= 10, pnpm-workspace.yaml (`pnpm add` writes `allowBuilds` entries there).
+ */
 const LOCKFILES: Record<PackageManagerName, readonly string[]> = {
   npm: ['package-lock.json', 'npm-shrinkwrap.json'],
   yarn: ['yarn.lock'],
-  pnpm: ['pnpm-lock.yaml'],
+  pnpm: ['pnpm-lock.yaml', 'pnpm-workspace.yaml'],
   bun: ['bun.lock', 'bun.lockb'],
   deno: ['deno.lock'],
 };
