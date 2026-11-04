@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -154,7 +154,7 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
     expect((await calls())[0]?.args.at(-1)).toBe('lib');
     await rm(join(root, 'log'));
     run([], { BUGSEE_APP_TOKEN: 't' });
-    expect((await calls())[0]?.args.at(-1)).toBe('./build');
+    expect((await calls())[0]?.args.at(-1)).toBe('build');
   });
 
   // Found by the e2e suite on the angular-spa sample: every Angular CLI project's tsconfig.json has
@@ -178,7 +178,7 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
     );
     const r = run([], { BUGSEE_APP_TOKEN: 't' });
     expect(r.status).toBe(0);
-    expect(r.stderr).toContain('"./build"');
+    expect(r.stderr).toContain('"build"');
     expect(r.stderr).toContain('"dist"');
     expect(await calls()).toEqual([]);
   });
@@ -214,7 +214,18 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
     };
     expect(await dir(['arg'], { BUGSEE_SOURCEMAPS_DIR: 'lib' })).toBe('arg');
     expect(await dir([], { BUGSEE_SOURCEMAPS_DIR: 'lib' })).toBe('lib');
-    expect(await dir([], {})).toBe('build'); // outDir beats dist when both exist
+    const age = (name: string, secondsAgo: number) =>
+      utimes(
+        join(root, 'project', name),
+        new Date(Date.now() - secondsAgo * 1000),
+        new Date(Date.now() - secondsAgo * 1000),
+      );
+    await age('dist', 600);
+    await age('build', 10);
+    expect(await dir([], {})).toBe('build'); // both exist: the freshly built one
+    await age('build', 900);
+    await age('dist', 5);
+    expect(await dir([], {})).toBe('dist'); // a stale outDir does not beat the directory just built
     await rm(join(root, 'project', 'build'), { recursive: true });
     expect(await dir([], {})).toBe('dist'); // outDir never built: fall back to dist
   });
@@ -291,5 +302,35 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
     );
     run();
     expect((await calls())[0]?.token).toBe('a"b\\c');
+  });
+
+  it('follows tsconfig "extends" (relative, with or without .json, nested) to find outDir', async () => {
+    await out('base-out');
+    await mkdir(join(root, 'project', 'config'));
+    await writeFile(
+      join(root, 'project', 'config', 'tsconfig.base.json'),
+      '{"extends":"./tsconfig.root","compilerOptions":{"strict":true}}',
+    );
+    await writeFile(
+      join(root, 'project', 'config', 'tsconfig.root.json'),
+      '{"compilerOptions":{"outDir":"../base-out"}}',
+    );
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      '{"extends":"./config/tsconfig.base.json"}',
+    );
+    run([], { BUGSEE_APP_TOKEN: 't' });
+    expect((await calls())[0]?.args.at(-1)).toBe('base-out');
+  });
+
+  it('a tsconfig that extends itself or a package does not hang or crash', async () => {
+    await out();
+    await writeFile(join(root, 'project', 'tsconfig.json'), '{"extends":"./tsconfig.json"}');
+    expect(run([], { BUGSEE_APP_TOKEN: 't' }).status).toBe(0);
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      '{"extends":"@tsconfig/node20/tsconfig.json"}',
+    );
+    expect(run([], { BUGSEE_APP_TOKEN: 't' }).status).toBe(0);
   });
 });

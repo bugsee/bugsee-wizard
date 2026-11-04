@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,9 +46,13 @@ describe('snapshot tools', () => {
       expect(r.status).toBe(0);
     });
 
-    it('defaults to the repository snapshot when no directory is given', () => {
+    it('defaults to the repository snapshot when no directory is given', async () => {
       const r = spawnSync(process.execPath, [VALIDATE], { encoding: 'utf8', cwd: tmp });
       expect(r.status).toBe(0);
+      const n = (await readdir(SNAPSHOT, { withFileTypes: true })).filter((e) =>
+        e.isDirectory(),
+      ).length;
+      expect(r.stdout).toContain(`snapshot OK: ${n} recipe(s) in ${n} platform(s)`);
     });
 
     it('fails on a recipe whose bytes no longer match the index sha256', async () => {
@@ -70,8 +74,12 @@ describe('snapshot tools', () => {
     });
 
     it.each([
-      ['id', { id: 'javascript-other' }, /id/],
-      ['platform', { platform: 'javascript-other' }, /platform/],
+      ['id', { id: 'javascript-other' }, /id "javascript-other" is not "javascript-vite"/],
+      [
+        'platform',
+        { platform: 'javascript-other' },
+        /platform "javascript-other" is not "javascript-vite"/,
+      ],
     ])('fails when the recipe %s disagrees with its directory', async (_, over, re) => {
       await writeFile(
         join(snap, 'javascript-vite', 'r1.json'),
@@ -100,10 +108,12 @@ describe('snapshot tools', () => {
       const index = JSON.parse(await readFile(path, 'utf8'));
       index.entries.push({ ...index.entries[0], revision: 'r2', url: '../x/r1.json' });
       index.entries.push({ ...index.entries[0], revision: 'r3', url: 'r3.json' });
+      index.entries.push({ ...index.entries[0], revision: 'r1', url: 'sub/r1.json' });
       await writeFile(path, JSON.stringify(index));
       const r = run(VALIDATE, snap);
       expect(r.status).toBe(1);
-      expect(r.out).toMatch(/bare file name/);
+      expect(r.out).toContain('url "../x/r1.json" must be a bare file name');
+      expect(r.out).toContain('url "sub/r1.json" must be a bare file name');
       expect(r.out).toMatch(/r3\.json.*missing/);
     });
 
@@ -115,10 +125,20 @@ describe('snapshot tools', () => {
       await writeFile(join(snap, 'stray.json'), '{}');
       const r = run(VALIDATE, snap);
       expect(r.status).toBe(1);
-      expect(r.out).toMatch(/schema/);
-      expect(r.out).toMatch(/platform/);
+      expect(r.out).toContain('schema must be 1, not 2');
+      expect(r.out).toContain('platform "x" is not the directory name');
       expect(r.out).toMatch(/r9\.json.*not listed/);
       expect(r.out).toMatch(/stray\.json/);
+    });
+
+    it('fails when an entry revision does not match its file name', async () => {
+      const path = join(snap, 'javascript-vite', 'index.json');
+      const index = JSON.parse(await readFile(path, 'utf8'));
+      index.entries[0].revision = 'r7';
+      await writeFile(path, JSON.stringify(index));
+      const r = run(VALIDATE, snap);
+      expect(r.status).toBe(1);
+      expect(r.out).toContain('revision "r7" does not match the file name');
     });
 
     it('fails on an empty snapshot', async () => {
@@ -135,7 +155,11 @@ describe('snapshot tools', () => {
     it('reproduces the committed indexes byte for byte', async () => {
       const r = run(BUILD, snap);
       expect(r.status).toBe(0);
-      for (const p of ['javascript-vite', 'javascript-webpack', 'javascript-rollup']) {
+      const platforms = (await readdir(SNAPSHOT, { withFileTypes: true }))
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+      expect(platforms.length).toBeGreaterThanOrEqual(7);
+      for (const p of platforms) {
         expect(await readFile(join(snap, p, 'index.json'), 'utf8')).toBe(
           await readFile(join(SNAPSHOT, p, 'index.json'), 'utf8'),
         );
@@ -162,11 +186,30 @@ describe('snapshot tools', () => {
       expect(run(VALIDATE, snap).status).toBe(0);
     });
 
-    it('refuses to index a recipe the real parser rejects', async () => {
+    it('refuses to index a recipe the real parser rejects, and writes no partial index for that platform', async () => {
+      await rm(join(snap, 'javascript-vite', 'index.json'));
       await writeFile(join(snap, 'javascript-vite', 'r2.json'), JSON.stringify({ schema: 1 }));
       const r = run(BUILD, snap);
       expect(r.status).toBe(1);
-      expect(r.out).toMatch(/r2\.json/);
+      expect(r.out).toContain('javascript-vite/r2.json');
+      await expect(access(join(snap, 'javascript-vite', 'index.json'))).rejects.toThrow();
+    });
+
+    it('orders revisions numerically (r10 after r2)', async () => {
+      const dir = join(snap, 'javascript-vite');
+      for (const n of [10, 2]) {
+        await writeFile(
+          join(dir, `r${n}.json`),
+          JSON.stringify(recipe('javascript-vite', { sdk: { range: `>=${n}.0.0` } })),
+        );
+      }
+      expect(run(BUILD, snap).status).toBe(0);
+      const index = JSON.parse(await readFile(join(dir, 'index.json'), 'utf8'));
+      expect(index.entries.map((e: { revision: string }) => e.revision)).toEqual([
+        'r1',
+        'r2',
+        'r10',
+      ]);
     });
   });
 

@@ -41,6 +41,12 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptInstall', () => {
       sb = await sandbox('vite-react-spa');
     });
 
+    it('a complete run points at the build to verify the upload', async () => {
+      const cap = captureOutput();
+      await runJavaScriptInstall(baseOpts(sb.project), makeDeps(cap));
+      expect(cap.lines.join('\n')).toContain('should show the Bugsee CLI uploading');
+    });
+
     it('installs, edits, writes the env var and the manifest', async () => {
       const cap = captureOutput();
       const deps = makeDeps(cap);
@@ -345,6 +351,10 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptInstall', () => {
         },
       ]);
       expect(cap.lines.join('\n')).toContain('bugsee()');
+      // an incomplete run must not promise an upload that nothing will do yet
+      const tail = cap.lines.join('\n');
+      expect(tail).toMatch(/complete the manual step shown above/i);
+      expect(tail).not.toContain('should show the Bugsee CLI uploading');
       expect(await readFile(join(sb.project, 'vite.config.ts'), 'utf8')).toBe(config);
       expect(exitCodeFor(r, true)).toBe(3);
       expect(exitCodeFor(r, false)).toBe(0);

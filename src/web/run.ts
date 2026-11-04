@@ -134,8 +134,14 @@ function snippetText(s: ManualSnippet): string {
   return `${s.title} (${s.file}):\n${s.code}`;
 }
 
-function outro(log: Logger, pm: DetectedPackageManager | null): void {
+function outro(log: Logger, pm: DetectedPackageManager | null, incomplete: boolean): void {
   const run = `${pm?.name ?? 'npm'} run build`;
+  if (incomplete) {
+    log.info(
+      'Not finished: complete the manual step shown above, then build in production mode to check that source maps upload.',
+    );
+    return;
+  }
   log.info(
     [
       `To verify: build in production mode (for example \`${run}\`).`,
@@ -246,6 +252,6 @@ export async function runJavaScriptInstall(
       : {}),
   };
   if (opts.dryRun) log.info('Dry run: nothing was written.');
-  else if (!run.failed) outro(log, packageManager);
+  else if (!run.failed) outro(log, packageManager, run.incomplete);
   return result;
 }
