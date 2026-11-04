@@ -3,6 +3,7 @@ import * as clack from '@clack/prompts';
 import type { WizardOptions } from '../core/context.js';
 import { runDetectors } from '../core/detect.js';
 import { createLogger } from '../core/logger.js';
+import type { RecipeResult } from '../core/result.js';
 import { registerAllDetectors } from '../detectors/index.js';
 import { PROJECT_KIND_LABELS, type ProjectKind } from '../project-kind.js';
 import { runAndroidRecipe } from '../recipes/android/run.js';
@@ -47,22 +48,31 @@ export async function runInstall(opts: WizardOptions): Promise<void> {
 
   log.info(`Selected: ${PROJECT_KIND_LABELS[chosen]}`);
 
+  let result: RecipeResult;
   switch (chosen) {
     case 'android':
-      await runAndroidRecipe(opts);
+      result = await runAndroidRecipe(opts);
       break;
     case 'ios':
-      await runIosRecipe(opts);
+      result = await runIosRecipe(opts);
       break;
     case 'react-native':
-      await runReactNativeRecipe(opts);
+      result = await runReactNativeRecipe(opts);
       break;
     case 'flutter':
     case 'web':
     case 'unknown':
       clack.note(`Recipe for ${PROJECT_KIND_LABELS[chosen]} is not implemented yet.`, 'Next');
-      break;
+      clack.outro('Nothing was installed.');
+      return;
   }
 
-  clack.outro('Done.');
+  if (result === 'ok') {
+    clack.outro('Done.');
+  } else if (result === 'failed') {
+    // Non-zero so scripted/CI callers can tell Bugsee was not installed.
+    clack.outro('Bugsee was not installed — see the errors above.');
+    process.exitCode = 1;
+  }
+  // 'cancelled': the recipe already printed "Cancelled." — exit 0, no outro.
 }

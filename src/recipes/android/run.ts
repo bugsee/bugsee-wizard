@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import * as clack from '@clack/prompts';
 import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
+import type { RecipeResult, RollbackResult } from '../../core/result.js';
 import { runRollback, runSteps, type Step } from '../../core/step.js';
 
 import { discoverAndroidPaths } from './paths.js';
@@ -39,7 +40,7 @@ export interface AndroidRecipeInput extends WizardOptions {
   readonly silent?: boolean;
 }
 
-export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void> {
+export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<RecipeResult> {
   const log = createLogger({ debug: input.debug });
 
   const paths = await discoverAndroidPaths(input.cwd).catch((err) => {
@@ -48,7 +49,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
   });
   if (!paths) {
     clack.cancel('Could not locate the Android project files. Cancelled.');
-    return;
+    return 'failed';
   }
   log.info(
     `Detected ${paths.appBuildGradleDsl} DSL, ${paths.appBuildScriptStyle} at ${paths.appBuildGradle}`,
@@ -65,7 +66,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
     });
     if (clack.isCancel(tokenAnswer)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     tokenValue = tokenAnswer;
   }
@@ -92,7 +93,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
     });
     if (clack.isCancel(choice)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     initMode = choice;
   }
@@ -107,7 +108,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
     });
     if (clack.isCancel(answer)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     ndk = answer;
   }
@@ -122,7 +123,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
     });
     if (clack.isCancel(answer)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     feedback = answer;
   }
@@ -137,7 +138,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
     });
     if (clack.isCancel(answer)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     sizeAnalysis = answer;
   }
@@ -174,7 +175,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
     });
     if (clack.isCancel(choice)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     if (choice === 'auto') providerProcessOverride = proc;
     if (choice === 'manual') {
@@ -240,12 +241,12 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
 
   if (result.failed) {
     clack.log.error('One or more steps failed; previous changes were rolled back.');
-    return;
+    return 'failed';
   }
 
   // Parent recipe (e.g. React Native) has indicated it will print the
   // final summary itself — skip the platform-level notes.
-  if (input.silent) return;
+  if (input.silent) return 'ok';
 
   if (initMode === 'manual') {
     const lines: string[] = [
@@ -289,6 +290,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
     }
     clack.note(lines.join('\n'), 'Done');
   }
+  return 'ok';
 }
 
 /**
@@ -298,10 +300,10 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<void>
  * a no-op when its target state isn't present. Doesn't ask the user any
  * questions; rollback() doesn't read user options.
  *
- * Returns true when path discovery succeeded (rollback was actually
- * attempted), false when no Android project was found at `input.cwd`.
+ * Returns `'not-found'` when no Android project was found at `input.cwd`
+ * (nothing attempted), `'failed'` when any step's rollback threw, else `'ok'`.
  */
-export async function runAndroidRollback(input: WizardOptions): Promise<boolean> {
+export async function runAndroidRollback(input: WizardOptions): Promise<RollbackResult> {
   const log = createLogger({ debug: input.debug });
 
   const paths = await discoverAndroidPaths(input.cwd).catch((err) => {
@@ -309,7 +311,7 @@ export async function runAndroidRollback(input: WizardOptions): Promise<boolean>
     return null;
   });
   if (!paths) {
-    return false;
+    return 'not-found';
   }
 
   // Rollback doesn't read options, but the type system requires us to
@@ -348,6 +350,6 @@ export async function runAndroidRollback(input: WizardOptions): Promise<boolean>
     injectProviderOverrideStep,
   ];
 
-  await runRollback(steps, ctx);
-  return true;
+  const result = await runRollback(steps, ctx);
+  return result.failed ? 'failed' : 'ok';
 }

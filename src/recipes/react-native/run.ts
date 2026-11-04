@@ -2,6 +2,7 @@ import * as clack from '@clack/prompts';
 
 import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
+import type { RecipeResult, RollbackResult } from '../../core/result.js';
 import { runRollback, runSteps, type Step } from '../../core/step.js';
 import { runAndroidRecipe, runAndroidRollback } from '../android/run.js';
 import { runIosRecipe, runIosRollback } from '../ios/run.js';
@@ -77,31 +78,31 @@ async function pickPlatforms(
   return [choice];
 }
 
-export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promise<void> {
+export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promise<RecipeResult> {
   const log = createLogger({ debug: input.debug });
   const paths = await discoverRnPaths(input.cwd);
 
   if (!paths.androidPath && !paths.iosPath) {
     clack.log.warn('No `android/` or `ios/` subdirectory found at the project root.');
-    return;
+    return 'failed';
   }
 
   // 1. Pick platforms.
   const targets = await pickPlatforms(!!paths.androidPath, !!paths.iosPath);
   if (targets === null) {
     clack.cancel('Cancelled.');
-    return;
+    return 'cancelled';
   }
   if (targets.length === 0) {
     clack.log.warn('Nothing to do.');
-    return;
+    return 'cancelled';
   }
 
   // 2. Pick launch path.
   const launchPath = await pickLaunchPath();
   if (launchPath === null) {
     clack.cancel('Cancelled.');
-    return;
+    return 'cancelled';
   }
 
   // 3. Per-platform tokens (Bugsee's RN dashboard issues separate ones).
@@ -115,7 +116,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     });
     if (clack.isCancel(ans)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     androidToken = ans.trim();
   }
@@ -127,7 +128,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     });
     if (clack.isCancel(ans)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     iosToken = ans.trim();
   }
@@ -142,7 +143,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   });
   if (clack.isCancel(autoInjectJsEntry)) {
     clack.cancel('Cancelled.');
-    return;
+    return 'cancelled';
   }
 
   // 5. Package install opt-in.
@@ -156,7 +157,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   });
   if (clack.isCancel(runPackageInstall)) {
     clack.cancel('Cancelled.');
-    return;
+    return 'cancelled';
   }
 
   const rnOptions: RnOptions = {
@@ -189,7 +190,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   const rnResult = await runSteps(rnSteps, rnCtx);
   if (rnResult.failed) {
     clack.log.error('One or more RN-level steps failed; previous changes were rolled back.');
-    return;
+    return 'failed';
   }
 
   // 7. Delegate to platform recipes with launch-path-aware overrides.
@@ -253,6 +254,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     }
   }
   clack.note(summary.join('\n'), 'Done');
+  return 'ok';
 }
 
 /**
@@ -262,11 +264,9 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
  * everything is safe even when only one launch path was originally set
  * up.
  */
-export async function runReactNativeRollback(input: WizardOptions): Promise<boolean> {
+export async function runReactNativeRollback(input: WizardOptions): Promise<RollbackResult> {
   const log = createLogger({ debug: input.debug });
   const paths = await discoverRnPaths(input.cwd);
-
-  let attempted = false;
 
   // RN-level rollback first — JS injection depends on tokens for the
   // marker but the strip itself doesn't need them, so we pass empties.
@@ -289,17 +289,16 @@ export async function runReactNativeRollback(input: WizardOptions): Promise<bool
     injectJsEntryStep,
     runPackageInstallStep,
   ];
-  await runRollback(rnSteps, rnCtx);
-  attempted = true;
+  let failed = (await runRollback(rnSteps, rnCtx)).failed;
 
   // Then platform rollbacks.
   if (paths.androidPath) {
-    const ran = await runAndroidRollback({ ...input, cwd: paths.androidPath });
-    if (ran) attempted = true;
+    const res = await runAndroidRollback({ ...input, cwd: paths.androidPath });
+    if (res === 'failed') failed = true;
   }
   if (paths.iosPath) {
-    const ran = await runIosRollback({ ...input, cwd: paths.iosPath });
-    if (ran) attempted = true;
+    const res = await runIosRollback({ ...input, cwd: paths.iosPath });
+    if (res === 'failed') failed = true;
   }
-  return attempted;
+  return failed ? 'failed' : 'ok';
 }

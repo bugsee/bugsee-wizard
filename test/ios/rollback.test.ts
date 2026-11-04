@@ -2,7 +2,7 @@ import { cp } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { runIosRollback } from '../../src/recipes/ios/run.js';
+import { runIosRecipe, runIosRollback } from '../../src/recipes/ios/run.js';
 import { addPodStep } from '../../src/recipes/ios/steps/add-pod.js';
 import { addSchemePostActionStep } from '../../src/recipes/ios/steps/add-scheme-postaction.js';
 import { addSpmDependencyStep } from '../../src/recipes/ios/steps/add-spm-dependency.js';
@@ -108,7 +108,7 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
       debug: false,
       dryRun: false,
     });
-    expect(ran).toBe(true);
+    expect(ran).toBe('ok');
 
     // Files restored byte-for-byte.
     expect(await readFixture(fixture, 'Podfile')).toBe(originals.podfile);
@@ -138,18 +138,67 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
       debug: false,
       dryRun: false,
     });
-    expect(ran).toBe(true);
+    expect(ran).toBe('ok');
 
     expect(await addSpmDependencyStep.precheck(ctx)).toEqual({ kind: 'pending' });
   });
 
-  it('returns false when no iOS project is found at cwd', async () => {
+  it('returns not-found when no iOS project is found at cwd', async () => {
     fixture = await makeFixture({ 'README.md': '' });
     const ran = await runIosRollback({
       cwd: fixture,
       debug: false,
       dryRun: false,
     });
-    expect(ran).toBe(false);
+    expect(ran).toBe('not-found');
+  });
+});
+
+describe('runIosRecipe result', () => {
+  const baseOptions = {
+    sizeAnalysis: false,
+    sizeAnalysisAllConfigurations: false,
+    autoInjectAppDelegate: false,
+    runPodInstall: false,
+  };
+
+  async function projectFixture(): Promise<string> {
+    const dir = await makeFixture({
+      'MinimalApp.xcodeproj/xcshareddata/xcschemes/MinimalApp.xcscheme': SAMPLE_XCSCHEME,
+    });
+    await cp(FIXTURE_PROJECT, path.join(dir, 'MinimalApp.xcodeproj'), { recursive: true });
+    return dir;
+  }
+
+  it("returns 'failed' when a step is blocked (CocoaPods without a Podfile)", async () => {
+    fixture = await projectFixture();
+    const res = await runIosRecipe({
+      cwd: fixture,
+      debug: false,
+      dryRun: false,
+      token: 'TOK',
+      silent: true,
+      options: { ...baseOptions, distribution: 'cocoapods' },
+    });
+    expect(res).toBe('failed');
+  });
+
+  it("returns 'ok' after a complete silent SPM install", async () => {
+    fixture = await projectFixture();
+    const res = await runIosRecipe({
+      cwd: fixture,
+      debug: false,
+      dryRun: false,
+      token: 'TOK',
+      silent: true,
+      options: { ...baseOptions, distribution: 'spm' },
+    });
+    expect(res).toBe('ok');
+  });
+
+  it("returns 'failed' when no iOS project is found", async () => {
+    fixture = await makeFixture({ 'README.md': '' });
+    const res = await runIosRecipe({ cwd: fixture, debug: false, dryRun: false, token: 'T' });
+    expect(res).toBe('failed');
   });
 });

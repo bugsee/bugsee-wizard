@@ -2,6 +2,7 @@ import * as clack from '@clack/prompts';
 
 import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
+import type { RecipeResult, RollbackResult } from '../../core/result.js';
 import { runRollback, runSteps, type Step } from '../../core/step.js';
 import { discoverIosPaths } from './paths.js';
 import { isPodOnPath } from './pod.js';
@@ -29,7 +30,7 @@ export interface IosRecipeInput extends WizardOptions {
   readonly silent?: boolean;
 }
 
-export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
+export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult> {
   const log = createLogger({ debug: input.debug });
 
   let paths = await discoverIosPaths(input.cwd).catch((err) => {
@@ -38,7 +39,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
   });
   if (!paths) {
     clack.cancel('Could not locate the iOS project files. Cancelled.');
-    return;
+    return 'failed';
   }
 
   // When the project has multiple shared schemes (App + Extensions, Watch
@@ -57,7 +58,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
     });
     if (clack.isCancel(picked)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     if (picked !== paths.scheme) {
       const pickedName = picked.split('/').pop()?.replace('.xcscheme', '') ?? '';
@@ -89,7 +90,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
     });
     if (clack.isCancel(tokenAnswer)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     tokenValue = tokenAnswer;
   }
@@ -117,7 +118,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
     });
     if (clack.isCancel(choice)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     distribution = choice;
   }
@@ -132,7 +133,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
     });
     if (clack.isCancel(answer)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     sizeAnalysis = answer;
   }
@@ -147,7 +148,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
     });
     if (clack.isCancel(allConfigs)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     sizeAnalysisAllConfigurations = allConfigs;
   }
@@ -165,7 +166,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
     });
     if (clack.isCancel(answer)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     runPodInstall = answer;
   }
@@ -183,7 +184,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
     });
     if (clack.isCancel(answer)) {
       clack.cancel('Cancelled.');
-      return;
+      return 'cancelled';
     }
     autoInjectAppDelegate = answer;
   }
@@ -223,12 +224,12 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
 
   if (result.failed) {
     clack.log.error('One or more steps failed; previous changes were rolled back.');
-    return;
+    return 'failed';
   }
 
   // Parent recipe (e.g. React Native) has indicated it will print the
   // final summary itself.
-  if (input.silent) return;
+  if (input.silent) return 'ok';
 
   // Was the AppDelegate step actually applied, or did it self-skip (no
   // AppDelegate / no didFinishLaunching / SwiftUI App)? If it skipped, fall
@@ -259,6 +260,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
     notes.push(`  [Bugsee launchWithToken:@"${tokenValue.trim()}"];`);
   }
   clack.note(notes.join('\n'), 'Next steps');
+  return 'ok';
 }
 
 /**
@@ -268,10 +270,10 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<void> {
  * a no-op when its target state isn't present. Doesn't ask the user any
  * questions; rollback() doesn't read user options.
  *
- * Returns true when path discovery succeeded (rollback was actually
- * attempted), false when no iOS project was found at `input.cwd`.
+ * Returns `'not-found'` when no iOS project was found at `input.cwd`
+ * (nothing attempted), `'failed'` when any step's rollback threw, else `'ok'`.
  */
-export async function runIosRollback(input: WizardOptions): Promise<boolean> {
+export async function runIosRollback(input: WizardOptions): Promise<RollbackResult> {
   const log = createLogger({ debug: input.debug });
 
   const paths = await discoverIosPaths(input.cwd).catch((err) => {
@@ -279,7 +281,7 @@ export async function runIosRollback(input: WizardOptions): Promise<boolean> {
     return null;
   });
   if (!paths) {
-    return false;
+    return 'not-found';
   }
 
   const ctx: IosContext = {
@@ -310,6 +312,6 @@ export async function runIosRollback(input: WizardOptions): Promise<boolean> {
     runPodInstallStep,
   ];
 
-  await runRollback(steps, ctx);
-  return true;
+  const result = await runRollback(steps, ctx);
+  return result.failed ? 'failed' : 'ok';
 }

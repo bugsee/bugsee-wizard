@@ -1,6 +1,8 @@
+import { chmod } from 'node:fs/promises';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { runAndroidRollback } from '../../src/recipes/android/run.js';
+import { runAndroidRecipe, runAndroidRollback } from '../../src/recipes/android/run.js';
 import { applyPluginStep } from '../../src/recipes/android/steps/apply-plugin.js';
 import { configureBugseeBlockStep } from '../../src/recipes/android/steps/configure-bugsee-block.js';
 import { ensureGitignoredStep } from '../../src/recipes/android/steps/ensure-gitignored.js';
@@ -88,7 +90,7 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
       debug: false,
       dryRun: false,
     });
-    expect(ran).toBe(true);
+    expect(ran).toBe('ok');
 
     // App-level Gradle, manifest restored byte-for-byte. settings.gradle
     // is the one exception — ensure-maven-central rollback is intentionally
@@ -118,20 +120,68 @@ describe('Android full rollback (install → uninstall round-trip)', () => {
       debug: false,
       dryRun: false,
     });
-    expect(ran).toBe(true);
+    expect(ran).toBe('ok');
 
     // No-op: every step's rollback couldn't find its marker, so nothing changed.
     expect(await readFixture(fixture, 'app/build.gradle.kts')).toBe(originalApp);
     expect(await readFixture(fixture, 'app/src/main/AndroidManifest.xml')).toBe(originalManifest);
   });
 
-  it('returns false when no Android project is found at the cwd', async () => {
+  it('returns not-found when no Android project is found at the cwd', async () => {
     fixture = await makeFixture({ 'README.md': '' });
     const ran = await runAndroidRollback({
       cwd: fixture,
       debug: false,
       dryRun: false,
     });
-    expect(ran).toBe(false);
+    expect(ran).toBe('not-found');
+  });
+
+  it('returns failed when a step rollback throws', async () => {
+    fixture = await makeFixture({
+      'settings.gradle.kts': SAMPLE_KOTLIN_SETTINGS_NO_MAVEN,
+      'build.gradle.kts': SAMPLE_KOTLIN_PROJECT_BUILD,
+      'app/build.gradle.kts': SAMPLE_KOTLIN_APP_BUILD,
+      'app/src/main/AndroidManifest.xml': SAMPLE_MANIFEST,
+    });
+    const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin' });
+    await injectLoaderStep.apply(ctx);
+    // Read-only build script: the loader rollback's writeFile throws.
+    await chmod(path.join(fixture, 'app/build.gradle.kts'), 0o444);
+    const ran = await runAndroidRollback({ cwd: fixture, debug: false, dryRun: false });
+    await chmod(path.join(fixture, 'app/build.gradle.kts'), 0o644);
+    expect(ran).toBe('failed');
+  });
+});
+
+describe('runAndroidRecipe result', () => {
+  it("returns 'ok' after a complete silent install", async () => {
+    fixture = await makeFixture({
+      'settings.gradle.kts': SAMPLE_KOTLIN_SETTINGS_NO_MAVEN,
+      'build.gradle.kts': SAMPLE_KOTLIN_PROJECT_BUILD,
+      'app/build.gradle.kts': SAMPLE_KOTLIN_APP_BUILD,
+      'app/src/main/AndroidManifest.xml': SAMPLE_MANIFEST,
+    });
+    const res = await runAndroidRecipe({
+      cwd: fixture,
+      debug: false,
+      dryRun: false,
+      token: 'T',
+      silent: true,
+      options: { initMode: 'automatic', ndk: false, feedback: false, sizeAnalysis: false },
+    });
+    expect(res).toBe('ok');
+  });
+
+  it("returns 'failed' when no Android project is found", async () => {
+    fixture = await makeFixture({ 'README.md': '' });
+    const res = await runAndroidRecipe({
+      cwd: fixture,
+      debug: false,
+      dryRun: false,
+      token: 'T',
+      options: { initMode: 'automatic', ndk: false, feedback: false, sizeAnalysis: false },
+    });
+    expect(res).toBe('failed');
   });
 });

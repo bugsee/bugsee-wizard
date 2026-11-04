@@ -3,6 +3,7 @@ import * as clack from '@clack/prompts';
 import type { WizardOptions } from '../core/context.js';
 import { runDetectors } from '../core/detect.js';
 import { createLogger } from '../core/logger.js';
+import type { RollbackResult } from '../core/result.js';
 import { registerAllDetectors } from '../detectors/index.js';
 import { PROJECT_KIND_LABELS, type ProjectKind } from '../project-kind.js';
 import { runAndroidRollback } from '../recipes/android/run.js';
@@ -35,23 +36,28 @@ export async function runUninstall(opts: WizardOptions): Promise<void> {
     return;
   }
 
-  let attemptedAny = false;
+  const results: RollbackResult[] = [];
   for (const target of targets) {
     if (target === 'android') {
-      const ran = await runAndroidRollback(opts);
-      if (ran) attemptedAny = true;
+      results.push(await runAndroidRollback(opts));
     } else if (target === 'ios') {
-      const ran = await runIosRollback(opts);
-      if (ran) attemptedAny = true;
+      results.push(await runIosRollback(opts));
     } else if (target === 'react-native') {
-      const ran = await runReactNativeRollback(opts);
-      if (ran) attemptedAny = true;
+      results.push(await runReactNativeRollback(opts));
     } else {
       log.warn(`No rollback implemented for ${PROJECT_KIND_LABELS[target]} yet.`);
     }
   }
 
-  if (!attemptedAny) {
+  if (results.includes('failed')) {
+    // Skip the exit poll: the user is looking at errors, and scripted callers
+    // need a non-zero exit to know Bugsee may still be partly present.
+    clack.outro('Bugsee removal finished with errors — see above.');
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!results.some((r) => r === 'ok')) {
     clack.outro('No rollback was performed.');
     return;
   }
