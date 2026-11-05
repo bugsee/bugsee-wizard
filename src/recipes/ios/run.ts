@@ -6,7 +6,7 @@ import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
 import type { RecipeResult, RollbackResult } from '../../core/result.js';
 import { runRollback, runSteps, type Step } from '../../core/step.js';
-import { discoverIosPaths, withScheme } from './paths.js';
+import { discoverIosPaths, listAppDelegates, withScheme } from './paths.js';
 import { isPodOnPath } from './pod.js';
 import { addPodStep } from './steps/add-pod.js';
 import { addSchemePostActionStep } from './steps/add-scheme-postaction.js';
@@ -331,6 +331,16 @@ export async function runIosRollback(input: WizardOptions): Promise<RollbackResu
       iosPaths: { ...paths, scheme, schemeName: path.basename(scheme, '.xcscheme') },
     };
     const extra = await runRollback([addSchemePostActionStep], schemeCtx);
+    if (extra.failed) failed = true;
+  }
+
+  // Likewise the launch call may sit in another target's AppDelegate (picked
+  // scheme). Strip our marker blocks from every candidate AppDelegate; the
+  // step's rollback only touches files that carry the markers.
+  for (const appDelegate of await listAppDelegates(input.cwd)) {
+    if (appDelegate === paths.appDelegate) continue;
+    const delegateCtx: IosContext = { ...ctx, iosPaths: { ...paths, appDelegate } };
+    const extra = await runRollback([injectAppDelegateStep], delegateCtx);
     if (extra.failed) failed = true;
   }
   return failed ? 'failed' : 'ok';
