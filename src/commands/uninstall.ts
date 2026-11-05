@@ -170,8 +170,9 @@ async function exists(p: string): Promise<boolean> {
 }
 
 async function hasReactNativeLeftovers(cwd: string): Promise<boolean> {
-  if ((await exists(path.join(cwd, 'android'))) || (await exists(path.join(cwd, 'ios')))) {
-    return true;
+  // A bare android/ or ios/ directory is not evidence of Bugsee; the wizard's own file is.
+  for (const dir of ['android', path.join('android', 'app')]) {
+    if (await exists(path.join(cwd, dir, 'bugsee.properties'))) return true;
   }
   try {
     const pkg = JSON.parse(await readFile(path.join(cwd, 'package.json'), 'utf8')) as Record<
