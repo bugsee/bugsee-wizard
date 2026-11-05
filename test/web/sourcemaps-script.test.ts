@@ -214,12 +214,14 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
     };
     expect(await dir(['arg'], { BUGSEE_SOURCEMAPS_DIR: 'lib' })).toBe('arg');
     expect(await dir([], { BUGSEE_SOURCEMAPS_DIR: 'lib' })).toBe('lib');
-    const age = (name: string, secondsAgo: number) =>
-      utimes(
-        join(root, 'project', name),
-        new Date(Date.now() - secondsAgo * 1000),
-        new Date(Date.now() - secondsAgo * 1000),
-      );
+    // a directory's freshness is that of its newest file
+    const age = async (name: string, secondsAgo: number) => {
+      await mkdir(join(root, 'project', name), { recursive: true });
+      const file = join(root, 'project', name, 'a.js');
+      await writeFile(file, 'x');
+      const t = new Date(Date.now() - secondsAgo * 1000);
+      await utimes(file, t, t);
+    };
     await age('dist', 600);
     await age('build', 10);
     expect(await dir([], {})).toBe('build'); // both exist: the freshly built one
@@ -332,5 +334,97 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
       '{"extends":"@tsconfig/node20/tsconfig.json"}',
     );
     expect(run([], { BUGSEE_APP_TOKEN: 't' }).status).toBe(0);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('generated script: review round 1 fixes', () => {
+  const at = (p: string, secondsAgo: number) => {
+    const t = new Date(Date.now() - secondsAgo * 1000);
+    return utimes(join(root, 'project', p), t, t);
+  };
+  const first = async (env: Record<string, string> = {}) => {
+    await rm(join(root, 'log'), { force: true });
+    run([], { BUGSEE_APP_TOKEN: 't', ...env });
+    return (await calls())[0]?.args.at(-1);
+  };
+
+  it('picks the freshest directory by its newest file, not by the directory entry itself', async () => {
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      '{"compilerOptions":{"outDir":"build"}}',
+    );
+    await mkdir(join(root, 'project', 'dist', 'sub'), { recursive: true });
+    await mkdir(join(root, 'project', 'build', 'sub'), { recursive: true });
+    await writeFile(join(root, 'project', 'dist', 'sub', 'a.js'), 'old');
+    await writeFile(join(root, 'project', 'build', 'sub', 'a.js'), 'new');
+    await at('dist/sub/a.js', 900);
+    await at('build/sub/a.js', 5);
+    // directory entries say the opposite (files were overwritten in place, nothing added)
+    await at('dist/sub', 1);
+    await at('dist', 1);
+    await at('build/sub', 800);
+    await at('build', 800);
+    expect(await first()).toBe('build');
+    // and the other way round
+    await at('dist/sub/a.js', 2);
+    await at('build/sub/a.js', 700);
+    expect(await first()).toBe('dist');
+  });
+
+  it('an empty candidate directory loses to one with files', async () => {
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      '{"compilerOptions":{"outDir":"build"}}',
+    );
+    await mkdir(join(root, 'project', 'build'), { recursive: true });
+    await mkdir(join(root, 'project', 'dist'), { recursive: true });
+    await writeFile(join(root, 'project', 'dist', 'a.js'), 'x');
+    await at('dist/a.js', 500);
+    expect(await first()).toBe('dist');
+  });
+
+  it('reads tsconfig.json and package.json that start with a UTF-8 BOM', async () => {
+    await out('build');
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      '﻿{"compilerOptions":{"outDir":"build"}}',
+    );
+    await writeFile(join(root, 'project', 'package.json'), '﻿{"version":"9.8.7"}');
+    run([], { BUGSEE_APP_TOKEN: 't' });
+    const c = await calls();
+    expect(c[0]?.args.at(-1)).toBe('build');
+    expect(c[1]?.args).toContain('9.8.7');
+  });
+
+  it('ignores an unquoted inline comment after the token in the env file', async () => {
+    await out();
+    for (const line of ['BUGSEE_APP_TOKEN=abc # prod', 'BUGSEE_APP_TOKEN="abc" # prod']) {
+      await rm(join(root, 'log'), { force: true });
+      await writeFile(join(root, 'project', '.env.bugsee-build-plugin'), `${line}\n`);
+      run();
+      expect((await calls())[0]?.token, line).toBe('abc');
+    }
+    // a "#" with no space before it belongs to the token
+    await rm(join(root, 'log'), { force: true });
+    await writeFile(join(root, 'project', '.env.bugsee-build-plugin'), 'BUGSEE_APP_TOKEN=ab#c\n');
+    run();
+    expect((await calls())[0]?.token).toBe('ab#c');
+  });
+
+  it('never prints the token', async () => {
+    await out();
+    const r = run([], { BUGSEE_APP_TOKEN: 'sekrit-token-value' });
+    expect(r.stdout + r.stderr).not.toContain('sekrit-token-value');
+  });
+});
+
+describe('the four CLI-route recipes', () => {
+  it('ship byte-identical scripts', async () => {
+    const [cli, ...others] = await Promise.all(
+      ['javascript-cli', 'javascript-tsc', 'javascript-esbuild', 'javascript-rspack'].map(
+        scriptTemplate,
+      ),
+    );
+    for (const o of others) expect(o).toBe(cli);
   });
 });

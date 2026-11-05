@@ -145,7 +145,7 @@ function outro(log: Logger, pm: DetectedPackageManager | null, incomplete: boole
   log.info(
     [
       `To verify: build in production mode (for example \`${run}\`).`,
-      'The build output should show the Bugsee CLI uploading your source maps.',
+      'With BUGSEE_APP_TOKEN set, the build uploads your source maps (the output shows the Bugsee upload); without it the upload is skipped.',
     ].join('\n'),
   );
 }

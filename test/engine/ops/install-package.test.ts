@@ -276,33 +276,32 @@ describe.skipIf(process.platform === 'win32')('install-package op', () => {
   });
 });
 
-// pnpm >= 10 skips dependency install scripts unless approved; pnpm 11 fails the install
-// (ERR_PNPM_IGNORED_BUILDS). The wizard approves exactly the packages it installs, via the
-// supported `--allow-build` flag, and only when the installed pnpm advertises it.
+// pnpm 11 fails an install whose dependency has an unapproved install script
+// (ERR_PNPM_IGNORED_BUILDS). The wizard approves exactly the packages it installs in
+// pnpm-workspace.yaml, merging with what is there (pnpm 11.3's own --allow-build replaces the map).
 describe.skipIf(process.platform === 'win32')('install-package op with pnpm', () => {
   let dir: string;
   let proj: string;
   let log: string;
   const saved = process.env.PATH;
+  const ws = () => join(proj, 'pnpm-workspace.yaml');
   const pnpmAt = (root: string) => ({
     name: 'pnpm' as const,
     root,
     installArgs: (pkgs: string[], dev: boolean) => ['add', ...(dev ? ['-D'] : []), ...pkgs],
   });
-  const fakePnpm = async (supportsAllowBuild: boolean) => {
+  const fakePnpm = async (version: string | null) => {
     const bin = join(dir, 'pbin');
     await mkdir(bin, { recursive: true });
-    const help = supportsAllowBuild
-      ? '      --allow-build  A list of package names'
-      : '  --save-dev';
     await writeFile(
       join(bin, 'pnpm'),
       [
         '#!/bin/sh',
-        'if [ "$2" = "--help" ]; then',
-        `  echo "${help}"; echo help >> "${log}"; exit 0`,
+        'if [ "$1" = "--version" ]; then',
+        version === null ? '  exit 3' : `  echo "${version}"; exit 0`,
         'fi',
         `printf '%s\\n' "$@" > "${log}.args"`,
+        `cat pnpm-workspace.yaml > "${log}.ws" 2>/dev/null || echo none > "${log}.ws"`,
         'echo "lock v2" > pnpm-lock.yaml',
       ].join('\n'),
     );
@@ -323,35 +322,95 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     process.env.PATH = saved;
     await tmp.cleanup();
   });
-  const run = (pkgs: string[], tag?: string) =>
-    opToStep({ op: 'install-package', packages: pkgs, dev: true, ...(tag ? { tag } : {}) }).apply(
-      makeCtx(dir, { packageDir: proj, packageManager: pnpmAt(proj) }),
+  const run = (pkgs: string[], tag?: string) => {
+    const ctx = makeCtx(dir, { packageDir: proj, packageManager: pnpmAt(proj) });
+    const step = opToStep({
+      op: 'install-package',
+      packages: pkgs,
+      dev: true,
+      ...(tag ? { tag } : {}),
+    });
+    return { ctx, step, done: step.apply(ctx) };
+  };
+  const args = async () => (await readFile(`${log}.args`, 'utf8')).trim().split('\n');
+
+  it('on pnpm 11 approves the installed packages BEFORE the install and keeps the other entries and comments', async () => {
+    await fakePnpm('11.3.0');
+    await writeFile(
+      ws(),
+      '# my workspace\npackages:\n  - apps/*\nallowBuilds:\n  esbuild: true\n  sharp: false\n',
     );
-
-  it('adds --allow-build for each installed package (bare names) when pnpm supports it', async () => {
-    await fakePnpm(true);
-    await run(['@bugsee/cli', 'left-pad'], 'beta');
-    expect((await readFile(`${log}.args`, 'utf8')).trim().split('\n')).toEqual([
-      'add',
-      '-D',
-      '--allow-build=@bugsee/cli',
-      '--allow-build=left-pad',
-      '@bugsee/cli@beta',
-      'left-pad@beta',
-    ]);
+    await run(['@bugsee/cli', 'left-pad'], 'beta').done;
+    expect(await args()).toEqual(['add', '-D', '@bugsee/cli@beta', 'left-pad@beta']); // no flag
+    // what pnpm saw while installing
+    const seen = await readFile(`${log}.ws`, 'utf8');
+    expect(seen).toContain('# my workspace');
+    expect(seen).toContain('- apps/*');
+    expect(seen).toMatch(/esbuild: true/);
+    expect(seen).toMatch(/sharp: false/);
+    expect(seen).toMatch(/['"]@bugsee\/cli['"]: true/);
+    expect(seen).toMatch(/left-pad: true/);
   });
 
-  it('leaves the arguments alone when pnpm does not advertise the flag', async () => {
-    await fakePnpm(false);
-    await run(['@bugsee/cli']);
-    expect((await readFile(`${log}.args`, 'utf8')).trim().split('\n')).toEqual([
-      'add',
-      '-D',
-      '@bugsee/cli',
-    ]);
+  it('creates pnpm-workspace.yaml when there is none, and records it as created', async () => {
+    await fakePnpm('11.0.0');
+    const { ctx, done } = run(['@bugsee/cli']);
+    await done;
+    expect(await readFile(ws(), 'utf8')).toMatch(/allowBuilds:\n\s+['"]@bugsee\/cli['"]: true/);
+    expect(ctx.entries.find((e) => e.file.endsWith('pnpm-workspace.yaml'))?.action).toBe('created');
   });
 
-  it('does not probe or add the flag for other package managers', async () => {
+  it("turns pnpm's undecided placeholder into true, and keeps an explicit false", async () => {
+    await fakePnpm('11.3.0');
+    await writeFile(
+      ws(),
+      "allowBuilds:\n  '@bugsee/cli': set this to true or false\n  other: false\n",
+    );
+    await run(['@bugsee/cli', 'other']).done;
+    const seen = await readFile(`${log}.ws`, 'utf8');
+    expect(seen).toMatch(/['"]@bugsee\/cli['"]: true/);
+    expect(seen).toMatch(/other: false/);
+  });
+
+  it('rollback and a failed install restore pnpm-workspace.yaml byte for byte', async () => {
+    await fakePnpm('11.3.0');
+    const original = 'allowBuilds:\n  esbuild: true\n';
+    await writeFile(ws(), original);
+    const { ctx, step, done } = run(['@bugsee/cli']);
+    await done;
+    expect(await readFile(ws(), 'utf8')).not.toBe(original);
+    await step.rollback(ctx);
+    expect(await readFile(ws(), 'utf8')).toBe(original);
+    // failure path
+    await writeFile(
+      join(dir, 'pbin', 'pnpm'),
+      '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 11.3.0; exit 0; fi\necho boom >&2; exit 1\n',
+    );
+    await expect(run(['@bugsee/cli']).done).rejects.toThrow(/boom/);
+    expect(await readFile(ws(), 'utf8')).toBe(original);
+  });
+
+  it('does nothing on pnpm 10, on an unreadable version, or on a workspace file it cannot parse', async () => {
+    await fakePnpm('10.34.9');
+    await run(['@bugsee/cli']).done;
+    await expect(readFile(ws())).rejects.toMatchObject({ code: 'ENOENT' });
+    await fakePnpm(null);
+    await run(['@bugsee/cli']).done;
+    await expect(readFile(ws())).rejects.toMatchObject({ code: 'ENOENT' });
+    await fakePnpm('11.3.0');
+    await writeFile(ws(), 'allowBuilds: [unclosed\n');
+    await run(['@bugsee/cli']).done;
+    expect(await readFile(ws(), 'utf8')).toBe('allowBuilds: [unclosed\n');
+    const dup = 'allowBuilds:\n  a: true\nallowBuilds:\n  b: true\n'; // parses, with an error
+    await writeFile(ws(), dup);
+    await run(['@bugsee/cli']).done;
+    expect(await readFile(ws(), 'utf8')).toBe(dup);
+    await writeFile(ws(), 'allowBuilds: nope\n');
+    await run(['@bugsee/cli']).done;
+    expect(await readFile(ws(), 'utf8')).toBe('allowBuilds: nope\n');
+  });
+
+  it('does not probe other package managers', async () => {
     const bin = join(dir, 'nbin');
     await mkdir(bin);
     await writeFile(join(bin, 'npm'), `#!/bin/sh\nprintf '%s\\n' "$@" > "${log}.args"\n`);
@@ -360,23 +419,7 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     await opToStep({ op: 'install-package', packages: ['left-pad'] }).apply(
       makeCtx(dir, { packageDir: proj, packageManager: npmAt(proj) }),
     );
-    expect((await readFile(`${log}.args`, 'utf8')).trim().split('\n')).toEqual([
-      'install',
-      'left-pad',
-    ]);
-  });
-
-  it('a failing help probe is ignored: the install still runs without the flag', async () => {
-    await fakePnpm(true);
-    await writeFile(
-      join(dir, 'pbin', 'pnpm'),
-      `#!/bin/sh\nif [ "$2" = "--help" ]; then exit 3; fi\nprintf '%s\\n' "$@" > "${log}.args"\n`,
-    );
-    await run(['@bugsee/cli']);
-    expect((await readFile(`${log}.args`, 'utf8')).trim().split('\n')).toEqual([
-      'add',
-      '-D',
-      '@bugsee/cli',
-    ]);
+    expect(await args()).toEqual(['install', 'left-pad']);
+    await expect(readFile(ws())).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

@@ -1,4 +1,6 @@
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { parseDocument } from 'yaml';
 import { runChild, runChildOutput } from '../../core/run-child.js';
 import type { Step } from '../../core/step.js';
 import { readPackageJson } from '../package-json.js';
@@ -21,18 +23,44 @@ const LOCKFILES: Record<PackageManagerName, readonly string[]> = {
 };
 
 /**
- * pnpm >= 10 does not run dependency install scripts unless the package is approved, and pnpm 11
- * fails the install with ERR_PNPM_IGNORED_BUILDS (leaving a placeholder in pnpm-workspace.yaml).
- * The wizard approves exactly the packages it installs, with pnpm's own `--allow-build` flag. The
- * flag is probed rather than version-gated, so older pnpm never sees an unknown option.
+ * pnpm 11 fails an install whose dependency has an unapproved install script
+ * (ERR_PNPM_IGNORED_BUILDS), so on a stock project every recipe died at its first step. Approve
+ * exactly the packages being installed in `allowBuilds` of pnpm-workspace.yaml first.
+ *
+ * Not `pnpm add --allow-build`: pnpm 11.3 REPLACES the whole `allowBuilds` map with the named
+ * packages, silently dropping the project's own approvals. pnpm 10 only warns, and its flag merges,
+ * so nothing is needed there. An explicit `false` is the project's decision and is kept; an
+ * undecided placeholder (what pnpm writes after a failed install) becomes `true`. The file is part
+ * of the install snapshot, so a failed install or an uninstall restores it byte for byte.
  */
-async function pnpmAllowBuildArgs(packages: readonly string[], cwd: string): Promise<string[]> {
+async function approvePnpmBuilds(
+  packages: readonly string[],
+  cwd: string,
+  root: string,
+): Promise<void> {
+  let major: number;
   try {
-    const help = await runChildOutput('pnpm', ['add', '--help'], { cwd });
-    return /--allow-build\b/.test(help) ? packages.map((p) => `--allow-build=${p}`) : [];
+    major = Number.parseInt((await runChildOutput('pnpm', ['--version'], { cwd })).trim(), 10);
   } catch {
-    return [];
+    return;
   }
+  if (!(major >= 11)) return;
+  const file = join(root, 'pnpm-workspace.yaml');
+  const prior = await readBytes(file);
+  const doc = parseDocument(prior ? prior.toString('utf8') : '');
+  if (doc.errors.length > 0) return; // a file we cannot read is left for pnpm to complain about
+  let changed = false;
+  try {
+    for (const p of packages) {
+      const current = doc.getIn(['allowBuilds', p]);
+      if (current === true || current === false) continue;
+      doc.setIn(['allowBuilds', p], true);
+      changed = true;
+    }
+  } catch {
+    return; // allowBuilds is not a map: not ours to rewrite
+  }
+  if (changed) await writeFile(file, doc.toString());
 }
 
 type Snapshot = ReadonlyMap<string, Buffer | null>;
@@ -72,15 +100,8 @@ export function installPackageStep(spec: Spec): Step<RecipeContext> {
       for (const p of paths) snap.set(p, await readBytes(p));
       const pkgs = spec.packages.map((p) => (spec.tag ? `${p}@${spec.tag}` : p));
       try {
+        if (pm.name === 'pnpm') await approvePnpmBuilds(spec.packages, ctx.packageDir, pm.root);
         const args = pm.installArgs(pkgs, spec.dev === true);
-        if (pm.name === 'pnpm') {
-          // flags go before the package names, which installArgs places last
-          args.splice(
-            args.length - pkgs.length,
-            0,
-            ...(await pnpmAllowBuildArgs(spec.packages, ctx.packageDir)),
-          );
-        }
         await runChild(pm.name, args, {
           cwd: ctx.packageDir,
           forwardStdout: ctx.debug,

@@ -260,7 +260,8 @@ function fresh(name: string): string {
 for (const name of selected.filter((n) => n in FIXTURES)) {
   const fixture = FIXTURES[name] as (typeof FIXTURES)[string];
   const recipe = readRecipe(fixture.recipe);
-  const manual = MANUAL[name] ?? [];
+  const manual = MANUAL[name];
+  if (!manual) throw new Error(`MANUAL has no entry for fixture ${name}`);
   const pluginManual = manual.some((id) => id.startsWith('add-bundler-plugin:'));
   const jsonKeyOps = recipe.ops.filter((op): op is JsonKeyOp => op.op === 'set-json-key');
   // the recipe sets tsc's inlineSources: every map the build writes must carry the sources
@@ -498,16 +499,22 @@ const pnpmMajor = Number(
   spawnSync('pnpm', ['--version'], { encoding: 'utf8' }).stdout.split('.')[0],
 );
 
-describe.runIf(selected.includes(UNAPPROVED) && pnpmMajor >= 11)(UNAPPROVED, () => {
+if (selected.includes(UNAPPROVED) && !(pnpmMajor >= 11)) {
+  // a skipped job would look green while testing nothing
+  throw new Error(`the ${UNAPPROVED} fixture needs pnpm >= 11 (found ${pnpmMajor})`);
+}
+
+describe.runIf(selected.includes(UNAPPROVED))(UNAPPROVED, () => {
   let dir: string;
   beforeAll(() => {
     dir = prepareFixture('node-service', fresh(UNAPPROVED), { approveBuilds: false });
   });
 
   // pnpm 11 fails `pnpm add` with ERR_PNPM_IGNORED_BUILDS for any dependency whose install script
-  // is not approved; @bugsee/cli (and the plugins' @bugsee/bugsee-cli) have one. The wizard passes
-  // `--allow-build` for exactly the packages it installs, so a stock project works, the approval
-  // lands in pnpm-workspace.yaml, and uninstall takes it out again.
+  // is not approved; @bugsee/cli (and the plugins' @bugsee/bugsee-cli) have one. The wizard approves
+  // exactly the packages it installs in pnpm-workspace.yaml before installing (merging with any
+  // approvals already there: the esbuild-build fixture covers that), so a stock project works, and
+  // uninstall takes the approval out again.
   it('installs on a pnpm project that has not approved the Bugsee install scripts', async () => {
     const r = await wizard(dir, ['--non-interactive', '--json', '--token', TOKEN]);
     expect(parseResult(r).ok, show(r)).toBe(true);

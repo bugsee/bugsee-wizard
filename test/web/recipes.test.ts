@@ -34,8 +34,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const name = path.basename(process.argv[1]);
 const args = process.argv.slice(2);
-// the wizard probes \`pnpm add --help\` for --allow-build: this fake does not advertise it
-if (args.includes('--help')) process.exit(0);
+// the wizard asks \`pnpm --version\` to decide on approving install scripts: this fake stays silent
+if (args.includes('--version')) process.exit(0);
 fs.appendFileSync(process.env.FAKE_NPM_LOG, JSON.stringify({ pm: name, args, cwd: process.cwd() }) + '\\n');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const field = args.includes('-D') ? 'devDependencies' : 'dependencies';
