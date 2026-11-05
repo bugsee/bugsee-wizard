@@ -219,7 +219,7 @@ Most specific wins (framework over bundler over `typescript`); detection never e
 
 - [ ] **Step 1:** Tests: each fixture detects the expected runtime/framework/build tool; Electron fixture ⇒ `runtimes` includes `electron`; a version below `SUPPORTED[...].min` warns and continues; non-JS dir ⇒ `null`.
 - [ ] **Step 2:** `runJavaScriptRecipe`: git precondition (clean tree, `--ignore-git-changes`), pick package (prompt or `--package`), resolve token, resolve recipes for the detected build tool, `executeRecipe`, write manifest, print outro with production-build test steps. Exit code: `failed` ⇒ 1, `incomplete` with `--non-interactive` ⇒ 3, else 0.
-- [ ] **Step 3:** Remove the "not implemented" branch for `web` in `install.ts`; `flutter`/`unknown` keep it.
+- [ ] **Step 3:** Route `web` to the JavaScript recipe in `install.ts` for the projects it supports (source-map wiring, see the scope note above). Keep the "not implemented" branch for `web` projects that need runtime SDK setup until the runtime-recipe task lands; `flutter`/`unknown` keep it.
 
 ---
 
