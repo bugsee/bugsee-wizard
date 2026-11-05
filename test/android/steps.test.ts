@@ -11,6 +11,7 @@ import { injectManifestPlaceholderStep } from '../../src/recipes/android/steps/i
 import { writeBugseePropertiesStep } from '../../src/recipes/android/steps/write-bugsee-properties.js';
 import {
   cleanup,
+  fixtureExists,
   makeAndroidContext,
   makeFixture,
   readFixture,
@@ -116,8 +117,8 @@ describe('writeBugseePropertiesStep', () => {
     const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'tok-1' } });
     await writeBugseePropertiesStep.apply(ctx);
     await writeBugseePropertiesStep.rollback(ctx);
-    const remaining = await readFixture(fixture, 'bugsee.properties');
-    expect(remaining).not.toContain('app_token');
+    // Wizard-created file is empty after rollback, so it is removed.
+    expect(await fixtureExists(fixture, 'bugsee.properties')).toBe(false);
   });
 
   it('preserves other bugsee.properties entries (extension keys)', async () => {
@@ -148,7 +149,9 @@ describe('writeBugseePropertiesStep — differing stored token', () => {
     });
     expect(await writeBugseePropertiesStep.precheck(ctx)).toEqual({ kind: 'pending' });
     await writeBugseePropertiesStep.apply(ctx);
-    expect(await readFixture(fixture, 'bugsee.properties')).toBe('a=1\napp_token=new-token\nb=2\n');
+    expect(await readFixture(fixture, 'bugsee.properties')).toBe(
+      'a=1\n# bugsee:wizard replaced: app_token=old-token\napp_token=new-token\nb=2\n',
+    );
     expect(await writeBugseePropertiesStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
   });
 
@@ -156,16 +159,17 @@ describe('writeBugseePropertiesStep — differing stored token', () => {
     fixture = await makeFixture({ 'bugsee.properties': 'app_token=a\napp_token=b\n' });
     const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'c' } });
     await writeBugseePropertiesStep.apply(ctx);
-    expect(await readFixture(fixture, 'bugsee.properties')).toBe('app_token=c\n');
+    expect(await readFixture(fixture, 'bugsee.properties')).toBe(
+      '# bugsee:wizard replaced: app_token=a\napp_token=c\n',
+    );
   });
 
-  it('rollback after a replace removes the token line', async () => {
+  it('rollback after a replace restores the original line', async () => {
     fixture = await makeFixture({ 'bugsee.properties': 'a=1\napp_token=old\n' });
     const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'new' } });
     await writeBugseePropertiesStep.apply(ctx);
     await writeBugseePropertiesStep.rollback(ctx);
-    expect(await readFixture(fixture, 'bugsee.properties')).not.toContain('app_token');
-    expect(await readFixture(fixture, 'bugsee.properties')).toContain('a=1');
+    expect(await readFixture(fixture, 'bugsee.properties')).toBe('a=1\napp_token=old\n');
   });
 
   it('is satisfied (nothing to compare) when no token was supplied but one is stored', async () => {
@@ -180,13 +184,17 @@ describe('writeBugseePropertiesStep — CRLF', () => {
     fixture = await makeFixture({ 'bugsee.properties': 'a=1\r\napp_token=old\r\nb=2\r\n' });
     const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'new' } });
     await writeBugseePropertiesStep.apply(ctx);
-    expect(await readFixture(fixture, 'bugsee.properties')).toBe('a=1\r\napp_token=new\r\nb=2\r\n');
+    expect(await readFixture(fixture, 'bugsee.properties')).toBe(
+      'a=1\r\n# bugsee:wizard replaced: app_token=old\r\napp_token=new\r\nb=2\r\n',
+    );
     await cleanup(fixture);
     fixture = await makeFixture({ 'bugsee.properties': 'a=1\r\nb=2' });
     await writeBugseePropertiesStep.apply(
       makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'n' } }),
     );
-    expect(await readFixture(fixture, 'bugsee.properties')).toBe('a=1\r\nb=2\r\napp_token=n\r\n');
+    expect(await readFixture(fixture, 'bugsee.properties')).toBe(
+      'a=1\r\nb=2\r\n# bugsee:wizard\r\napp_token=n\r\n',
+    );
   });
 });
 

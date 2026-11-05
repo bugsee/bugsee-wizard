@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
 import { findBlock, maskCommentsAndStrings } from '../blocks.js';
-import { readOrNull } from '../io.js';
+import { closingBraceInsertion, readOrNull } from '../io.js';
 import type { AndroidContext } from '../types.js';
 
 const MAVEN_CENTRAL_RE = /\bmavenCentral\s*\(\s*\)/;
@@ -61,7 +61,8 @@ export const ensureMavenCentralStep: Step<AndroidContext> = {
         updated = original.slice(0, pm.bodyEnd) + NEW_REPOS_BLOCK + original.slice(pm.bodyEnd);
       } else {
         const reposBodyEndAbs = pm.bodyStart + reposRel.bodyEnd;
-        updated = `${original.slice(0, reposBodyEndAbs)}        mavenCentral()\n    ${original.slice(reposBodyEndAbs)}`;
+        const { at, prefix } = closingBraceInsertion(original, reposBodyEndAbs, false);
+        updated = `${original.slice(0, at)}${prefix}        mavenCentral()\n    ${original.slice(at)}`;
       }
     }
     await writeFile(ctx.androidPaths.settingsGradle, updated);
