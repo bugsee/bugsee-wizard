@@ -10,6 +10,12 @@ import {
 
 const APPLICATION_OPEN_RE = /<application\b[^>]*>/;
 
+// A self-closing `<application … />` has no body to hold the <meta-data>;
+// splicing after the tag would land OUTSIDE the element (invalid manifest).
+function isSelfClosing(openTag: string): boolean {
+  return openTag.endsWith('/>');
+}
+
 function metaForAutomatic(): string {
   return `    ${MANIFEST_META_MARKER_BEGIN}
     <meta-data
@@ -40,10 +46,18 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
     if (content.includes(MANIFEST_META_MARKER_BEGIN)) {
       return { kind: 'satisfied' };
     }
-    if (!APPLICATION_OPEN_RE.test(content)) {
+    const open = APPLICATION_OPEN_RE.exec(content);
+    if (!open) {
       return {
         kind: 'blocked',
         reason: 'No <application> element found in AndroidManifest.xml',
+      };
+    }
+    if (isSelfClosing(open[0])) {
+      return {
+        kind: 'blocked',
+        reason:
+          '<application/> is self-closing — convert to <application>…</application> and re-run, or add the meta-data manually.',
       };
     }
     return { kind: 'pending' };
@@ -54,6 +68,9 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
     const match = APPLICATION_OPEN_RE.exec(original);
     if (!match) {
       throw new Error('No <application> element found in AndroidManifest.xml');
+    }
+    if (isSelfClosing(match[0])) {
+      throw new Error('<application/> is self-closing; cannot insert <meta-data> inside it');
     }
     // Insert at the start of the line *after* the <application ...> tag so
     // the meta-data block sits at column 0 with its own indentation.

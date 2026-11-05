@@ -143,6 +143,32 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
     expect(await addSpmDependencyStep.precheck(ctx)).toEqual({ kind: 'pending' });
   });
 
+  it('removes the scheme post-action from a non-default shared scheme, leaving others untouched', async () => {
+    const rel = (n: string) => `MinimalApp.xcodeproj/xcshareddata/xcschemes/${n}.xcscheme`;
+    fixture = await makeFixture({
+      [rel('MinimalApp')]: SAMPLE_XCSCHEME,
+      [rel('Other')]: SAMPLE_XCSCHEME,
+    });
+    await cp(FIXTURE_PROJECT, path.join(fixture, 'MinimalApp.xcodeproj'), {
+      recursive: true,
+      force: false,
+    });
+    const defaultBefore = await readFixture(fixture, rel('MinimalApp'));
+    const otherCtx = makeIosContext({
+      cwd: fixture,
+      schemeName: 'Other',
+      xcodeProjectName: 'MinimalApp',
+      tokens: { ios: 'TOK' },
+    });
+    await addSchemePostActionStep.apply(otherCtx);
+    expect(await readFixture(fixture, rel('Other'))).toContain('Bugsee Symbolication');
+
+    const ran = await runIosRollback({ cwd: fixture, debug: false, dryRun: false });
+    expect(ran).toBe('ok');
+    expect(await readFixture(fixture, rel('Other'))).toBe(SAMPLE_XCSCHEME);
+    expect(await readFixture(fixture, rel('MinimalApp'))).toBe(defaultBefore);
+  });
+
   it('returns not-found when no iOS project is found at cwd', async () => {
     fixture = await makeFixture({ 'README.md': '' });
     const ran = await runIosRollback({

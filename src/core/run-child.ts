@@ -29,8 +29,11 @@ export async function runChild(
     // Rolling tail: only the last few lines are ever reported, so never hold
     // more than STDERR_TAIL_BYTES however much the child writes.
     let stderr = '';
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr = (stderr + chunk.toString()).slice(-STDERR_TAIL_BYTES);
+    // Decode via the stream so a multi-byte character split across chunks is
+    // reassembled instead of becoming U+FFFD.
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-STDERR_TAIL_BYTES);
     });
     if (options.forwardStdout) {
       child.stdout?.on('data', (chunk: Buffer) => {
