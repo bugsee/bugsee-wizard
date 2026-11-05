@@ -160,7 +160,7 @@ describe('writeBugseePropertiesStep — differing stored token', () => {
     const ctx = makeAndroidContext({ cwd: fixture, dsl: 'kotlin', tokens: { android: 'c' } });
     await writeBugseePropertiesStep.apply(ctx);
     expect(await readFixture(fixture, 'bugsee.properties')).toBe(
-      '# bugsee:wizard replaced: app_token=a\napp_token=c\n',
+      '# bugsee:wizard replaced: app_token=a\napp_token=c\n# bugsee:wizard removed: app_token=b\n',
     );
   });
 

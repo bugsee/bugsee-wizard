@@ -8,7 +8,29 @@ import {
   MANIFEST_META_MARKER_END,
 } from '../types.js';
 
-const APPLICATION_OPEN_RE = /<application\b[^>]*>/;
+const APPLICATION_START_RE = /<application\b/;
+
+/**
+ * The complete `<application …>` opening tag. Scans quote-aware so a `>`
+ * inside an attribute value (`android:label="A > B"`) does not end the tag.
+ * Null when absent or never terminated.
+ */
+function findApplicationOpen(content: string): { index: number; 0: string } | null {
+  const start = APPLICATION_START_RE.exec(content);
+  if (!start) return null;
+  let quote: string | null = null;
+  for (let i = start.index; i < content.length; i++) {
+    const ch = content[i] as string;
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === '>') {
+      return { index: start.index, 0: content.slice(start.index, i + 1) };
+    }
+  }
+  return null;
+}
 
 // A self-closing `<application … />` has no body to hold the <meta-data>;
 // splicing after the tag would land OUTSIDE the element (invalid manifest).
@@ -46,7 +68,7 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
     if (content.includes(MANIFEST_META_MARKER_BEGIN)) {
       return { kind: 'satisfied' };
     }
-    const open = APPLICATION_OPEN_RE.exec(content);
+    const open = findApplicationOpen(content);
     if (!open) {
       return {
         kind: 'blocked',
@@ -65,7 +87,7 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
 
   async apply(ctx) {
     const original = (await readOrNull(ctx.androidPaths.appManifest)) ?? '';
-    const match = APPLICATION_OPEN_RE.exec(original);
+    const match = findApplicationOpen(original);
     if (!match) {
       throw new Error('No <application> element found in AndroidManifest.xml');
     }

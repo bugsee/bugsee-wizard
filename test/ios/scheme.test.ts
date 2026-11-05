@@ -1,3 +1,5 @@
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -219,6 +221,135 @@ describe('addSchemePostActionStep', () => {
       fixture = await makeFixture({ [SCHEME_REL]: withAction(script, '\n') });
       await addSchemePostActionStep.rollback(makeIosContext({ cwd: fixture, schemeName: 'MyApp' }));
       expect(await readFixture(fixture, SCHEME_REL)).toBe(SAMPLE_XCSCHEME);
+    });
+  });
+
+  describe('script newlines survive XML attribute normalization', () => {
+    /** Raw `scriptText` attribute value as it sits in the file. */
+    const rawScript = (xml: string) => /scriptText\s*=\s*"([^"]*)"/.exec(xml)?.[1] ?? '';
+    /** What a conforming XML parser hands back for that attribute value. */
+    const parsedScript = (xml: string) =>
+      rawScript(xml)
+        .replace(/\r\n?/g, '\n')
+        .replace(/[\n\t]/g, ' ')
+        .replace(/&#(\d+);/g, (_m, d: string) => String.fromCharCode(Number(d)))
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+    /** Simulates Xcode re-saving: it writes newlines as `&#10;`. */
+    const xcodeResave = (xml: string) =>
+      xml.replace(
+        /scriptText\s*=\s*"([^"]*)"/,
+        (_m, v: string) => `scriptText = "${v.replace(/\n/g, '&#10;')}"`,
+      );
+
+    it('writes newlines as &#10; so a parser sees a multi-line script', async () => {
+      fixture = await makeFixture({ [SCHEME_REL]: SAMPLE_XCSCHEME });
+      const ctx = makeIosContext({
+        cwd: fixture,
+        schemeName: 'MyApp',
+        tokens: { ios: 'TOK' },
+        iosOptions: { sizeAnalysis: true, sizeAnalysisAllConfigurations: true },
+      });
+      await addSchemePostActionStep.apply(ctx);
+      const xml = await readFixture(fixture, SCHEME_REL);
+      expect(rawScript(xml)).not.toMatch(/[\n\r\t]/);
+      expect(rawScript(xml)).toContain('&#10;');
+      expect(parsedScript(xml).split('\n').length).toBeGreaterThan(5);
+    });
+
+    it('install -> parse -> script keeps one command per line', async () => {
+      fixture = await makeFixture({ [SCHEME_REL]: SAMPLE_XCSCHEME });
+      await addSchemePostActionStep.apply(
+        makeIosContext({ cwd: fixture, schemeName: 'MyApp', tokens: { ios: 'TOK' } }),
+      );
+      const xml = await readFixture(fixture, SCHEME_REL);
+      const decoded = rawScript(xml)
+        .replace(/&#10;/g, '\n')
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&');
+      expect(decoded.split('\n')).toEqual([
+        POSTACTION_SCRIPT_MARKER,
+        `SCRIPT_SRC=$(find "$PROJECT_DIR" -name 'BugseeAgent' | head -1)`,
+        'if [ ! "$' + '{SCRIPT_SRC}" ]; then',
+        `  echo "Error: Bugsee build phase script not found. Make sure that you're including Bugsee in your project."`,
+        '  exit 1',
+        'fi',
+        'python3 "$' + '{SCRIPT_SRC}" TOK',
+      ]);
+      // And the parser-visible form (what Xcode reads) is the same script.
+      expect(parsedScript(xml)).toBe(decoded);
+    });
+
+    it('escapes tabs in attribute values and does not double-escape existing references', async () => {
+      const ref = SAMPLE_XCSCHEME.replace(
+        'BuildableName = "MyApp.app"',
+        'BuildableName = "My&#9;App.app"',
+      );
+      fixture = await makeFixture({ [SCHEME_REL]: ref });
+      await addSchemePostActionStep.apply(
+        makeIosContext({ cwd: fixture, schemeName: 'MyApp', tokens: { ios: 'TOK' } }),
+      );
+      const xml = await readFixture(fixture, SCHEME_REL);
+      // The original reference plus the one in our post-action.
+      expect(xml.split('BuildableName = "My&#9;App.app"')).toHaveLength(3);
+      expect(xml).not.toContain('&amp;#9;');
+    });
+
+    it('rollback removes our action after Xcode re-saved the scheme', async () => {
+      fixture = await makeFixture({ [SCHEME_REL]: SAMPLE_XCSCHEME });
+      const ctx = makeIosContext({ cwd: fixture, schemeName: 'MyApp', tokens: { ios: 'TOK' } });
+      await addSchemePostActionStep.apply(ctx);
+      await writeFile(
+        path.join(fixture, SCHEME_REL),
+        xcodeResave(await readFixture(fixture, SCHEME_REL)),
+      );
+      expect(await addSchemePostActionStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+      await addSchemePostActionStep.rollback(ctx);
+      expect(await readFixture(fixture, SCHEME_REL)).toBe(SAMPLE_XCSCHEME);
+    });
+
+    it('rollback removes our action even when a parser flattened it to one line', async () => {
+      fixture = await makeFixture({ [SCHEME_REL]: SAMPLE_XCSCHEME });
+      const ctx = makeIosContext({ cwd: fixture, schemeName: 'MyApp', tokens: { ios: 'TOK' } });
+      await addSchemePostActionStep.apply(ctx);
+      const xml = await readFixture(fixture, SCHEME_REL);
+      // Hand-flatten: what a literal-newline file looks like after a parse + re-save.
+      await writeFile(path.join(fixture, SCHEME_REL), xml.replace(/&#10;/g, ' '));
+      await addSchemePostActionStep.rollback(ctx);
+      expect(await readFixture(fixture, SCHEME_REL)).toBe(SAMPLE_XCSCHEME);
+    });
+
+    it('rollback removes a flattened earlier-version (unmarked) action but keeps a near match', async () => {
+      const flat =
+        `SCRIPT_SRC=$(find "$PROJECT_DIR" -name 'BugseeAgent' | head -1) if [ ! "$` +
+        `{SCRIPT_SRC}" ]; then echo "Error: Bugsee build phase script not found. Make sure that you're including Bugsee in your project." exit 1 fi python3 "$` +
+        `{SCRIPT_SRC}" OLD`;
+      const make = (script: string) =>
+        SAMPLE_XCSCHEME.replace(
+          '   </ArchiveAction>',
+          `      <PostActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Bugsee Symbolication"
+               scriptText = "${script.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"
+               shellToInvoke = "/bin/sh">
+            </ActionContent>
+         </ExecutionAction>
+      </PostActions>
+   </ArchiveAction>`,
+        );
+      fixture = await makeFixture({ [SCHEME_REL]: make(flat) });
+      const ctx = makeIosContext({ cwd: fixture, schemeName: 'MyApp' });
+      await addSchemePostActionStep.rollback(ctx);
+      expect(await readFixture(fixture, SCHEME_REL)).toBe(SAMPLE_XCSCHEME);
+
+      const user = make(`echo hi ${flat}`);
+      await writeFile(path.join(fixture, SCHEME_REL), user);
+      await addSchemePostActionStep.rollback(ctx);
+      expect(await readFixture(fixture, SCHEME_REL)).toBe(user);
     });
   });
 });
