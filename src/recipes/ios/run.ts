@@ -7,6 +7,7 @@ import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
 import type { RecipeResult, RollbackResult } from '../../core/result.js';
 import { runRollback, runSteps, type Step } from '../../core/step.js';
+import { validateAppToken } from '../../core/token.js';
 import { discoverIosPaths, listAppDelegates, withScheme } from './paths.js';
 import { isPodOnPath } from './pod.js';
 import { addPodStep } from './steps/add-pod.js';
@@ -74,23 +75,18 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
 
   let tokenValue: string;
   if (input.token !== undefined) {
+    const problem = validateAppToken(input.token);
+    if (problem) {
+      clack.log.error(`Invalid Bugsee app token: ${problem}`);
+      clack.cancel('Cancelled.');
+      return 'failed';
+    }
     tokenValue = input.token;
   } else {
     const tokenAnswer = await clack.text({
       message: 'Bugsee app token (iOS)',
       placeholder: 'paste from your Bugsee dashboard',
-      validate: (v) => {
-        const trimmed = (v ?? '').trim();
-        if (trimmed.length === 0) return 'Token is required';
-        // The token is interpolated raw into Swift/ObjC source and into the
-        // post-action shell line. Restrict to a safe character set so we
-        // don't have to escape downstream and so we fail loudly on paste
-        // mistakes (whole URLs, surrounding quotes, etc.).
-        if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
-          return 'Tokens are alphanumeric (with `.`, `_`, `-` permitted) — looks like extra characters got pasted';
-        }
-        return undefined;
-      },
+      validate: validateAppToken,
     });
     if (clack.isCancel(tokenAnswer)) {
       clack.cancel('Cancelled.');
