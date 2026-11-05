@@ -747,7 +747,7 @@ function globToRegex(glob: string): string {
 function gitignoreVerdict(content: string | null, target: string): boolean | null {
   if (content === null) return null;
   const segments = target.split('/');
-  const lines = content.split(/\r?\n/).map((l) => l.replace(/(?<!\\)\s+$/, ''));
+  const lines = content.split(/\r?\n/).map((l) => l.replace(/(?<!\\) +$/, ''));
   let verdict: boolean | null = null;
   for (let depth = 1; depth <= segments.length; depth += 1) {
     const sub = segments.slice(0, depth).join('/');

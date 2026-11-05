@@ -60,9 +60,17 @@ describe('readRnProjectInfo', () => {
   it('finds a hoisted react-native in a parent node_modules (monorepo)', async () => {
     dir = await makeFixture({
       'node_modules/react-native/package.json': JSON.stringify({ version: '0.87.1' }),
-      'apps/mobile/package.json': pkg({ 'react-native': '^0.81.0' }),
+      'apps/mobile/package.json': pkg({ 'react-native': '>=0.81.0' }),
     });
     expect((await readRnProjectInfo(`${dir}/apps/mobile`)).reactNativeVersion).toBe('0.87.1');
+  });
+
+  it('ignores a hoisted react-native that does not satisfy what the app declares (unrelated parent)', async () => {
+    dir = await makeFixture({
+      'node_modules/react-native/package.json': JSON.stringify({ version: '0.70.0' }),
+      'apps/mobile/package.json': pkg({ 'react-native': '^0.83.0' }),
+    });
+    expect((await readRnProjectInfo(`${dir}/apps/mobile`)).reactNativeVersion).toBe('0.83.0');
   });
 
   it('leaves the version null when it cannot be known (tag, url, missing)', async () => {

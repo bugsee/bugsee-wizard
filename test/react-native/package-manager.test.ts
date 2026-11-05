@@ -29,15 +29,39 @@ describe('detectPackageManager', () => {
     expect(await detectPackageManager(dir)).toBe('npm');
   });
 
-  it('finds the lockfile of a monorepo root above the app', async () => {
-    dir = await makeFixture({ 'yarn.lock': '', 'apps/mobile/package.json': '{}' });
+  it('finds the lockfile of a monorepo root above the app (a workspace root)', async () => {
+    dir = await makeFixture({
+      'yarn.lock': '',
+      'package.json': JSON.stringify({ workspaces: ['apps/*'] }),
+      'apps/mobile/package.json': '{}',
+    });
     expect(await detectPackageManager(`${dir}/apps/mobile`)).toBe('yarn');
     expect(await findLockfileRoot(`${dir}/apps/mobile`)).toBe(dir);
+  });
+
+  it('a pnpm workspace root counts too', async () => {
+    dir = await makeFixture({
+      'pnpm-lock.yaml': '',
+      'pnpm-workspace.yaml': 'packages:\n  - apps/*\n',
+      'apps/mobile/package.json': '{}',
+    });
+    expect(await detectPackageManager(`${dir}/apps/mobile`)).toBe('pnpm');
+  });
+
+  it('ignores a stray lockfile above that is not a workspace root (it would run the wrong install)', async () => {
+    dir = await makeFixture({
+      'yarn.lock': '',
+      'package.json': JSON.stringify({ name: 'unrelated' }),
+      'apps/mobile/package.json': '{}',
+    });
+    expect(await detectPackageManager(`${dir}/apps/mobile`)).toBe('npm');
+    expect(await findLockfileRoot(`${dir}/apps/mobile`)).toBe(`${dir}/apps/mobile`);
   });
 
   it('prefers the nearest lockfile', async () => {
     dir = await makeFixture({
       'yarn.lock': '',
+      'package.json': JSON.stringify({ workspaces: ['apps/*'] }),
       'apps/mobile/pnpm-lock.yaml': '',
       'apps/mobile/package.json': '{}',
     });

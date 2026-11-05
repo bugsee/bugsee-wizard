@@ -1022,3 +1022,21 @@ describe('stripOwn', () => {
 void mkdir;
 void writeFile;
 void readFile;
+
+describe('gitignore whitespace: git strips trailing spaces only', () => {
+  it.each(['bugsee.properties\t', 'bugsee.properties\u00a0'])(
+    'a line ending in %j does not ignore the file (git check-ignore agrees)',
+    async (line) => {
+      fixture = await makeFixture({
+        'package.json': SAMPLE_RN_PACKAGE_JSON,
+        'android/settings.gradle': SETTINGS_074,
+        'android/build.gradle': ROOT_074,
+        'android/app/build.gradle': APP_074,
+        '.gitignore': `${line}\n`,
+      });
+      const ctx = await makeRnContext({ cwd: fixture, tokens: { android: TOKEN } });
+      const step = androidGradleSteps.find((x) => x.id === 'rn.android.gitignore');
+      expect((await step?.precheck(ctx))?.kind).toBe('pending');
+    },
+  );
+});

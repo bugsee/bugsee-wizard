@@ -39,24 +39,32 @@ export async function readRnProjectInfo(rnRoot: string): Promise<RnProjectInfo> 
   };
   // the installed version, looked up through the parents too (a monorepo hoists node_modules)
   let installed: Record<string, unknown> | null = null;
+  let installedInParent = false;
   for (let dir = path.resolve(rnRoot), i = 0; i <= MAX_PARENTS && installed === null; i++) {
     installed = await readJson(path.join(dir, 'node_modules', 'react-native', 'package.json'));
+    installedInParent = i > 0;
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
+  const range = deps['react-native'];
+  const validRange = typeof range === 'string' && semver.validRange(range) !== null;
+  const fromRange = validRange ? (semver.minVersion(range as string)?.version ?? null) : null;
+  // The app's own installed copy is what runs, whatever package.json says. One found in a parent
+  // directory (a hoisted monorepo install) may belong to something else: it counts only if it
+  // satisfies what this app declares.
   const installedVersion =
     typeof installed?.version === 'string' ? semver.valid(installed.version) : null;
-  const range = deps['react-native'];
-  const fromRange =
-    typeof range === 'string' && semver.validRange(range) !== null
-      ? (semver.minVersion(range)?.version ?? null)
-      : null;
+  const trusted =
+    installedVersion !== null &&
+    (!installedInParent ||
+      !validRange ||
+      semver.satisfies(installedVersion, range as string, { includePrerelease: true }));
   return {
     legacyPackage: LEGACY_RN_PACKAGE_NAME in deps,
     hasWrapper: '@bugsee/react-native' in deps,
     hasExpo: 'expo' in deps,
-    reactNativeVersion: installedVersion ?? fromRange,
+    reactNativeVersion: (trusted ? installedVersion : null) ?? fromRange,
   };
 }
 

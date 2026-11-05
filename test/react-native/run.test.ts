@@ -21,6 +21,7 @@ vi.mock('../../src/recipes/android/run.js', () => ({
 vi.mock('../../src/recipes/ios/run.js', () => ({ runIosRollback: vi.fn(async () => 'ok') }));
 
 import { _resetPodOnPathCache } from '../../src/recipes/ios/pod.js';
+import { _resetManagerOnPathCache } from '../../src/recipes/react-native/package-manager.js';
 import {
   runReactNativeRecipe,
   runReactNativeRollback,
@@ -76,6 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   _resetPodOnPathCache();
+  _resetManagerOnPathCache();
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -424,6 +426,18 @@ describe('runReactNativeRecipe: a bare app with the native edits', () => {
       'android/gradle.properties': 'org.gradle.jvmargs=-Xmx2g\nnewArchEnabled=false\n',
     });
     answer({ native: false });
+    await runReactNativeRecipe(opts());
+    expect(logged(clack.log.warn)).toMatch(/New Architecture/);
+  });
+
+  it('warns when the New Architecture is switched off in a prebuilt Expo project (Podfile.properties.json)', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage({ expo: '~55.0.0' }),
+      'app.json': JSON.stringify({ expo: { plugins: [] } }),
+      'ios/Podfile.properties.json': JSON.stringify({ newArchEnabled: 'false' }),
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    answer();
     await runReactNativeRecipe(opts());
     expect(logged(clack.log.warn)).toMatch(/New Architecture/);
   });

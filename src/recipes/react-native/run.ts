@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import * as clack from '@clack/prompts';
@@ -135,6 +135,12 @@ async function warnIfNewArchitectureIsOff(
     'utf8',
   ).catch(() => '');
   if (/^\s*newArchEnabled\s*=\s*false\s*$/m.test(gradleProps)) off = true;
+  // a prebuilt Expo project carries it in ios/Podfile.properties.json
+  const podProps = await readFile(
+    path.join(rnRoot, 'ios', 'Podfile.properties.json'),
+    'utf8',
+  ).catch(() => '');
+  if (/"newArchEnabled"\s*:\s*(?:"false"|false)/.test(podProps)) off = true;
   if (expoConfig !== null) {
     try {
       const app = JSON.parse(await readFile(expoConfig, 'utf8')) as {
@@ -413,15 +419,61 @@ function summaryLines(s: {
   return lines;
 }
 
-/** The old package, or the init/launch block of the old `react-native-bugsee` in the JS entry. */
+/** The files the old wizard's JS step could have written to, as `discoverJsEntry` knows them. */
+const ENTRY_FILES = ['App.tsx', 'App.jsx', 'App.ts', 'App.js', 'index.js', 'index.ts', 'index.tsx'];
+
+/** The old package imported or required, in either quote style. */
+const OLD_PACKAGE_REF = new RegExp(`['"]${LEGACY_RN_PACKAGE_NAME}['"]`);
+
+/**
+ * What the earlier native recipes wrote (their fixed marker names, the old iOS post-action's
+ * title). This version's own markers are all `bugsee:wizard:rn-…`, which this does not match.
+ */
+const OLD_NATIVE_MARKER =
+  /bugsee:wizard:(?:loader|bugsee-block|manifest-placeholder|meta|provider-override|apply-plugin|buildscript-classpath|pod|import|launch)\b|Bugsee Symbolication/;
+
+const NATIVE_FILE = /(?:\.(?:gradle|kts|xml|swift|m|mm|h|xcscheme)|^Podfile)$/;
+const SKIP_DIRS = new Set(['Pods', 'build', 'node_modules', '.gradle', '.git', 'DerivedData']);
+
+/** A bounded walk over android/ and ios/ for a file holding one of the old recipes' markers. */
+async function hasOldNativeMarker(dir: string, budget = { files: 600 }): Promise<boolean> {
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const e of entries) {
+    if (budget.files <= 0) return false;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (!SKIP_DIRS.has(e.name) && (await hasOldNativeMarker(full, budget))) return true;
+    } else if (NATIVE_FILE.test(e.name)) {
+      budget.files--;
+      const text = await readFile(full, 'utf8').catch(() => '');
+      if (OLD_NATIVE_MARKER.test(text)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Evidence of an earlier wizard's install: the old package, its import or init block in a JS entry
+ * file, or the earlier native recipes' own markers in android/ or ios/.
+ */
 async function hasEarlierWizardInstall(
   rnRoot: string,
   paths: Awaited<ReturnType<typeof discoverRnPaths>>,
 ): Promise<boolean> {
   if ((await readRnProjectInfo(rnRoot)).legacyPackage) return true;
-  if (paths.jsEntry === null) return false;
-  const entry = await readFile(paths.jsEntry.path, 'utf8').catch(() => '');
-  return entry.includes(JS_INIT_MARKER_BEGIN) || entry.includes(`from '${LEGACY_RN_PACKAGE_NAME}'`);
+  for (const name of ENTRY_FILES) {
+    const text = await readFile(path.join(rnRoot, name), 'utf8').catch(() => '');
+    if (text.includes(JS_INIT_MARKER_BEGIN) || OLD_PACKAGE_REF.test(text)) return true;
+  }
+  for (const dir of [paths.androidPath, paths.iosPath]) {
+    if (dir !== null && (await hasOldNativeMarker(dir))) return true;
+  }
+  return false;
 }
 
 /**

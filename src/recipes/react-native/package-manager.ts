@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { runChild } from '../../core/run-child.js';
@@ -29,17 +30,36 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
+/** A directory that owns the lockfile of the workspace the app sits in (not just any parent). */
+async function isWorkspaceRoot(dir: string): Promise<boolean> {
+  if (await fileExists(path.join(dir, 'pnpm-workspace.yaml'))) return true;
+  try {
+    const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8')) as {
+      workspaces?: unknown;
+    };
+    return pkg.workspaces !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * The nearest directory (the app directory, then its parents: a monorepo keeps one lockfile at its
- * root) holding a lockfile, with the manager it belongs to; null when there is none.
+ * The lockfile of the app: in the app directory, or in a parent that is the root of a workspace
+ * the app belongs to (a monorepo keeps one lockfile at its root). A stray lockfile further up
+ * (a home directory, an unrelated project) is not ours: it would run the wrong install.
  */
 async function findLockfile(
   rnRoot: string,
 ): Promise<{ dir: string; manager: PackageManager } | null> {
-  let dir = path.resolve(rnRoot);
+  const start = path.resolve(rnRoot);
+  const home = path.resolve(os.homedir());
+  let dir = start;
   for (let i = 0; i <= MAX_PARENTS; i++) {
+    if (dir === home && dir !== start) break;
     for (const { file, manager } of LOCKFILE_BY_MANAGER) {
-      if (await fileExists(path.join(dir, file))) return { dir, manager };
+      if (await fileExists(path.join(dir, file))) {
+        if (dir === start || (await isWorkspaceRoot(dir))) return { dir, manager };
+      }
     }
     const parent = path.dirname(dir);
     if (parent === dir) break;

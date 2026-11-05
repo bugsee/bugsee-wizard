@@ -123,4 +123,44 @@ describe("uninstall: the new steps and the earlier wizards' rollbacks together",
     expect(after['App.tsx']).toBe(SAMPLE_APP_TSX);
     expect(after['android/bugsee.properties'] ?? '').not.toContain('app_token');
   });
+
+  it('recognises the old package imported with double quotes, or required, in any entry file', async () => {
+    for (const body of [
+      `import Bugsee from "react-native-bugsee";\n${SAMPLE_APP_TSX}`,
+      `const Bugsee = require('react-native-bugsee');\n${SAMPLE_APP_TSX}`,
+    ]) {
+      fixture = await makeFixture(
+        project({ 'index.js': body, 'android/bugsee.properties': 'app_token=OLD\n' }),
+      );
+      expect(await runReactNativeRollback(opts())).toBe('ok');
+      expect((await tree(fixture))['android/bugsee.properties'] ?? '', body).not.toContain(
+        'app_token',
+      );
+      await cleanup(fixture);
+    }
+    fixture = await makeFixture(project());
+  });
+
+  it("recognises the old native recipes' own markers when the package and the JS block are gone", async () => {
+    const oldApp = `${BARE_ANDROID_FILES['android/app/build.gradle']}\n// bugsee:wizard:apply-plugin:begin\napply plugin: 'com.bugsee.android.gradle'\n// bugsee:wizard:apply-plugin:end\n`;
+    fixture = await makeFixture(
+      project({
+        'android/app/build.gradle': oldApp,
+        'android/bugsee.properties': 'app_token=OLD\nsomething=else\n',
+      }),
+    );
+    expect(await runReactNativeRollback(opts())).toBe('ok');
+    const after = await tree(fixture);
+    expect(after['android/app/build.gradle']).not.toContain('bugsee:wizard:apply-plugin');
+    expect(after['android/bugsee.properties']).not.toContain('app_token');
+  });
+
+  it("this version's own markers (rn-*) are not mistaken for an earlier install", async () => {
+    fixture = await makeFixture(project({ 'android/bugsee.properties': 'app_token=USER_OWN\n' }));
+    answerAll();
+    await runReactNativeRecipe(opts());
+    // an older rollback would drop the app_token line of the user; the new one restores it
+    expect(await runReactNativeRollback(opts())).toBe('ok');
+    expect((await tree(fixture))['android/bugsee.properties']).toBe('app_token=USER_OWN\n');
+  });
 });

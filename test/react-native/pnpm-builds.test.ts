@@ -87,7 +87,11 @@ describe('rnPnpmBuildsStep (the wrapper depends on @bugsee/cli, whose install sc
   });
 
   it('finds the workspace root above the app (monorepo) for pnpm-workspace.yaml', async () => {
-    fixture = await makeFixture({ 'pnpm-lock.yaml': '', 'apps/mobile/package.json': '{}' });
+    fixture = await makeFixture({
+      'pnpm-lock.yaml': '',
+      'package.json': JSON.stringify({ workspaces: ['apps/*'] }),
+      'apps/mobile/package.json': '{}',
+    });
     await fakePnpm('11.3.0');
     const ctx = {
       ...(await makeRnContext({ cwd: `${fixture}/apps/mobile`, runPackageInstall: true })),
