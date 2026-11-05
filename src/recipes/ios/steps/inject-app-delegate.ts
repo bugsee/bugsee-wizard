@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
-import { lineStartBefore, readOrNull, stripMarkerBlock } from '../../android/io.js';
+import { readOrNull, stripMarkerBlock } from '../../android/io.js';
 import {
   type AppDelegateLanguage,
   IMPORT_MARKER_BEGIN,
@@ -148,9 +148,17 @@ export const injectAppDelegateStep: Step<IosContext> = {
       const braceEnd = funcMatch.index + funcMatch[0].length;
       // Anchor at the start of the next line so the inserted block sits on
       // its own lines with consistent indentation; rollback can strip cleanly.
-      const insertAt =
-        updated[braceEnd] === '\n' ? braceEnd + 1 : lineStartBefore(updated, braceEnd);
-      updated = updated.slice(0, insertAt) + launchBlock(lang, token) + updated.slice(insertAt);
+      const eol = updated.indexOf('\n', braceEnd);
+      const restOfLine = updated.slice(braceEnd, eol === -1 ? undefined : eol);
+      if (restOfLine.trim() !== '') {
+        // Code follows the brace on the same line (`{ return true }`): break
+        // the line right after the brace so the block stays inside the body.
+        updated = `${updated.slice(0, braceEnd)}\n${launchBlock(lang, token)}${updated.slice(braceEnd)}`;
+      } else {
+        const insertAt = eol === -1 ? braceEnd : eol + 1;
+        const prefix = eol === -1 ? '\n' : '';
+        updated = `${updated.slice(0, insertAt)}${prefix}${launchBlock(lang, token)}${updated.slice(insertAt)}`;
+      }
     }
 
     await writeFile(ctx.iosPaths.appDelegate, updated);

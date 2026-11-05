@@ -14,7 +14,17 @@ export interface Step<Ctx extends WizardContext = WizardContext> {
   rollback(ctx: Ctx): Promise<void>;
 }
 
-export type StepOutcome = 'applied' | 'skipped' | 'blocked' | 'failed' | 'rolled-back' | 'manual';
+/**
+ * `planned` = the step would run (or roll back) but `dryRun` skipped it; nothing was changed.
+ */
+export type StepOutcome =
+  | 'applied'
+  | 'skipped'
+  | 'blocked'
+  | 'failed'
+  | 'rolled-back'
+  | 'manual'
+  | 'planned';
 
 /** A code change the wizard could not apply itself; the user must make it. */
 export interface ManualSnippet {
@@ -78,7 +88,7 @@ export async function runSteps<Ctx extends WizardContext>(
     try {
       if (ctx.dryRun) {
         ctx.log.step(`${step.title} (dry-run)`);
-        results.push({ id: step.id, outcome: 'applied' });
+        results.push({ id: step.id, outcome: 'planned' });
       } else {
         const res = await step.apply(ctx);
         if (res?.manual) {
@@ -144,9 +154,14 @@ export async function runRollback<Ctx extends WizardContext>(
   let anyFailed = false;
   for (const step of [...steps].reverse()) {
     try {
-      if (!ctx.dryRun) await step.rollback(ctx);
-      results.push({ id: step.id, outcome: 'rolled-back' });
-      ctx.log.success(`Rolled back: ${step.title}`);
+      if (ctx.dryRun) {
+        results.push({ id: step.id, outcome: 'planned' });
+        ctx.log.step(`Would roll back: ${step.title} (dry-run)`);
+      } else {
+        await step.rollback(ctx);
+        results.push({ id: step.id, outcome: 'rolled-back' });
+        ctx.log.success(`Rolled back: ${step.title}`);
+      }
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       results.push({ id: step.id, outcome: 'failed', error });

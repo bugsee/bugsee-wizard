@@ -346,7 +346,7 @@ describe('no work to do', () => {
   it('a dry run changes nothing', async () => {
     const ctx = await setup();
     const res = await runSteps(androidGradleSteps, { ...ctx, dryRun: true });
-    expect(res.results.map((r) => r.outcome)).toEqual(Array(5).fill('applied'));
+    expect(res.results.map((r) => r.outcome)).toEqual(Array(5).fill('planned'));
     expect(await readFixture(fixture as string, 'android/settings.gradle')).toBe(SETTINGS_074);
     expect(await readFixture(fixture as string, 'android/app/build.gradle')).toBe(APP_074);
     expect(await exists('android/bugsee.properties')).toBe(false);

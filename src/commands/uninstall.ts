@@ -1,3 +1,6 @@
+import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
+
 import * as clack from '@clack/prompts';
 
 import * as ask from '../core/ask.js';
@@ -31,7 +34,14 @@ export async function runUninstall(opts: WizardOptions): Promise<void> {
   clack.intro('Bugsee uninstall');
 
   const detected = await runDetectors({ cwd: opts.cwd });
-  const detectedKinds = detected.map((d) => d.kind);
+  const detectedKinds: ProjectKind[] = detected.map((d) => d.kind);
+
+  // Detection requires the `react-native` dependency; a half-removed or
+  // unusual RN project can still carry Bugsee leftovers, so offer the RN
+  // rollback (a no-op where nothing is present) when there are signs of one.
+  if (detectedKinds.length === 0 && (await hasReactNativeLeftovers(opts.cwd))) {
+    detectedKinds.push('react-native');
+  }
 
   if (detectedKinds.length === 0) {
     clack.outro('No supported platform detected here. Nothing to uninstall.');
@@ -148,6 +158,30 @@ async function runUninstallNonInteractive(opts: WizardOptions): Promise<void> {
   }
   output.result(result);
   process.exitCode = exitCodeFor(result, true);
+}
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function hasReactNativeLeftovers(cwd: string): Promise<boolean> {
+  if ((await exists(path.join(cwd, 'android'))) || (await exists(path.join(cwd, 'ios')))) {
+    return true;
+  }
+  try {
+    const pkg = JSON.parse(await readFile(path.join(cwd, 'package.json'), 'utf8')) as Record<
+      string,
+      Record<string, unknown> | undefined
+    >;
+    return 'react-native-bugsee' in { ...pkg.dependencies, ...pkg.devDependencies };
+  } catch {
+    return false;
+  }
 }
 
 /**

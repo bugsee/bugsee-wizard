@@ -32,8 +32,9 @@ export interface AndroidOptions {
 export interface AndroidPaths {
   readonly settingsGradle: string;
   readonly settingsGradleDsl: GradleDsl;
-  readonly projectBuildGradle: string;
-  readonly projectBuildGradleDsl: GradleDsl;
+  /** Root build script; `null` when absent in a plugins-DSL project (only legacy-apply needs it). */
+  readonly projectBuildGradle: string | null;
+  readonly projectBuildGradleDsl: GradleDsl | null;
   readonly appBuildGradle: string;
   readonly appBuildGradleDsl: GradleDsl;
   readonly appBuildScriptStyle: BuildScriptStyle;
@@ -51,7 +52,7 @@ export interface AndroidContext extends WizardContext {
 }
 
 export const BUGSEE_PLUGIN_ID = 'com.bugsee.android.gradle';
-export const BUGSEE_PLUGIN_VERSION = '4.0.0-beta5';
+export const BUGSEE_PLUGIN_VERSION = '4.0.0-beta6';
 export const BUGSEE_GRADLE_PLUGIN_ARTIFACT = 'com.bugsee:bugsee-android-gradle-plugin';
 
 // Token storage moved from Android Studio's `local.properties` to a

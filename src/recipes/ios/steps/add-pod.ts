@@ -12,6 +12,23 @@ import {
 
 const POD_PRESENT_RE = new RegExp(`\\bpod\\s+['"]${BUGSEE_POD_NAME}['"]`);
 
+/**
+ * The target's own scope: comment lines and nested `target … do … end`
+ * blocks (e.g. a Tests target) removed, so a commented-out or test-only
+ * `pod 'Bugsee'` does not count as the app target having it.
+ */
+function ownScopeBody(content: string, target: { bodyStart: number; bodyEnd: number }): string {
+  let body = content.slice(target.bodyStart, target.bodyEnd);
+  for (;;) {
+    const nested = /^[ \t]*target\s+['"]([^'"]+)['"]\s+do\b/m.exec(body);
+    if (!nested?.[1]) break;
+    const span = findTargetBlock(body, nested[1]);
+    if (!span) break;
+    body = body.slice(0, span.headerStart) + body.slice(span.end);
+  }
+  return body.replace(/^[ \t]*#.*$/gm, '');
+}
+
 function podLine(): string {
   return `  ${PODFILE_MARKER_BEGIN}
   pod '${BUGSEE_POD_NAME}'
@@ -34,23 +51,23 @@ export const addPodStep: Step<IosContext> = {
     if (content === null) {
       return { kind: 'blocked', reason: `${ctx.iosPaths.podfile} not readable` };
     }
-    const target = findTargetBlock(content, ctx.iosPaths.schemeName);
+    const target = findTargetBlock(content, ctx.iosPaths.targetName);
     if (!target) {
       return {
         kind: 'blocked',
-        reason: `No 'target ${JSON.stringify(ctx.iosPaths.schemeName)} do' block in Podfile`,
+        reason: `No 'target ${JSON.stringify(ctx.iosPaths.targetName)} do' block in Podfile`,
       };
     }
-    const body = content.slice(target.bodyStart, target.bodyEnd);
+    const body = ownScopeBody(content, target);
     return POD_PRESENT_RE.test(body) ? { kind: 'satisfied' } : { kind: 'pending' };
   },
 
   async apply(ctx) {
     if (!ctx.iosPaths.podfile) throw new Error('Podfile not found');
     const original = (await readOrNull(ctx.iosPaths.podfile)) ?? '';
-    const target = findTargetBlock(original, ctx.iosPaths.schemeName);
+    const target = findTargetBlock(original, ctx.iosPaths.targetName);
     if (!target) {
-      throw new Error(`No 'target ${JSON.stringify(ctx.iosPaths.schemeName)} do' block in Podfile`);
+      throw new Error(`No 'target ${JSON.stringify(ctx.iosPaths.targetName)} do' block in Podfile`);
     }
     // Insert at the start of the line containing the closing `end` so our
     // pod block sits on its own lines with consistent indentation. Same

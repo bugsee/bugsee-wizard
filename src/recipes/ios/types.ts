@@ -23,6 +23,12 @@ export interface IosPaths {
   /** Scheme name (the .xcscheme basename without extension). */
   readonly schemeName: string;
   /**
+   * Native target name used for Podfile / pbxproj lookups: the scheme's
+   * BuildableReference `BlueprintName`, falling back to `schemeName` when the
+   * scheme does not expose one. Scheme-file operations keep using `schemeName`.
+   */
+  readonly targetName: string;
+  /**
    * All shared schemes discovered for this project. The recipe presents a
    * picker when more than one is available so apps with App + WatchApp +
    * Extension targets don't silently get configured for the wrong one.

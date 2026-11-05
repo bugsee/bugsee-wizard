@@ -440,7 +440,7 @@ describe('applyPluginStep', () => {
     expect(await applyPluginStep.precheck(ctx)).toEqual({ kind: 'pending' });
     await applyPluginStep.apply(ctx);
     const updated = await readFixture(fixture, 'app/build.gradle.kts');
-    expect(updated).toContain('id("com.bugsee.android.gradle") version "4.0.0-beta5"');
+    expect(updated).toContain('id("com.bugsee.android.gradle") version "4.0.0-beta6"');
     expect(await applyPluginStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
   });
 
@@ -457,7 +457,7 @@ describe('applyPluginStep', () => {
     const ctx = makeAndroidContext({ cwd: dir, dsl: 'groovy' });
     await applyPluginStep.apply(ctx);
     const updated = await readFixture(dir, 'app/build.gradle');
-    expect(updated).toContain(`id 'com.bugsee.android.gradle' version '4.0.0-beta5'`);
+    expect(updated).toContain(`id 'com.bugsee.android.gradle' version '4.0.0-beta6'`);
     await cleanup(dir);
   });
 
@@ -527,7 +527,7 @@ describe('addBuildscriptClasspathStep', () => {
     expect(await addBuildscriptClasspathStep.precheck(ctx)).toEqual({ kind: 'pending' });
     await addBuildscriptClasspathStep.apply(ctx);
     const updated = await readFixture(dir, 'build.gradle');
-    expect(updated).toContain(`classpath 'com.bugsee:bugsee-android-gradle-plugin:4.0.0-beta5'`);
+    expect(updated).toContain(`classpath 'com.bugsee:bugsee-android-gradle-plugin:4.0.0-beta6'`);
     expect(await addBuildscriptClasspathStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
     await cleanup(dir);
   });

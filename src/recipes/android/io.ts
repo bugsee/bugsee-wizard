@@ -12,6 +12,26 @@ export function lineStartBefore(source: string, idx: number): number {
   return i;
 }
 
+/**
+ * Where to insert a line-oriented block just before a closing brace at
+ * `closeIdx`. When only whitespace precedes the brace on its line, the
+ * block goes at column 0 of that line (`atLineStart`) or right before the
+ * brace; when other text shares the line (`dependencies { a }`), the block
+ * goes immediately before the brace behind a newline so it stays INSIDE the
+ * block rather than landing before the whole line.
+ */
+export function closingBraceInsertion(
+  source: string,
+  closeIdx: number,
+  atLineStart: boolean,
+): { readonly at: number; readonly prefix: string } {
+  const lineStart = lineStartBefore(source, closeIdx);
+  if (source.slice(lineStart, closeIdx).trim() === '') {
+    return { at: atLineStart ? lineStart : closeIdx, prefix: '' };
+  }
+  return { at: closeIdx, prefix: '\n' };
+}
+
 export async function readOrNull(p: string): Promise<string | null> {
   try {
     return await readFile(p, 'utf8');
@@ -38,10 +58,14 @@ export async function writeIfChanged(p: string, contents: string): Promise<boole
  * BEGIN line is intentionally left in place — every step's apply() inserts
  * after an existing `\n`, so leaving that `\n` keeps the file consistent
  * with its pre-apply state.
+ *
+ * A block cannot span a second BEGIN marker: an orphaned BEGIN (its END
+ * deleted by hand) is left alone instead of swallowing everything up to the
+ * next block's END.
  */
 export function stripMarkerBlock(source: string, beginMarker: string, endMarker: string): string {
   const re = new RegExp(
-    `[ \\t]*${escapeRegex(beginMarker)}[\\s\\S]*?${escapeRegex(endMarker)}[ \\t]*\\r?\\n?`,
+    `[ \\t]*${escapeRegex(beginMarker)}(?:(?!${escapeRegex(beginMarker)})[\\s\\S])*?${escapeRegex(endMarker)}[ \\t]*\\r?\\n?`,
     'g',
   );
   return source.replace(re, '');

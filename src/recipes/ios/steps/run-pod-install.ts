@@ -4,8 +4,9 @@ import * as clack from '@clack/prompts';
 
 import { runChild } from '../../../core/run-child.js';
 import type { Step, StepStatus } from '../../../core/step.js';
+import { readOrNull } from '../../android/io.js';
 import { isPodOnPath } from '../pod.js';
-import type { IosContext } from '../types.js';
+import { type IosContext, PODFILE_MARKER_BEGIN } from '../types.js';
 
 export const runPodInstallStep: Step<IosContext> = {
   id: 'ios.run-pod-install',
@@ -44,10 +45,18 @@ export const runPodInstallStep: Step<IosContext> = {
     }
   },
 
-  async rollback(_ctx) {
-    // Intentionally no-op. Undoing `pod install` would mean deleting Pods/
-    // and Podfile.lock — destructive and rarely what the user wants when
-    // rolling back the wizard. The earlier add-pod step's rollback removes
-    // our pod line; running `pod install` again afterwards re-syncs cleanly.
+  async rollback(ctx) {
+    // Intentionally non-destructive. Undoing `pod install` would mean deleting
+    // Pods/ and Podfile.lock — rarely what the user wants when rolling back
+    // the wizard. The add-pod step's rollback (which runs after this one)
+    // removes our pod line; the user re-syncs with `pod install`. Tell them so
+    // when a Podfile still carries our marker block.
+    if (!ctx.iosPaths.podfile) return;
+    const content = await readOrNull(ctx.iosPaths.podfile);
+    if (content?.includes(PODFILE_MARKER_BEGIN)) {
+      ctx.log.info(
+        `Bugsee is removed from the Podfile; run \`pod install\` in ${path.dirname(ctx.iosPaths.podfile)} to sync Pods/ and Podfile.lock.`,
+      );
+    }
   },
 };

@@ -88,7 +88,7 @@ describe('executeRecipe', () => {
   it('dry-run changes nothing', async () => {
     const ctx = makeCtx(tmp.dir, { dryRun: true });
     const res = await executeRecipe(recipe(OPS.slice(0, 3)), ctx);
-    expect(res.results.every((r) => r.outcome === 'applied')).toBe(true);
+    expect(res.results.every((r) => r.outcome === 'planned')).toBe(true);
     await expect(readFile(join(tmp.dir, '.gitignore'))).rejects.toBeDefined();
     expect(ctx.entries).toEqual([]);
   });

@@ -1,8 +1,8 @@
 import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
-import { findBlock } from '../blocks.js';
-import { readOrNull, stripMarkerBlock } from '../io.js';
+import { findBlock, maskCommentsAndStrings } from '../blocks.js';
+import { closingBraceInsertion, readOrNull, stripMarkerBlock } from '../io.js';
 import {
   type AndroidContext,
   APPLY_PLUGIN_MARKER_BEGIN,
@@ -14,10 +14,17 @@ import {
 
 const PLUGIN_PRESENT_RE = new RegExp(`["']${BUGSEE_PLUGIN_ID.replace(/\./g, '\\.')}["']`);
 
+// Marker-wrapped like the legacy branch, so rollback removes only what this
+// wizard wrote and never an `id("com.bugsee.android.gradle")` the user had.
 function pluginsDslLine(dsl: GradleDsl): string {
-  return dsl === 'kotlin'
-    ? `    id("${BUGSEE_PLUGIN_ID}") version "${BUGSEE_PLUGIN_VERSION}"\n`
-    : `    id '${BUGSEE_PLUGIN_ID}' version '${BUGSEE_PLUGIN_VERSION}'\n`;
+  const line =
+    dsl === 'kotlin'
+      ? `id("${BUGSEE_PLUGIN_ID}") version "${BUGSEE_PLUGIN_VERSION}"`
+      : `id '${BUGSEE_PLUGIN_ID}' version '${BUGSEE_PLUGIN_VERSION}'`;
+  return `    ${APPLY_PLUGIN_MARKER_BEGIN}
+    ${line}
+    ${APPLY_PLUGIN_MARKER_END}
+`;
 }
 
 /**
@@ -54,7 +61,10 @@ export const applyPluginStep: Step<AndroidContext> = {
     if (content === null) {
       return { kind: 'blocked', reason: `${ctx.androidPaths.appBuildGradle} not found` };
     }
-    if (PLUGIN_PRESENT_RE.test(content)) return { kind: 'satisfied' };
+    // Comments are ignored: a commented-out declaration must not satisfy the step.
+    if (PLUGIN_PRESENT_RE.test(maskCommentsAndStrings(content, true))) {
+      return { kind: 'satisfied' };
+    }
     if (ctx.androidPaths.appBuildScriptStyle === 'plugins-dsl') {
       const plugins = findBlock(content, 'plugins', { topLevel: true });
       if (!plugins) {
@@ -73,11 +83,14 @@ export const applyPluginStep: Step<AndroidContext> = {
     if (ctx.androidPaths.appBuildScriptStyle === 'plugins-dsl') {
       const plugins = findBlock(original, 'plugins', { topLevel: true });
       if (!plugins) throw new Error('No plugins {} block found in app build script');
-      const insertAt = plugins.bodyEnd;
+      // `plugins { id 'x' }` on one line: break before the closing brace so
+      // our block doesn't join the previous statement.
+      const { at, prefix } = closingBraceInsertion(original, plugins.bodyEnd, true);
       updated =
-        original.slice(0, insertAt) +
+        original.slice(0, at) +
+        prefix +
         pluginsDslLine(ctx.androidPaths.appBuildGradleDsl) +
-        original.slice(insertAt);
+        original.slice(at);
     } else {
       // Legacy: append our imperative apply line after the last existing
       // one of the same DSL form so the ordering stays predictable. If
@@ -100,18 +113,6 @@ export const applyPluginStep: Step<AndroidContext> = {
   async rollback(ctx) {
     const content = await readOrNull(ctx.androidPaths.appBuildGradle);
     if (content === null) return;
-    if (ctx.androidPaths.appBuildScriptStyle === 'plugins-dsl') {
-      // Remove any line that mentions the plugin id. Targets the line we
-      // wrote in plugins-dsl mode.
-      const updated = content
-        .split('\n')
-        .filter((line) => !PLUGIN_PRESENT_RE.test(line))
-        .join('\n');
-      if (updated !== content) {
-        await writeFile(ctx.androidPaths.appBuildGradle, updated);
-      }
-      return;
-    }
     const stripped = stripMarkerBlock(content, APPLY_PLUGIN_MARKER_BEGIN, APPLY_PLUGIN_MARKER_END);
     if (stripped !== content) {
       await writeFile(ctx.androidPaths.appBuildGradle, stripped);

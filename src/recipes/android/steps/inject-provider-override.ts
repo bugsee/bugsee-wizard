@@ -98,10 +98,13 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
     let updated = original;
 
     // Step 1: ensure xmlns:tools is on <manifest>.
-    if (!TOOLS_NS_ATTR_RE.test(updated)) {
-      const manifestMatch = MANIFEST_OPEN_TAG_RE.exec(updated);
-      if (!manifestMatch) throw new Error('No <manifest> root in AndroidManifest.xml');
-      const attrs = manifestMatch[1] ?? '';
+    // Judge only the <manifest> open tag: an `xmlns:tools` declared on some
+    // nested element (or in a comment) does not make `tools:` resolve on the
+    // `<provider>` we add, so the root still needs its own.
+    const manifestMatch = MANIFEST_OPEN_TAG_RE.exec(updated);
+    if (!manifestMatch) throw new Error('No <manifest> root in AndroidManifest.xml');
+    const attrs = manifestMatch[1] ?? '';
+    if (!TOOLS_NS_ATTR_RE.test(attrs)) {
       // Insert the namespace as the last attribute on the <manifest> tag.
       const newOpenTag = `<manifest${attrs}\n    xmlns:tools="http://schemas.android.com/tools">`;
       updated =

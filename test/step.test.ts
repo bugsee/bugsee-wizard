@@ -1,3 +1,4 @@
+import * as clack from '@clack/prompts';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { WizardContext } from '../src/core/context.js';
@@ -104,6 +105,7 @@ describe('runSteps', () => {
 
     expect(result.failed).toBe(false);
     expect(trace.calls).toEqual([]);
+    expect(result.results).toEqual([{ id: 'a', outcome: 'planned' }]);
   });
 });
 
@@ -213,7 +215,13 @@ describe('runRollback', () => {
   it('skips rollback in dry-run', async () => {
     const trace: Trace = { calls: [] };
     const steps = [makeStep('a', trace), makeStep('b', trace)];
-    await runRollback(steps, makeContext({ dryRun: true }));
+    vi.mocked(clack.log.success).mockClear();
+    vi.mocked(clack.log.step).mockClear();
+    const ctx = makeContext({ dryRun: true });
+    const result = await runRollback(steps, ctx);
     expect(trace.calls).toEqual([]);
+    expect(result.results.map((r) => r.outcome)).toEqual(['planned', 'planned']);
+    expect(clack.log.success).not.toHaveBeenCalled();
+    expect(clack.log.step).toHaveBeenCalledWith(expect.stringContaining('dry-run'));
   });
 });

@@ -1,8 +1,8 @@
 import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
-import { findBlock } from '../blocks.js';
-import { lineStartBefore, readOrNull, stripMarkerBlock } from '../io.js';
+import { findBlock, maskCommentsAndStrings } from '../blocks.js';
+import { closingBraceInsertion, readOrNull, stripMarkerBlock } from '../io.js';
 import {
   type AndroidContext,
   BUGSEE_GRADLE_PLUGIN_ARTIFACT,
@@ -41,14 +41,14 @@ export const addBuildscriptClasspathStep: Step<AndroidContext> = {
   title: 'Add Bugsee plugin classpath to project buildscript',
 
   async precheck(ctx): Promise<StepStatus> {
-    const content = await readOrNull(ctx.androidPaths.projectBuildGradle);
+    const file = ctx.androidPaths.projectBuildGradle;
+    const content = file === null ? null : await readOrNull(file);
     if (content === null) {
       return {
         kind: 'blocked',
-        reason: `${ctx.androidPaths.projectBuildGradle} not found`,
+        reason: `${file ?? 'project-level build.gradle[.kts]'} not found`,
       };
     }
-    if (CLASSPATH_PRESENT_RE.test(content)) return { kind: 'satisfied' };
     const buildscript = findBlock(content, 'buildscript');
     if (!buildscript) {
       return {
@@ -57,17 +57,28 @@ export const addBuildscriptClasspathStep: Step<AndroidContext> = {
       };
     }
     const buildscriptBody = content.slice(buildscript.bodyStart, buildscript.bodyEnd);
-    if (!findBlock(buildscriptBody, 'dependencies')) {
+    const deps = findBlock(buildscriptBody, 'dependencies');
+    if (!deps) {
       return {
         kind: 'blocked',
         reason: 'No buildscript.dependencies {} block in project-level build.gradle',
       };
     }
+    // Only an active declaration inside buildscript.dependencies counts: a
+    // commented-out line or a top-level `dependencies` mention must not
+    // satisfy the step (the legacy `apply plugin:` would then not resolve).
+    const depsBody = buildscriptBody.slice(deps.bodyStart, deps.bodyEnd);
+    if (CLASSPATH_PRESENT_RE.test(maskCommentsAndStrings(depsBody, true))) {
+      return { kind: 'satisfied' };
+    }
     return { kind: 'pending' };
   },
 
   async apply(ctx) {
-    const original = (await readOrNull(ctx.androidPaths.projectBuildGradle)) ?? '';
+    const { projectBuildGradle: file, projectBuildGradleDsl: dsl } = ctx.androidPaths;
+    if (file === null || dsl === null)
+      throw new Error('project-level build.gradle[.kts] not found');
+    const original = (await readOrNull(file)) ?? '';
     const buildscript = findBlock(original, 'buildscript');
     if (!buildscript) {
       throw new Error('No buildscript {} block in project-level build.gradle');
@@ -78,24 +89,22 @@ export const addBuildscriptClasspathStep: Step<AndroidContext> = {
       throw new Error('No buildscript.dependencies {} block in project-level build.gradle');
     }
     const depsBodyEndAbs = buildscript.bodyStart + depsRel.bodyEnd;
-    const insertAt = lineStartBefore(original, depsBodyEndAbs);
-    const updated =
-      original.slice(0, insertAt) +
-      classpathBlock(ctx.androidPaths.projectBuildGradleDsl) +
-      original.slice(insertAt);
-    await writeFile(ctx.androidPaths.projectBuildGradle, updated);
+    const { at, prefix } = closingBraceInsertion(original, depsBodyEndAbs, true);
+    const updated = original.slice(0, at) + prefix + classpathBlock(dsl) + original.slice(at);
+    await writeFile(file, updated);
   },
 
   async rollback(ctx) {
-    const content = await readOrNull(ctx.androidPaths.projectBuildGradle);
-    if (content === null) return;
+    const file = ctx.androidPaths.projectBuildGradle;
+    const content = file === null ? null : await readOrNull(file);
+    if (file === null || content === null) return;
     const stripped = stripMarkerBlock(
       content,
       BUILDSCRIPT_CLASSPATH_MARKER_BEGIN,
       BUILDSCRIPT_CLASSPATH_MARKER_END,
     );
     if (stripped !== content) {
-      await writeFile(ctx.androidPaths.projectBuildGradle, stripped);
+      await writeFile(file, stripped);
     }
   },
 };

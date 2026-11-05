@@ -188,7 +188,7 @@ describe('expoPluginStep', () => {
     const text = base();
     const { dir, ctx } = await setup(text);
     const res = await runSteps([expoPluginStep], { ...ctx, dryRun: true });
-    expect(res.results[0]?.outcome).toBe('applied');
+    expect(res.results[0]?.outcome).toBe('planned');
     expect(await readFixture(dir, 'app.json')).toBe(text);
   });
 });

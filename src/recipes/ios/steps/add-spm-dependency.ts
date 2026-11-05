@@ -26,21 +26,28 @@ export const addSpmDependencyStep: Step<IosContext> = {
         }`,
       };
     }
-    if (!proj.findNativeTarget(ctx.iosPaths.schemeName)) {
+    if (!proj.findNativeTarget(ctx.iosPaths.targetName)) {
       return {
         kind: 'blocked',
-        reason: `Native target ${JSON.stringify(ctx.iosPaths.schemeName)} not found in pbxproj`,
+        reason: `Native target ${JSON.stringify(ctx.iosPaths.targetName)} not found in pbxproj`,
       };
     }
-    return proj.hasSpmProduct(ctx.iosPaths.schemeName, BUGSEE_SPM_PRODUCT)
-      ? { kind: 'satisfied' }
-      : { kind: 'pending' };
+    if (proj.hasSpmProduct(ctx.iosPaths.targetName, BUGSEE_SPM_PRODUCT, BUGSEE_SPM_URL)) {
+      return { kind: 'satisfied' };
+    }
+    if (proj.hasSpmProduct(ctx.iosPaths.targetName, BUGSEE_SPM_PRODUCT)) {
+      return {
+        kind: 'blocked',
+        reason: `Target already has a Swift Package product named ${BUGSEE_SPM_PRODUCT} that does not come from ${BUGSEE_SPM_URL}; remove it in Xcode and re-run.`,
+      };
+    }
+    return { kind: 'pending' };
   },
 
   async apply(ctx) {
     const proj = new XcodeProject(ctx.iosPaths.xcodeProject);
     proj.addSpmDependency({
-      targetName: ctx.iosPaths.schemeName,
+      targetName: ctx.iosPaths.targetName,
       packageUrl: BUGSEE_SPM_URL,
       productName: BUGSEE_SPM_PRODUCT,
       packageName: SPM_PACKAGE_NAME,
@@ -56,7 +63,7 @@ export const addSpmDependencyStep: Step<IosContext> = {
     } catch {
       return;
     }
-    const removed = proj.removeSpmDependency(ctx.iosPaths.schemeName, BUGSEE_SPM_PRODUCT);
+    const removed = proj.removeSpmDependency(ctx.iosPaths.targetName, BUGSEE_SPM_PRODUCT);
     if (removed) await proj.save();
   },
 };

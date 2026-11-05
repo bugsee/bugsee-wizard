@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
-import { findBlock } from '../blocks.js';
+import { findBlock, maskCommentsAndStrings } from '../blocks.js';
 import { readOrNull } from '../io.js';
 import type { AndroidContext } from '../types.js';
 
@@ -36,8 +36,15 @@ export const ensureMavenCentralStep: Step<AndroidContext> = {
     }
     const pm = findBlock(content, 'pluginManagement');
     if (!pm) return { kind: 'pending' };
+    // Only an active call inside pluginManagement.repositories counts — a
+    // commented-out `mavenCentral()` or one in another block does not.
     const body = content.slice(pm.bodyStart, pm.bodyEnd);
-    if (MAVEN_CENTRAL_RE.test(body)) return { kind: 'satisfied' };
+    const repos = findBlock(body, 'repositories');
+    if (!repos) return { kind: 'pending' };
+    const reposBody = body.slice(repos.bodyStart, repos.bodyEnd);
+    if (MAVEN_CENTRAL_RE.test(maskCommentsAndStrings(reposBody, true))) {
+      return { kind: 'satisfied' };
+    }
     return { kind: 'pending' };
   },
 

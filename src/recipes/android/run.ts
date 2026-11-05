@@ -39,6 +39,28 @@ export interface AndroidRecipeInput extends WizardOptions {
    * detection (multi-process picker etc.) still fire.
    */
   readonly silent?: boolean;
+  /**
+   * Out-parameter for a `silent` run: lines the parent recipe should print in
+   * its own summary because the user still has a manual step to do (today:
+   * the multi-process `<provider>` override snippet when they chose to add it
+   * themselves). The recipe pushes into this array; it stays empty otherwise.
+   */
+  readonly notes?: string[];
+}
+
+function providerOverrideSnippet(proc: string): string[] {
+  return [
+    `Add inside <application> in AndroidManifest.xml (process="${proc}"):`,
+    '',
+    '  <provider',
+    '      android:name="com.bugsee.library.BugseeInitProvider"',
+    `      android:authorities="\${applicationId}.bugseeinitprovider"`,
+    '      android:exported="false"',
+    `      android:process="${proc}"`,
+    '      tools:replace="android:process" />',
+    '',
+    'And on <manifest>, ensure: xmlns:tools="http://schemas.android.com/tools"',
+  ];
 }
 
 export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<RecipeResult> {
@@ -185,15 +207,22 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
       // earlier init-mode answer rather than re-prompting.
       initMode = 'manual';
     }
-  } else if (processConfig && processConfig.componentProcesses.length > 0) {
-    const procList = processConfig.componentProcesses.map((p) => `"${p}"`).join(', ');
+  }
+  // Component-level processes are independent of an app-wide one: even when
+  // the whole <application> runs in a custom process, individual components
+  // may declare yet another, and those are not covered by auto-init.
+  const componentOnly = (processConfig?.componentProcesses ?? []).filter(
+    (p) => p !== processConfig?.applicationProcess,
+  );
+  if (componentOnly.length > 0) {
+    const procList = componentOnly.map((p) => `"${p}"`).join(', ');
     clack.note(
       [
         `Detected per-component custom processes: ${procList}.`,
         '',
-        'Bugsee will auto-init only in your main process — these sub-processes',
-        `won't be covered. If you need crash reports from them too, switch to`,
-        'manual init and gate Bugsee.launch on the process name.',
+        "Bugsee's auto-init ContentProvider won't fire in these processes.",
+        'If you need crash reports from them too, switch to manual init and',
+        'gate Bugsee.launch on the process name.',
       ].join('\n'),
       'Multi-process detected',
     );
@@ -250,8 +279,18 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
   }
 
   // Parent recipe (e.g. React Native) has indicated it will print the
-  // final summary itself — skip the platform-level notes.
-  if (input.silent) return 'ok';
+  // final summary itself — skip the platform-level notes, but hand back the
+  // manual provider-override snippet so the parent can print it.
+  const needsManualProviderSnippet =
+    initMode === 'automatic' &&
+    !!processConfig?.applicationProcess &&
+    providerProcessOverride === null;
+  if (input.silent) {
+    if (needsManualProviderSnippet && processConfig?.applicationProcess) {
+      input.notes?.push(...providerOverrideSnippet(processConfig.applicationProcess));
+    }
+    return 'ok';
+  }
 
   if (initMode === 'manual') {
     const lines: string[] = [
@@ -278,20 +317,9 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
     ];
     // User opted out of the auto-add for the multi-process override —
     // hand them the snippet to paste into AndroidManifest themselves.
-    if (processConfig?.applicationProcess && providerProcessOverride === null) {
+    if (needsManualProviderSnippet && processConfig?.applicationProcess) {
       lines.push('');
-      lines.push(
-        `Add inside <application> in AndroidManifest.xml (process="${processConfig.applicationProcess}"):`,
-      );
-      lines.push('');
-      lines.push('  <provider');
-      lines.push('      android:name="com.bugsee.library.BugseeInitProvider"');
-      lines.push('      android:authorities="${applicationId}.bugseeinitprovider"');
-      lines.push('      android:exported="false"');
-      lines.push(`      android:process="${processConfig.applicationProcess}"`);
-      lines.push('      tools:replace="android:process" />');
-      lines.push('');
-      lines.push('And on <manifest>, ensure: xmlns:tools="http://schemas.android.com/tools"');
+      lines.push(...providerOverrideSnippet(processConfig.applicationProcess));
     }
     clack.note(lines.join('\n'), 'Done');
   }

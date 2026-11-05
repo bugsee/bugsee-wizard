@@ -27,7 +27,9 @@ const COMPONENT_TAG_RE = /<(activity|service|provider|receiver)(?![\w-])([^>]*?)
 // Match `android:process` with either single or double quotes. Both are
 // legal XML; lint and Android Studio default to double, but third-party
 // generators (and hand-edited manifests) sometimes emit single.
-const PROCESS_ATTR_RE = /android:process\s*=\s*(?:"([^"]+)"|'([^']+)')/;
+// The lookbehind requires whitespace before the attribute so a longer
+// namespaced name (`tools:android:process`) is not mistaken for it.
+const PROCESS_ATTR_RE = /(?<=\s)android:process\s*=\s*(?:"([^"]+)"|'([^']+)')/;
 
 const XML_COMMENT_RE = /<!--[\s\S]*?-->/g;
 

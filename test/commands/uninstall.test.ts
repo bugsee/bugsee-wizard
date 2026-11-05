@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const clack = vi.hoisted(() => ({
@@ -272,5 +275,45 @@ describe('runUninstall --yes', () => {
     await runUninstall(opts);
     expect(clack.confirm).toHaveBeenCalledWith(expect.objectContaining({ initialValue: false }));
     expect(rollbacks.runAndroidRollback).not.toHaveBeenCalled();
+  });
+});
+
+describe('runUninstall (nothing detected)', () => {
+  const tmp = () => mkdtempSync(path.join(tmpdir(), 'bugsee-un-'));
+  beforeEach(() => {
+    detectors.detected = [];
+    rollbacks.runReactNativeRollback.mockResolvedValue('ok');
+  });
+
+  it('says nothing to uninstall when no indicators exist', async () => {
+    const cwd = tmp();
+    await runUninstall({ ...opts, cwd });
+    expect(outros()[0]).toMatch(/Nothing to uninstall/);
+    expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
+  });
+
+  it('ignores an unreadable/irrelevant package.json', async () => {
+    const cwd = tmp();
+    writeFileSync(path.join(cwd, 'package.json'), '{not json');
+    await runUninstall({ ...opts, cwd });
+    expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
+  });
+
+  it.each(['android', 'ios'])('offers the RN rollback when %s/ exists', async (dir) => {
+    const cwd = tmp();
+    mkdirSync(path.join(cwd, dir));
+    await runUninstall({ ...opts, cwd });
+    expect(rollbacks.runReactNativeRollback).toHaveBeenCalled();
+    expect(outros()).toEqual(['Bugsee removed.']);
+  });
+
+  it('offers the RN rollback when package.json still has react-native-bugsee', async () => {
+    const cwd = tmp();
+    writeFileSync(
+      path.join(cwd, 'package.json'),
+      JSON.stringify({ dependencies: { 'react-native-bugsee': '^1' } }),
+    );
+    await runUninstall({ ...opts, cwd });
+    expect(rollbacks.runReactNativeRollback).toHaveBeenCalled();
   });
 });
