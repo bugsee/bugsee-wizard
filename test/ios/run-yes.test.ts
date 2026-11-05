@@ -17,6 +17,16 @@ vi.mock('../../src/recipes/ios/paths.js', () => ({
   discoverIosPaths: async () => found.paths,
 }));
 
+// these tests are about the questions and the notes, not the Xcode edits (steps have their own)
+const steps = vi.hoisted(() => ({ ran: [] as string[] }));
+vi.mock('../../src/core/step.js', async (orig) => ({
+  ...(await orig<typeof import('../../src/core/step.js')>()),
+  runSteps: async (list: readonly { id: string }[]) => {
+    steps.ran = list.map((s) => s.id);
+    return { failed: false, results: [] };
+  },
+}));
+
 import { runIosRecipe } from '../../src/recipes/ios/run.js';
 import { cleanup, makeFixture, makeIosContext } from './helpers.js';
 
@@ -47,7 +57,7 @@ beforeEach(async () => {
 afterEach(() => cleanup(dir));
 
 describe('runIosRecipe --yes', () => {
-  it('takes every prompt default without asking: the detected scheme, SPM without a Podfile, no size analysis, no AppDelegate injection when none was found', async () => {
+  it('takes every prompt default without asking: the detected scheme, no size analysis, no AppDelegate injection when none was found', async () => {
     await runIosRecipe(input({ yes: true }));
     expect(clack.select).not.toHaveBeenCalled();
     expect(clack.confirm).not.toHaveBeenCalled();
@@ -55,7 +65,6 @@ describe('runIosRecipe --yes', () => {
     const chosen = infos().filter((m) => m.includes('(--yes)'));
     expect(chosen).toEqual([
       expect.stringContaining('Multiple schemes found'),
-      expect.stringContaining('Distribution method for the Bugsee SDK Swift Package Manager'),
       expect.stringMatching(/size analysis\? No/),
       expect.stringMatching(/Auto-inject Bugsee\.launch.*No/),
     ]);
@@ -63,11 +72,50 @@ describe('runIosRecipe --yes', () => {
 
   it('without --yes the same prompts are asked', async () => {
     clack.select.mockResolvedValueOnce((found.paths as { scheme: string }).scheme);
-    clack.select.mockResolvedValueOnce('spm');
     clack.confirm.mockResolvedValue(false);
     await runIosRecipe(input());
-    expect(clack.select).toHaveBeenCalledTimes(2);
+    expect(clack.select).toHaveBeenCalledTimes(1); // the scheme: no distribution question any more
     expect(clack.confirm).toHaveBeenCalledTimes(2);
     expect(infos().some((m) => m.includes('(--yes)'))).toBe(false);
+  });
+});
+
+describe('runIosRecipe distribution (the SDK ships through SPM only since September 2026)', () => {
+  const notes = () => clack.note.mock.calls.map((c) => String(c[0])).join('\n');
+  const withPodfile = async () => {
+    const ctx = makeIosContext({
+      cwd: dir,
+      schemeName: 'App',
+      podfilePath: `${dir}/Podfile`,
+      dryRun: true,
+    });
+    found.paths = { ...ctx.iosPaths, availableSchemes: [ctx.iosPaths.scheme], appDelegate: null };
+  };
+
+  it('never offers CocoaPods, even in a project that has a Podfile: SPM, no pod install', async () => {
+    await withPodfile();
+    clack.confirm.mockResolvedValue(false);
+    expect(await runIosRecipe(input())).toBe('ok');
+    const asked = [...clack.select.mock.calls, ...clack.confirm.mock.calls].map((c) =>
+      JSON.stringify(c[0]),
+    );
+    expect(asked.join('\n')).not.toMatch(/CocoaPods|pod install|Distribution/i);
+    expect(notes()).toContain('SPM');
+    expect(notes()).not.toContain('pod install');
+  });
+
+  it('--yes in a Podfile project takes SPM too', async () => {
+    await withPodfile();
+    await runIosRecipe(input({ yes: true }));
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(notes()).toContain('SPM');
+    expect(notes()).not.toContain('pod install');
+  });
+
+  it('a parent recipe that still passes cocoapods keeps working (React Native, until it moves)', async () => {
+    await withPodfile();
+    clack.confirm.mockResolvedValue(false);
+    await runIosRecipe(input({ options: { distribution: 'cocoapods', runPodInstall: false } }));
+    expect(notes()).toContain('pod install');
   });
 });
