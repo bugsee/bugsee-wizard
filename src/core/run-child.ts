@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 
 const STDERR_TAIL_BYTES = 64 * 1024;
 
@@ -86,9 +87,12 @@ function spawnChild(
     let stderr = '';
     // Decode via the stream so a multi-byte character split across chunks is
     // reassembled instead of becoming U+FFFD.
-    child.stderr?.setEncoding('utf8');
-    child.stderr?.on('data', (chunk: string) => {
-      stderr = (stderr + chunk).slice(-STDERR_TAIL_BYTES);
+    // a character split across two chunks is reassembled, not replaced by U+FFFD
+    const decoder = new StringDecoder('utf8');
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      stderr = (stderr + (typeof chunk === 'string' ? chunk : decoder.write(chunk))).slice(
+        -STDERR_TAIL_BYTES,
+      );
     });
     const captured: Buffer[] = [];
     let size = 0;

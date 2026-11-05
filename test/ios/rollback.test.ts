@@ -171,7 +171,15 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
     await addSchemePostActionStep.apply(otherCtx);
     expect(await readFixture(fixture, rel('Other'))).toContain('Bugsee Symbolication');
 
-    const ran = await runIosRollback({ cwd: fixture, debug: false, dryRun: false });
+    const ran = await runIosRollback({
+      cwd: fixture,
+      debug: false,
+      dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
+    });
     expect(ran).toBe('ok');
     expect(await readFixture(fixture, rel('Other'))).toBe(SAMPLE_XCSCHEME);
     expect(await readFixture(fixture, rel('MinimalApp'))).toBe(defaultBefore);
