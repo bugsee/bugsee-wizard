@@ -299,9 +299,26 @@ describe('runUninstall (nothing detected)', () => {
     expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
   });
 
-  it.each(['android', 'ios'])('offers the RN rollback when %s/ exists', async (dir) => {
+  it.each(['android', 'ios'])(
+    'a bare %s/ directory is not a Bugsee install: says so, no rollback, no success message',
+    async (dir) => {
+      const cwd = tmp();
+      mkdirSync(path.join(cwd, dir));
+      await runUninstall({ ...opts, cwd });
+      expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
+      expect(outros()).toEqual(['No supported platform detected here. Nothing to uninstall.']);
+      expect(outros()).not.toContain('Bugsee removed.');
+      expect(process.exitCode).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ['android', 'bugsee.properties'],
+    ['android/app', 'bugsee.properties'],
+  ])('offers the RN rollback when %s/%s is left behind', async (dir, file) => {
     const cwd = tmp();
-    mkdirSync(path.join(cwd, dir));
+    mkdirSync(path.join(cwd, dir), { recursive: true });
+    writeFileSync(path.join(cwd, dir, file), 'app_token=x\n');
     await runUninstall({ ...opts, cwd });
     expect(rollbacks.runReactNativeRollback).toHaveBeenCalled();
     expect(outros()).toEqual(['Bugsee removed.']);
