@@ -75,10 +75,32 @@ describe.each([
 });
 
 describe('runInstall (unsupported kind)', () => {
-  it('does not claim success', async () => {
+  it('does not claim success, and exits non-zero so a script can tell nothing was installed', async () => {
     detectors.detected = [{ kind: 'flutter', confidence: 'high' }];
     await runInstall(opts);
-    expect(outros()).not.toContain('Done.');
+    expect(outros()).toEqual(['Nothing was installed.']);
+    expect(process.exitCode).toBe(1);
+  });
+});
+
+describe('runInstall --dry-run', () => {
+  it.each([
+    ['android', 'runAndroidRecipe'],
+    ['ios', 'runIosRecipe'],
+    ['react-native', 'runReactNativeRecipe'],
+  ] as const)('%s: says nothing was changed instead of "Done."', async (kind, fn) => {
+    detectors.detected = [{ kind, confidence: 'high' }];
+    recipes[fn].mockResolvedValue('ok');
+    await runInstall({ ...opts, dryRun: true });
+    expect(outros()).toEqual(['Dry run complete — no changes were made.']);
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it('a failed dry run still reports the failure', async () => {
+    detectors.detected = [{ kind: 'android', confidence: 'high' }];
+    recipes.runAndroidRecipe.mockResolvedValue('failed');
+    await runInstall({ ...opts, dryRun: true });
+    expect(outros()[0]).toMatch(/not installed/i);
+    expect(process.exitCode).toBe(1);
   });
 });

@@ -286,6 +286,8 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
     }
     return 'ok';
   }
+  // a dry run wrote nothing: no notes about tokens stored or Gradle to sync
+  if (input.dryRun) return 'ok';
 
   if (initMode === 'manual') {
     const lines: string[] = [
