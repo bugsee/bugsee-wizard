@@ -44,7 +44,7 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.4",
+    "@biomejs/biome": "2.6.4",
     "@types/node": "^22.20.5",
     "@types/semver": "^7.8.0",
     "@types/xcode": "^3.0.0",
