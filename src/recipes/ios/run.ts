@@ -1,4 +1,5 @@
 import * as clack from '@clack/prompts';
+import * as ask from '../../core/ask.js';
 
 import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
@@ -51,7 +52,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
       const name = schemePath.split('/').pop()?.replace('.xcscheme', '') ?? schemePath;
       return { value: schemePath, label: name };
     });
-    const picked = await clack.select<string>({
+    const picked = await ask.select<string>(input.yes, {
       message: 'Multiple schemes found — which one is the main app target?',
       options,
       initialValue: paths.scheme,
@@ -100,7 +101,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
     distribution = input.options.distribution;
   } else {
     const distributionDefault: IosDistributionMethod = paths.podfile ? 'cocoapods' : 'spm';
-    const choice = await clack.select<IosDistributionMethod>({
+    const choice = await ask.select<IosDistributionMethod>(input.yes, {
       message: 'Distribution method for the Bugsee SDK',
       options: [
         {
@@ -127,7 +128,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
   if (input.options?.sizeAnalysis !== undefined) {
     sizeAnalysis = input.options.sizeAnalysis;
   } else {
-    const answer = await clack.confirm({
+    const answer = await ask.confirm(input.yes, {
       message: 'Enable build size analysis?',
       initialValue: false,
     });
@@ -142,7 +143,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
   if (input.options?.sizeAnalysisAllConfigurations !== undefined) {
     sizeAnalysisAllConfigurations = input.options.sizeAnalysisAllConfigurations;
   } else if (sizeAnalysis) {
-    const allConfigs = await clack.confirm({
+    const allConfigs = await ask.confirm(input.yes, {
       message: 'Upload for all build configurations? (default: Release only)',
       initialValue: false,
     });
@@ -158,7 +159,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
     runPodInstall = input.options.runPodInstall;
   } else if (distribution === 'cocoapods') {
     const podAvailable = isPodOnPath();
-    const answer = await clack.confirm({
+    const answer = await ask.confirm(input.yes, {
       message: podAvailable
         ? 'Run `pod install` now to sync everything?'
         : 'Run `pod install` now? (CocoaPods is not on PATH — this will fail unless installed first)',
@@ -175,7 +176,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
   if (input.options?.autoInjectAppDelegate !== undefined) {
     autoInjectAppDelegate = input.options.autoInjectAppDelegate;
   } else {
-    const answer = await clack.confirm({
+    const answer = await ask.confirm(input.yes, {
       message:
         paths.appDelegate !== null
           ? `Auto-inject Bugsee.launch into ${paths.appDelegate.split('/').slice(-2).join('/')}?`
@@ -204,7 +205,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
     nonInteractive: false,
     json: false,
     ignoreGitChanges: false,
-    yes: false,
+    yes: input.yes,
     kind: 'ios',
     tokens: { ios: tokenValue.trim() },
     log,
@@ -295,7 +296,7 @@ export async function runIosRollback(input: WizardOptions): Promise<RollbackResu
     nonInteractive: false,
     json: false,
     ignoreGitChanges: false,
-    yes: false,
+    yes: input.yes,
     kind: 'ios',
     tokens: {},
     log,

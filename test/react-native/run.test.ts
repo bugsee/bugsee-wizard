@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const clack = vi.hoisted(() => ({
@@ -60,6 +63,7 @@ beforeEach(async () => {
   clack.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 });
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await cleanup(fixture);
 });
 
@@ -97,5 +101,28 @@ describe('runReactNativeRecipe — native platform results', () => {
     platform.runAndroidRecipe.mockResolvedValue('cancelled');
     expect(await runReactNativeRecipe(opts())).toBe('cancelled');
     expect(await readFixture(fixture, 'package.json')).toBe(SAMPLE_RN_PACKAGE_JSON);
+  });
+});
+
+describe('runReactNativeRecipe --yes', () => {
+  it('takes every prompt default (both platforms, native launch, inject, install) and still asks for tokens', async () => {
+    clack.select.mockReset();
+    clack.confirm.mockReset();
+    // the default is to run the install when the manager is on PATH: a fake one, no network
+    const bin = await mkdtemp(join(tmpdir(), 'rn-yes-bin-'));
+    await writeFile(join(bin, 'npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH}`);
+    platform.runAndroidRecipe.mockResolvedValue('ok');
+    platform.runIosRecipe.mockResolvedValue('ok');
+    expect(await runReactNativeRecipe({ ...opts(), yes: true })).toBe('ok');
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(clack.confirm).not.toHaveBeenCalled();
+    expect(clack.text).toHaveBeenCalledTimes(2); // one token per platform: nothing to assume
+    // the defaults: native launch (initialize), auto-inject because an entry file exists
+    expect(await readFixture(fixture, 'App.tsx')).toContain('Bugsee');
+    expect(platform.runAndroidRecipe).toHaveBeenCalledWith(
+      expect.objectContaining({ yes: true, options: { initMode: 'automatic' } }),
+    );
+    expect(platform.runIosRecipe).toHaveBeenCalledWith(expect.objectContaining({ yes: true }));
   });
 });

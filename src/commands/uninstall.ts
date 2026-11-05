@@ -1,5 +1,6 @@
 import * as clack from '@clack/prompts';
 
+import * as ask from '../core/ask.js';
 import type { WizardOptions } from '../core/context.js';
 import { runDetectors } from '../core/detect.js';
 import { createLogger } from '../core/logger.js';
@@ -39,7 +40,7 @@ export async function runUninstall(opts: WizardOptions): Promise<void> {
 
   // Determine which platforms to roll back. The JavaScript flow lists its changes and asks itself.
   const onlyJs = detectedKinds.length === 1 && detectedKinds[0] === 'javascript';
-  const targets = onlyJs ? detectedKinds : await pickTargets(detectedKinds);
+  const targets = onlyJs ? detectedKinds : await pickTargets(detectedKinds, opts.yes);
   if (targets === null) {
     clack.cancel('Cancelled.');
     return;
@@ -97,7 +98,8 @@ export async function runUninstall(opts: WizardOptions): Promise<void> {
     return;
   }
 
-  await runExitPoll();
+  // the exit poll is a survey, not a confirmation: --yes does not answer it (nor wait for it)
+  if (!opts.yes) await runExitPoll();
   clack.outro('Bugsee removed.');
 }
 
@@ -154,13 +156,15 @@ async function runUninstallNonInteractive(opts: WizardOptions): Promise<void> {
  */
 async function pickTargets(
   detected: readonly ProjectKind[],
+  yes: boolean,
 ): Promise<readonly ProjectKind[] | null> {
   if (detected.length === 1) {
     const only = detected[0];
     if (!only) return null;
-    const confirm = await clack.confirm({
+    const confirm = await ask.confirm(yes, {
       message: `Remove Bugsee from this ${PROJECT_KIND_LABELS[only]} project?`,
       initialValue: false,
+      assume: true, // --yes confirms the removal the user asked for
     });
     if (clack.isCancel(confirm)) return null;
     return confirm ? [only] : [];
@@ -170,7 +174,7 @@ async function pickTargets(
   // Android both match). Default to "remove from all" but let the user
   // narrow down.
   const allLabel = detected.map((k) => PROJECT_KIND_LABELS[k]).join(' + ');
-  const scope = await clack.select<'all' | 'one'>({
+  const scope = await ask.select<'all' | 'one'>(yes, {
     message: `Detected ${allLabel}. Roll back from…`,
     options: [
       { value: 'all', label: 'all detected platforms' },

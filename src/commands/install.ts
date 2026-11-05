@@ -1,5 +1,6 @@
 import * as clack from '@clack/prompts';
 
+import * as ask from '../core/ask.js';
 import type { WizardOptions } from '../core/context.js';
 import { runDetectors } from '../core/detect.js';
 import { createLogger } from '../core/logger.js';
@@ -35,7 +36,7 @@ export async function runInstall(opts: WizardOptions): Promise<void> {
 
   let chosen: ProjectKind;
   if (onlyConfident) {
-    const confirmed = await clack.confirm({
+    const confirmed = await ask.confirm(opts.yes, {
       message: `Detected ${PROJECT_KIND_LABELS[onlyConfident.kind]}. Continue?`,
       initialValue: true,
     });

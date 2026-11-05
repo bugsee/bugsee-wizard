@@ -1,4 +1,5 @@
 import * as clack from '@clack/prompts';
+import * as ask from '../../core/ask.js';
 
 import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
@@ -24,7 +25,7 @@ const TOKEN_VALIDATE = (v: string | undefined): string | undefined => {
   return undefined;
 };
 
-async function pickLaunchPath(): Promise<RnLaunchPath | null> {
+async function pickLaunchPath(yes: boolean): Promise<RnLaunchPath | null> {
   clack.note(
     [
       'Native (recommended): SDK launches before the JS bridge comes up.',
@@ -43,7 +44,7 @@ async function pickLaunchPath(): Promise<RnLaunchPath | null> {
     ].join('\n'),
     'Native vs JS launch',
   );
-  const choice = await clack.select<RnLaunchPath>({
+  const choice = await ask.select<RnLaunchPath>(yes, {
     message: 'Where should Bugsee launch?',
     options: [
       { value: 'native', label: 'Native (recommended)' },
@@ -55,6 +56,7 @@ async function pickLaunchPath(): Promise<RnLaunchPath | null> {
 }
 
 async function pickPlatforms(
+  yes: boolean,
   hasAndroid: boolean,
   hasIos: boolean,
 ): Promise<readonly ('android' | 'ios')[] | null> {
@@ -64,7 +66,7 @@ async function pickPlatforms(
     if (hasIos) return ['ios'];
     return [];
   }
-  const choice = await clack.select<'both' | 'android' | 'ios'>({
+  const choice = await ask.select<'both' | 'android' | 'ios'>(yes, {
     message: 'Set up Bugsee for which platform?',
     options: [
       { value: 'both', label: 'Both Android and iOS' },
@@ -88,7 +90,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   }
 
   // 1. Pick platforms.
-  const targets = await pickPlatforms(!!paths.androidPath, !!paths.iosPath);
+  const targets = await pickPlatforms(input.yes, !!paths.androidPath, !!paths.iosPath);
   if (targets === null) {
     clack.cancel('Cancelled.');
     return 'cancelled';
@@ -99,7 +101,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   }
 
   // 2. Pick launch path.
-  const launchPath = await pickLaunchPath();
+  const launchPath = await pickLaunchPath(input.yes);
   if (launchPath === null) {
     clack.cancel('Cancelled.');
     return 'cancelled';
@@ -135,7 +137,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
 
   // 4. Auto-inject JS entry?
   const jsEntryLabel = paths.jsEntry ? paths.jsEntry.path.split('/').slice(-2).join('/') : null;
-  const autoInjectJsEntry = await clack.confirm({
+  const autoInjectJsEntry = await ask.confirm(input.yes, {
     message: jsEntryLabel
       ? `Auto-inject Bugsee ${launchPath === 'javascript' ? 'launch' : 'initialize'} into ${jsEntryLabel}?`
       : `Auto-inject Bugsee ${launchPath === 'javascript' ? 'launch' : 'initialize'}? (no entry file found — will print a snippet instead)`,
@@ -149,7 +151,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   // 5. Package install opt-in.
   const detectedManager = await detectPackageManager(input.cwd);
   const managerAvailable = isManagerOnPath(detectedManager);
-  const runPackageInstall = await clack.confirm({
+  const runPackageInstall = await ask.confirm(input.yes, {
     message: managerAvailable
       ? `Run \`${detectedManager} install\` now to fetch ${RN_PACKAGE_NAME}?`
       : `Run \`${detectedManager} install\` now? (${detectedManager} is not on PATH — this will fail unless installed first)`,
@@ -178,7 +180,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     nonInteractive: false,
     json: false,
     ignoreGitChanges: false,
-    yes: false,
+    yes: input.yes,
     kind: 'react-native',
     tokens,
     log,
@@ -316,7 +318,7 @@ export async function runReactNativeRollback(input: WizardOptions): Promise<Roll
     nonInteractive: false,
     json: false,
     ignoreGitChanges: false,
-    yes: false,
+    yes: input.yes,
     kind: 'react-native',
     tokens: {},
     log,

@@ -150,3 +150,22 @@ describe('runInstall (non-interactive kind choice)', () => {
     expect(clack.intro).not.toHaveBeenCalled();
   });
 });
+
+describe('runInstall --yes', () => {
+  it('does not ask "Detected X. Continue?" and runs the recipe with yes passed on', async () => {
+    detectors.detected = [{ kind: 'android', confidence: 'high' }];
+    recipes.runAndroidRecipe.mockResolvedValue('ok');
+    await runInstall({ ...opts, yes: true });
+    expect(clack.confirm).not.toHaveBeenCalled();
+    expect(recipes.runAndroidRecipe).toHaveBeenCalledWith(expect.objectContaining({ yes: true }));
+    expect(outros()).toEqual(['Done.']);
+  });
+
+  it('still asks what kind of project it is when detection is not confident: no default to take', async () => {
+    detectors.detected = [];
+    clack.select.mockResolvedValueOnce('android');
+    recipes.runAndroidRecipe.mockResolvedValue('ok');
+    await runInstall({ ...opts, yes: true });
+    expect(clack.select).toHaveBeenCalledTimes(1);
+  });
+});

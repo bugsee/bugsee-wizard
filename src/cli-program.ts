@@ -35,7 +35,7 @@ export function createBaseProgram() {
     .option('--no-ignore-git-changes', 'override the env var and turn this off')
     .option(
       '-y, --yes',
-      'answer yes to confirmations: destructive actions such as uninstall, and approving the Bugsee install scripts in pnpm-workspace.yaml on pnpm 11 (env: BUGSEE_WIZARD_YES)',
+      'answer yes to confirmations and take the default of option questions (uninstall, applying changes, pnpm 11 install-script approval, Android/iOS/React Native options); tokens and the git-state checks still need --token / --ignore-git-changes (env: BUGSEE_WIZARD_YES)',
     )
     .option('--no-yes', 'override the env var and turn this off')
     .option(

@@ -239,3 +239,38 @@ describe('runUninstall (non-interactive)', () => {
     await expect(runUninstall(ni)).rejects.toEqual(new MissingInputError('kind'));
   });
 });
+
+describe('runUninstall --yes', () => {
+  const yes = { ...opts, yes: true };
+
+  it('confirms the removal it was asked for without a question, and skips the exit poll', async () => {
+    detectors.detected = [{ kind: 'android', confidence: 'high' }];
+    rollbacks.runAndroidRollback.mockResolvedValue('ok');
+    await runUninstall(yes);
+    expect(clack.confirm).not.toHaveBeenCalled(); // the "Remove Bugsee from this project?" gate
+    expect(rollbacks.runAndroidRollback).toHaveBeenCalledWith(yes);
+    expect(clack.select).not.toHaveBeenCalled(); // no exit poll: a survey is not a confirmation
+    expect(outros()).toEqual(['Bugsee removed.']);
+  });
+
+  it('with several platforms takes "all detected" without asking', async () => {
+    detectors.detected = [
+      { kind: 'android', confidence: 'high' },
+      { kind: 'ios', confidence: 'high' },
+    ];
+    rollbacks.runAndroidRollback.mockResolvedValue('ok');
+    rollbacks.runIosRollback.mockResolvedValue('ok');
+    await runUninstall(yes);
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(rollbacks.runAndroidRollback).toHaveBeenCalled();
+    expect(rollbacks.runIosRollback).toHaveBeenCalled();
+  });
+
+  it('without --yes the removal is still asked, defaulting to no', async () => {
+    detectors.detected = [{ kind: 'android', confidence: 'high' }];
+    clack.confirm.mockResolvedValueOnce(false);
+    await runUninstall(opts);
+    expect(clack.confirm).toHaveBeenCalledWith(expect.objectContaining({ initialValue: false }));
+    expect(rollbacks.runAndroidRollback).not.toHaveBeenCalled();
+  });
+});
