@@ -106,6 +106,8 @@ async function finishJavaScript(opts: WizardOptions): Promise<void> {
   if (!result.ok) {
     clack.outro('Bugsee was not installed — see the errors above.');
     process.exitCode = 1;
+  } else if (opts.dryRun) {
+    clack.outro('Dry run complete — no changes were made.');
   } else if (result.incomplete) {
     clack.note('Some changes need a manual step: see the snippets above.', 'Manual steps');
     clack.outro('Done, with manual steps left for you.');

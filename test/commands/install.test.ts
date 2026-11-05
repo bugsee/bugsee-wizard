@@ -95,6 +95,16 @@ describe('runInstall (unsupported kind)', () => {
   });
 });
 
+describe('runInstall --dry-run (javascript)', () => {
+  it('ends with the same dry-run outro as the other flows, not "Done."', async () => {
+    detectors.detected = [{ kind: 'javascript', confidence: 'high' }];
+    web.runJavaScriptInstall.mockResolvedValue({ ok: true, incomplete: false, steps: [] });
+    await runInstall({ ...opts, dryRun: true });
+    expect(outros()).toEqual(['Dry run complete — no changes were made.']);
+    expect(process.exitCode).toBeUndefined();
+  });
+});
+
 describe('runInstall --dry-run', () => {
   it.each([
     ['android', 'runAndroidRecipe'],
