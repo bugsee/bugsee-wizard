@@ -19,7 +19,7 @@ import { MIN_REACT_NATIVE, readRnProjectInfo, usesPodsForWrapper } from './proje
 import { androidGradleSteps } from './steps/android-gradle.js';
 import { ensureRnBugseePackageStep } from './steps/ensure-rn-bugsee-package.js';
 import { expoPluginSnippet, expoPluginStep } from './steps/expo-plugin.js';
-import { injectJsEntryStep } from './steps/inject-js-entry.js';
+import { injectJsEntryStep, launchStatement } from './steps/inject-js-entry.js';
 import { iosXcodeSteps } from './steps/ios-xcode.js';
 import { rnPnpmBuildsStep } from './steps/pnpm-builds.js';
 import { runPackageInstallStep } from './steps/run-package-install.js';
@@ -353,6 +353,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
       bare: !expo && !info.hasExpo,
       expo: expo || info.hasExpo,
       autoInjectJsEntry,
+      hasJsEntry: paths.jsEntry !== null,
       tokens,
       results: setupResult.results,
     }).join('\n'),
@@ -370,6 +371,7 @@ function summaryLines(s: {
   bare: boolean;
   expo: boolean;
   autoInjectJsEntry: boolean;
+  hasJsEntry: boolean;
   tokens: Readonly<Record<string, string>>;
   results: readonly StepResult[];
 }): string[] {
@@ -399,7 +401,8 @@ function summaryLines(s: {
       'Expo: run `expo prebuild` if you commit android/ and ios/ (the plugin writes them). Expo Go is not supported; use a development build.',
     );
   }
-  if (!s.autoInjectJsEntry) {
+  const launch = launchStatement(s.tokens, 'Platform');
+  if ((!s.autoInjectJsEntry || !s.hasJsEntry) && launch !== null) {
     lines.push(
       '',
       'Add to your App.tsx / index.js:',
@@ -407,7 +410,7 @@ function summaryLines(s: {
       `  import Bugsee from '${RN_PACKAGE_NAME}';`,
       `  import { Platform } from 'react-native';`,
       '',
-      `  Bugsee.launch(Platform.OS === 'ios' ? '${s.tokens.ios ?? '<IOS_TOKEN>'}' : '${s.tokens.android ?? '<ANDROID_TOKEN>'}');`,
+      ...launch.split('\n').map((l) => `  ${l}`),
     );
   }
   lines.push(

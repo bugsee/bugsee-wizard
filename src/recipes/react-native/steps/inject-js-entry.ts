@@ -15,12 +15,35 @@ import {
 const IMPORT_LINE_RE =
   /^\s*import\s+[^;]+?from\s+['"][^'"]+['"]\s*;?\s*$|^\s*import\s+['"][^'"]+['"]\s*;?\s*$/gm;
 
-function jsLaunchBlock(androidToken: string, iosToken: string): string {
+/**
+ * The launch call for the platforms whose token is known. A platform without a token gets no
+ * branch: a placeholder would ship as a real token string. Null when there is no token at all.
+ */
+export function launchStatement(
+  tokens: Readonly<Record<string, string>>,
+  platformIdent: string,
+): string | null {
+  const { ios, android } = tokens;
+  if (ios !== undefined && android !== undefined) {
+    return `Bugsee.launch(${platformIdent}.OS === 'ios' ? '${ios}' : '${android}');`;
+  }
+  if (ios !== undefined) {
+    return `if (${platformIdent}.OS === 'ios') {\n  Bugsee.launch('${ios}');\n}`;
+  }
+  if (android !== undefined) {
+    return `if (${platformIdent}.OS === 'android') {\n  Bugsee.launch('${android}');\n}`;
+  }
+  return null;
+}
+
+function jsLaunchBlock(tokens: Readonly<Record<string, string>>): string | null {
+  const statement = launchStatement(tokens, 'BugseePlatform');
+  if (statement === null) return null;
   return `${JS_LAUNCH_MARKER_BEGIN}
 import Bugsee from '${RN_PACKAGE_NAME}';
 import { Platform as BugseePlatform } from 'react-native';
 
-Bugsee.launch(BugseePlatform.OS === 'ios' ? '${iosToken}' : '${androidToken}');
+${statement}
 ${JS_LAUNCH_MARKER_END}
 `;
 }
@@ -64,7 +87,13 @@ export const injectJsEntryStep: Step<RnContext> = {
         note: 'JS entry not readable — snippet will be printed at the end',
       };
     }
-    if (content.includes(JS_LAUNCH_MARKER_BEGIN) || content.includes(JS_INIT_MARKER_BEGIN)) {
+    // only the exact block for these tokens counts: a stale or foreign one is replaced on apply
+    const expected = jsLaunchBlock(ctx.tokens);
+    if (
+      expected !== null &&
+      content.includes(expected) &&
+      !content.includes(JS_INIT_MARKER_BEGIN)
+    ) {
       return { kind: 'satisfied' };
     }
     return { kind: 'pending' };
@@ -72,11 +101,11 @@ export const injectJsEntryStep: Step<RnContext> = {
 
   async apply(ctx) {
     if (!ctx.rnPaths.jsEntry) throw new Error('JS entry path not resolved');
-    const original = (await readOrNull(ctx.rnPaths.jsEntry.path)) ?? '';
-    const block = jsLaunchBlock(
-      ctx.tokens.android ?? '<ANDROID_TOKEN>',
-      ctx.tokens.ios ?? '<IOS_TOKEN>',
-    );
+    const block = jsLaunchBlock(ctx.tokens);
+    if (block === null) throw new Error('No Bugsee token to launch with');
+    const read = (await readOrNull(ctx.rnPaths.jsEntry.path)) ?? '';
+    let original = stripMarkerBlock(read, JS_LAUNCH_MARKER_BEGIN, JS_LAUNCH_MARKER_END);
+    original = stripMarkerBlock(original, JS_INIT_MARKER_BEGIN, JS_INIT_MARKER_END);
     const insertAt = findInsertPosition(original);
     const updated = original.slice(0, insertAt) + block + original.slice(insertAt);
     await writeFile(ctx.rnPaths.jsEntry.path, updated);

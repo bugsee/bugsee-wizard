@@ -123,6 +123,72 @@ describe('injectJsEntryStep', () => {
     expect(await injectJsEntryStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
   });
 
+  it('with one platform token it launches only that platform and writes no placeholder', async () => {
+    fixture = await makeFixture({
+      'package.json': SAMPLE_RN_PACKAGE_JSON,
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    const ctx = await makeRnContext({ cwd: fixture, tokens: { ios: 'IOS' } });
+    await injectJsEntryStep.apply(ctx);
+    const updated = await readFixture(fixture, 'App.tsx');
+    expect(updated).toContain(`if (BugseePlatform.OS === 'ios') {\n  Bugsee.launch('IOS');\n}`);
+    expect(updated).not.toMatch(/<\w+_TOKEN>|ANDROID|'AND/);
+    const android = await makeFixture({
+      'package.json': SAMPLE_RN_PACKAGE_JSON,
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    const actx = await makeRnContext({ cwd: android, tokens: { android: 'AND' } });
+    await injectJsEntryStep.apply(actx);
+    expect(await readFixture(android, 'App.tsx')).toContain(
+      `if (BugseePlatform.OS === 'android') {\n  Bugsee.launch('AND');\n}`,
+    );
+    await cleanup(android);
+  });
+
+  it('refuses to write a launch when there is no token at all', async () => {
+    fixture = await makeFixture({
+      'package.json': SAMPLE_RN_PACKAGE_JSON,
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    const ctx = await makeRnContext({ cwd: fixture, tokens: {} });
+    await expect(injectJsEntryStep.apply(ctx)).rejects.toThrow(/token/);
+    expect(await readFixture(fixture, 'App.tsx')).toBe(SAMPLE_APP_TSX);
+  });
+
+  it('a stale block (other token, or an old init block) is not satisfied, and is replaced on apply', async () => {
+    fixture = await makeFixture({
+      'package.json': SAMPLE_RN_PACKAGE_JSON,
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    const old = await makeRnContext({ cwd: fixture, tokens: { android: 'OLDA', ios: 'OLDI' } });
+    await injectJsEntryStep.apply(old);
+    const legacy = `// bugsee:wizard:rn-init:begin\nBugsee.launch(;\n// bugsee:wizard:rn-init:end\n`;
+    const withLegacy = legacy + (await readFixture(fixture, 'App.tsx'));
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(`${fixture}/App.tsx`, withLegacy);
+    const ctx = await makeRnContext({ cwd: fixture, tokens: { android: 'NEWA', ios: 'NEWI' } });
+    expect(await injectJsEntryStep.precheck(ctx)).toEqual({ kind: 'pending' });
+    await injectJsEntryStep.apply(ctx);
+    const updated = await readFixture(fixture, 'App.tsx');
+    expect(updated).toContain("'NEWI' : 'NEWA'");
+    expect(updated).not.toContain('OLDI');
+    expect(updated).not.toContain('rn-init');
+    expect(updated.match(/rn-launch:begin/g)).toHaveLength(1);
+    expect(await injectJsEntryStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+  });
+
+  it('a launch block written for other tokens is pending, not satisfied', async () => {
+    fixture = await makeFixture({
+      'package.json': SAMPLE_RN_PACKAGE_JSON,
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    await injectJsEntryStep.apply(
+      await makeRnContext({ cwd: fixture, tokens: { android: 'OLDA', ios: 'OLDI' } }),
+    );
+    const ctx = await makeRnContext({ cwd: fixture, tokens: { android: 'NEWA', ios: 'NEWI' } });
+    expect(await injectJsEntryStep.precheck(ctx)).toEqual({ kind: 'pending' });
+  });
+
   it('never writes the old native-launch Bugsee.launch( any more', async () => {
     fixture = await makeFixture({
       'package.json': SAMPLE_RN_PACKAGE_JSON,

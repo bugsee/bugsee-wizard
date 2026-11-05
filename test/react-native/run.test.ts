@@ -59,7 +59,8 @@ function answer(a: Answers = {}): void {
   clack.text.mockResolvedValue('TOKEN');
   clack.confirm.mockImplementation(async ({ message }: { message: string }) => {
     if (/Add the Bugsee launch/.test(message)) return a.inject ?? true;
-    if (/install` now to fetch/.test(message) && !/pod/.test(message)) return a.install ?? false;
+    // the question reads differently when the manager is not on this machine's PATH
+    if (/`(?:npm|yarn|pnpm|bun) install` now/.test(message)) return a.install ?? false;
     if (/Apply the native edits/.test(message)) return a.native ?? false;
     if (/pod install/.test(message)) return a.pod ?? false;
     throw new Error(`unexpected question: ${message}`);
@@ -173,7 +174,28 @@ describe('runReactNativeRecipe: the JS side', () => {
     answer({ inject: false });
     await runReactNativeRecipe(opts());
     expect(await readFixture(fixture, 'App.tsx')).toBe(SAMPLE_APP_TSX);
-    expect(logged(clack.note)).toContain('Bugsee.launch(Platform.OS');
+    expect(logged(clack.note)).toContain("if (Platform.OS === 'android') {");
+  });
+
+  it('prints the snippet when there is no JS entry even though the launch was accepted', async () => {
+    fixture = await makeFixture({ 'package.json': rnPackage(), 'android/.keep': '' });
+    answer({ inject: true });
+    await runReactNativeRecipe(opts());
+    expect(logged(clack.note)).toContain("if (Platform.OS === 'android') {");
+  });
+
+  it('the printed snippet never carries a placeholder token for a platform that was not picked', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer({ inject: false });
+    clack.select.mockResolvedValue('android');
+    await runReactNativeRecipe(opts());
+    const out = logged(clack.note);
+    expect(out).toContain("  Bugsee.launch('TOKEN');");
+    expect(out).not.toMatch(/<(IOS|ANDROID)_TOKEN>/);
   });
 
   it('summarises what is left: install, pod install, the native edits, the requirements', async () => {
