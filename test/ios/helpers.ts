@@ -32,6 +32,7 @@ export async function cleanup(dir: string): Promise<void> {
 interface MakeIosContextOpts {
   cwd: string;
   schemeName: string;
+  targetName?: string;
   xcodeProjectName?: string;
   podfilePath?: string | null;
   appDelegate?: { path: string; language: AppDelegateLanguage } | null;
@@ -55,6 +56,7 @@ export function makeIosContext(opts: MakeIosContextOpts): IosContext {
     podfile: opts.podfilePath ?? null,
     scheme,
     schemeName: opts.schemeName,
+    targetName: opts.targetName ?? opts.schemeName,
     availableSchemes: [scheme],
     appDelegate: opts.appDelegate?.path ?? null,
     appDelegateLanguage: opts.appDelegate?.language ?? null,

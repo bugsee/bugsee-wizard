@@ -29,7 +29,9 @@ async function findIn(dir: string): Promise<string | null> {
     return null;
   }
   for (const name of entries) {
-    if (name.endsWith('.xcodeproj')) return path.join(dir, name);
+    if (!name.endsWith('.xcodeproj')) continue;
+    // Skip bundles without a project file (stale/partial checkouts) and keep looking.
+    if (await fileExists(path.join(dir, name, 'project.pbxproj'))) return path.join(dir, name);
   }
   return null;
 }

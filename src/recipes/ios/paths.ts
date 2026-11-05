@@ -1,9 +1,10 @@
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import fastGlob from 'fast-glob';
 
 import type { AppDelegateLanguage, IosPaths } from './types.js';
+import { XcodeProject } from './xcode-project.js';
 
 async function fileExists(p: string): Promise<boolean> {
   try {
@@ -20,10 +21,44 @@ async function findXcodeProject(cwd: string): Promise<string | null> {
   // strict and doesn't need to know about RN's nested layout.
   if (!(await fileExists(cwd))) return null;
   const entries = await readdir(cwd);
-  for (const name of entries) {
-    if (name.endsWith('.xcodeproj')) return path.join(cwd, name);
+  const candidates: string[] = [];
+  for (const name of entries.sort()) {
+    if (!name.endsWith('.xcodeproj')) continue;
+    // A bundle without project.pbxproj is not a usable project.
+    if (!(await fileExists(path.join(cwd, name, 'project.pbxproj')))) continue;
+    candidates.push(path.join(cwd, name));
   }
-  return null;
+  if (candidates.length > 1) {
+    throw new Error(
+      `Found more than one .xcodeproj in ${cwd}: ${candidates
+        .map((c) => path.basename(c))
+        .join(', ')}. Re-run from a directory that contains only the app's project.`,
+    );
+  }
+  return candidates[0] ?? null;
+}
+
+/**
+ * Target name for pbxproj / Podfile lookups: the `BlueprintName` of the
+ * scheme's app BuildableReference (preferring a `.app` product, else the
+ * first), or null when the scheme cannot be read.
+ */
+async function readSchemeTargetName(schemePath: string): Promise<string | null> {
+  let xml: string;
+  try {
+    xml = await readFile(schemePath, 'utf8');
+  } catch {
+    return null;
+  }
+  const buildAction = /<BuildAction\b[\s\S]*?<\/BuildAction>/.exec(xml)?.[0];
+  if (!buildAction) return null;
+  const refs = [...buildAction.matchAll(/<BuildableReference\b([\s\S]*?)>/g)].map(
+    (m) => m[1] ?? '',
+  );
+  const attr = (a: string, name: string) =>
+    new RegExp(`${name}\\s*=\\s*"([^"]*)"`).exec(a)?.[1] ?? null;
+  const app = refs.find((r) => attr(r, 'BuildableName')?.endsWith('.app'));
+  return attr(app ?? refs[0] ?? '', 'BlueprintName') || null;
 }
 
 async function listSharedSchemes(xcodeProject: string): Promise<string[]> {
@@ -56,15 +91,25 @@ const APPDELEGATE_GLOBS = ['**/AppDelegate.swift', '**/AppDelegate.m', '**/AppDe
 
 async function findAppDelegate(
   cwd: string,
+  targetSources: readonly string[] | null,
 ): Promise<{ path: string; language: AppDelegateLanguage } | null> {
   // Scan the cwd and the typical RN `ios/` subdir. Skip vendored folders so
   // we don't match Pods/, node_modules/, build artefacts, etc.
-  const matches = await fastGlob(APPDELEGATE_GLOBS, {
+  let matches = await fastGlob(APPDELEGATE_GLOBS, {
     cwd,
     absolute: true,
     followSymbolicLinks: false,
     ignore: ['**/node_modules/**', '**/Pods/**', '**/build/**', '**/DerivedData/**'],
   });
+  // When the pbxproj lists an AppDelegate in the chosen target's Sources
+  // phase, only that one is eligible. If the target lists none (or the
+  // project has no explicit sources, e.g. synchronized folders) fall back to
+  // the heuristic below.
+  if (targetSources) {
+    const members = new Set(targetSources.map((p) => path.resolve(p)));
+    const owned = matches.filter((m) => members.has(path.resolve(m)));
+    if (owned.length > 0) matches = owned;
+  }
   if (matches.length === 0) return null;
   // Prefer a non-test location: paths without `Tests/` segment.
   const sorted = matches.sort((a, b) => {
@@ -88,7 +133,49 @@ async function findPodfile(cwd: string, xcodeProject: string): Promise<string | 
   return null;
 }
 
-export async function discoverIosPaths(cwd: string): Promise<IosPaths> {
+export interface DiscoverIosPathsOptions {
+  /**
+   * Tolerate a project with no shared scheme (used by rollback, which must
+   * still clean the Podfile / pbxproj / AppDelegate). The scheme path then
+   * points at a non-existent file so the scheme step's rollback is a no-op.
+   */
+  readonly allowMissingScheme?: boolean;
+}
+
+/**
+ * Pick the target name: the scheme's BlueprintName, unless the pbxproj is
+ * readable, has no such native target, and does have one named like the
+ * scheme (older behaviour) — then that one.
+ */
+async function resolveTargetName(
+  xcodeProject: string,
+  scheme: string,
+  schemeName: string,
+): Promise<string> {
+  const blueprint = await readSchemeTargetName(scheme);
+  if (!blueprint || blueprint === schemeName) return schemeName;
+  try {
+    const proj = new XcodeProject(xcodeProject);
+    if (!proj.findNativeTarget(blueprint) && proj.findNativeTarget(schemeName)) return schemeName;
+  } catch {
+    // unreadable pbxproj: trust the scheme
+  }
+  return blueprint;
+}
+
+/** Resolve the AppDelegate for a given target (used again after a scheme re-pick). */
+export function resolveTargetSources(xcodeProject: string, targetName: string): string[] | null {
+  try {
+    return new XcodeProject(xcodeProject).targetSourceFiles(targetName);
+  } catch {
+    return null;
+  }
+}
+
+export async function discoverIosPaths(
+  cwd: string,
+  options: DiscoverIosPathsOptions = {},
+): Promise<IosPaths> {
   const xcodeProject = await findXcodeProject(cwd);
   if (!xcodeProject) {
     throw new Error(`Could not find an .xcodeproj under ${cwd} (or its ios/ subdirectory).`);
@@ -96,15 +183,19 @@ export async function discoverIosPaths(cwd: string): Promise<IosPaths> {
   const xcodeProjectName = path.basename(xcodeProject, '.xcodeproj');
 
   const schemes = await listSharedSchemes(xcodeProject);
-  const scheme = pickMainScheme(schemes, xcodeProjectName);
+  let scheme = pickMainScheme(schemes, xcodeProjectName);
   if (!scheme) {
-    throw new Error(
-      `No shared scheme found under ${xcodeProject}/xcshareddata/xcschemes. Open Xcode → Manage Schemes and check "Shared" for your app's scheme, then re-run.`,
-    );
+    if (!options.allowMissingScheme) {
+      throw new Error(
+        `No shared scheme found under ${xcodeProject}/xcshareddata/xcschemes. Open Xcode → Manage Schemes and check "Shared" for your app's scheme, then re-run.`,
+      );
+    }
+    scheme = path.join(xcodeProject, 'xcshareddata', 'xcschemes', `${xcodeProjectName}.xcscheme`);
   }
   const schemeName = path.basename(scheme, '.xcscheme');
+  const targetName = await resolveTargetName(xcodeProject, scheme, schemeName);
 
-  const appDelegate = await findAppDelegate(cwd);
+  const appDelegate = await findAppDelegate(cwd, resolveTargetSources(xcodeProject, targetName));
   const podfile = await findPodfile(cwd, xcodeProject);
 
   return {
@@ -113,8 +204,30 @@ export async function discoverIosPaths(cwd: string): Promise<IosPaths> {
     podfile,
     scheme,
     schemeName,
+    targetName,
     availableSchemes: schemes,
     appDelegate: appDelegate?.path ?? null,
     appDelegateLanguage: appDelegate?.language ?? null,
+  };
+}
+
+/**
+ * Re-derive the scheme-dependent fields after the user picked a different
+ * scheme than the heuristic default.
+ */
+export async function withScheme(paths: IosPaths, scheme: string): Promise<IosPaths> {
+  const schemeName = path.basename(scheme, '.xcscheme');
+  const targetName = await resolveTargetName(paths.xcodeProject, scheme, schemeName);
+  const appDelegate = await findAppDelegate(
+    path.dirname(paths.xcodeProject), // the project sits at cwd level
+    resolveTargetSources(paths.xcodeProject, targetName),
+  );
+  return {
+    ...paths,
+    scheme,
+    schemeName,
+    targetName,
+    appDelegate: appDelegate?.path ?? paths.appDelegate,
+    appDelegateLanguage: appDelegate?.language ?? paths.appDelegateLanguage,
   };
 }

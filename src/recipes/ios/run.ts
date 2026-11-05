@@ -4,7 +4,7 @@ import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
 import type { RecipeResult, RollbackResult } from '../../core/result.js';
 import { runRollback, runSteps, type Step } from '../../core/step.js';
-import { discoverIosPaths } from './paths.js';
+import { discoverIosPaths, withScheme } from './paths.js';
 import { isPodOnPath } from './pod.js';
 import { addPodStep } from './steps/add-pod.js';
 import { addSchemePostActionStep } from './steps/add-scheme-postaction.js';
@@ -61,12 +61,13 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
       return 'cancelled';
     }
     if (picked !== paths.scheme) {
-      const pickedName = picked.split('/').pop()?.replace('.xcscheme', '') ?? '';
-      paths = { ...paths, scheme: picked, schemeName: pickedName };
+      paths = await withScheme(paths, picked);
     }
   }
 
-  log.info(`Detected Xcode project ${paths.xcodeProjectName} (scheme: ${paths.schemeName})`);
+  log.info(
+    `Detected Xcode project ${paths.xcodeProjectName} (scheme: ${paths.schemeName}, target: ${paths.targetName})`,
+  );
 
   let tokenValue: string;
   if (input.token !== undefined) {
@@ -276,7 +277,9 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
 export async function runIosRollback(input: WizardOptions): Promise<RollbackResult> {
   const log = createLogger({ debug: input.debug });
 
-  const paths = await discoverIosPaths(input.cwd).catch((err) => {
+  const paths = await discoverIosPaths(input.cwd, {
+    allowMissingScheme: true,
+  }).catch((err) => {
     clack.log.error(err instanceof Error ? err.message : String(err));
     return null;
   });

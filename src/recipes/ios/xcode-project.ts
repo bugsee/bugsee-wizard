@@ -53,7 +53,7 @@ export class XcodeProject {
    * product dependency with the given productName. Mirrors what the user
    * sees in Xcode's Package Dependencies tab.
    */
-  hasSpmProduct(targetName: string, productName: string): boolean {
+  hasSpmProduct(targetName: string, productName: string, packageUrl?: string): boolean {
     const found = this.findNativeTarget(targetName);
     if (!found) return false;
     const objects = this.project.hash.project.objects;
@@ -65,9 +65,32 @@ export class XcodeProject {
     for (const ref of targetDeps) {
       const dep = productSection[ref.value];
       if (!dep || typeof dep === 'string') continue;
-      if ((dep as Record<string, unknown>).productName === productName) return true;
+      if ((dep as Record<string, unknown>).productName !== productName) continue;
+      if (packageUrl === undefined) return true;
+      if (this.productPackageUrlMatches(dep as Record<string, unknown>, packageUrl)) return true;
     }
     return false;
+  }
+
+  /**
+   * True when the product dependency resolves (through its `package` UUID) to
+   * an XCRemoteSwiftPackageReference whose repositoryURL is `packageUrl`
+   * (ignoring quotes, case, a trailing slash and a `.git` suffix).
+   */
+  private productPackageUrlMatches(dep: Record<string, unknown>, packageUrl: string): boolean {
+    const objects = this.project.hash.project.objects as unknown as Record<string, Section>;
+    const ref = objects.XCRemoteSwiftPackageReference?.[String(dep.package)];
+    if (!ref || typeof ref === 'string') return false;
+    const normalize = (u: string) =>
+      u
+        .replace(/^"|"$/g, '')
+        .replace(/\/+$/, '')
+        .replace(/\.git$/i, '')
+        .toLowerCase();
+    return (
+      normalize(String((ref as Record<string, unknown>).repositoryURL ?? '')) ===
+      normalize(packageUrl)
+    );
   }
 
   /**
@@ -89,7 +112,7 @@ export class XcodeProject {
     requirement: SpmRequirement;
   }): void {
     const { targetName, packageUrl, productName, packageName, requirement } = input;
-    if (this.hasSpmProduct(targetName, productName)) return;
+    if (this.hasSpmProduct(targetName, productName, packageUrl)) return;
 
     const found = this.findNativeTarget(targetName);
     if (!found) {
@@ -155,6 +178,23 @@ export class XcodeProject {
       comment: packageRefComment,
     });
 
+    // Link the product: Xcode records it as a PBXBuildFile (productRef) in
+    // the target's Frameworks phase. Without it the package is resolved but
+    // never linked into the target.
+    const buildFileSection = ensure('PBXBuildFile');
+    const buildFileUuid = this.project.generateUuid();
+    const buildFileComment = `${productName} in Frameworks`;
+    buildFileSection[buildFileUuid] = {
+      isa: 'PBXBuildFile',
+      productRef: productDepUuid,
+      productRef_comment: productName,
+    };
+    buildFileSection[`${buildFileUuid}_comment`] = buildFileComment;
+    this.frameworksPhaseFiles(target, true)?.push({
+      value: buildFileUuid,
+      comment: buildFileComment,
+    });
+
     // Attach the product dep to the target.
     const targetRecord = target as unknown as Record<string, unknown>;
     if (!Array.isArray(targetRecord.packageProductDependencies)) {
@@ -164,6 +204,106 @@ export class XcodeProject {
       value: productDepUuid,
       comment: productName,
     });
+  }
+
+  /**
+   * The `files` array of the target's PBXFrameworksBuildPhase. When the
+   * target has none and `create` is set, a new phase is added to the target.
+   */
+  private frameworksPhaseFiles(
+    target: PBXNativeTarget,
+    create: boolean,
+  ): Array<{ value: UUID; comment?: string }> | null {
+    const objects = this.project.hash.project.objects as unknown as Record<string, Section>;
+    if (!objects.PBXFrameworksBuildPhase) objects.PBXFrameworksBuildPhase = {};
+    const phases = objects.PBXFrameworksBuildPhase;
+    const targetRecord = target as unknown as Record<string, unknown>;
+    const buildPhases = (targetRecord.buildPhases ?? []) as Array<{ value: UUID }>;
+    for (const ref of buildPhases) {
+      const phase = phases[ref.value];
+      if (phase && typeof phase !== 'string') {
+        const rec = phase as Record<string, unknown>;
+        if (!Array.isArray(rec.files)) rec.files = [];
+        return rec.files as Array<{ value: UUID; comment?: string }>;
+      }
+    }
+    if (!create) return null;
+    const uuid = this.project.generateUuid();
+    const files: Array<{ value: UUID; comment?: string }> = [];
+    phases[uuid] = {
+      isa: 'PBXFrameworksBuildPhase',
+      buildActionMask: '2147483647',
+      files,
+      runOnlyForDeploymentPostprocessing: '0',
+    } as unknown as Record<string, unknown>;
+    phases[`${uuid}_comment`] = 'Frameworks';
+    targetRecord.buildPhases = [...buildPhases, { value: uuid, comment: 'Frameworks' }];
+    return files;
+  }
+
+  /**
+   * Absolute paths of the files in the target's Sources build phase,
+   * resolved through the PBXGroup tree. Returns null when the target is not
+   * found or lists no sources (e.g. Xcode 16 synchronized folders), so the
+   * caller can fall back to a heuristic.
+   */
+  targetSourceFiles(targetName: string): string[] | null {
+    const found = this.findNativeTarget(targetName);
+    if (!found) return null;
+    const objects = this.project.hash.project.objects as unknown as Record<string, Section>;
+    const rec = (section: string, id: string): Record<string, unknown> | null => {
+      const v = objects[section]?.[id];
+      return v && typeof v !== 'string' ? (v as Record<string, unknown>) : null;
+    };
+    const projectDir = path.dirname(path.dirname(this.pbxprojPath));
+    const unquote = (v: unknown) => String(v).replace(/^"|"$/g, '');
+
+    // Resolve every file reference to an absolute path by walking from the
+    // main group down.
+    const resolved = new Map<string, string>();
+    const walk = (groupId: string, base: string, seen: Set<string>) => {
+      if (seen.has(groupId)) return;
+      seen.add(groupId);
+      const group = rec('PBXGroup', groupId) ?? rec('PBXVariantGroup', groupId);
+      if (!group) return;
+      let dir = base;
+      if (group.path !== undefined && (group.sourceTree ?? '<group>') !== 'SOURCE_ROOT') {
+        dir = path.resolve(base, unquote(group.path));
+      } else if (group.path !== undefined) {
+        dir = path.resolve(projectDir, unquote(group.path));
+      }
+      for (const child of (group.children ?? []) as Array<{ value: UUID }>) {
+        const file = rec('PBXFileReference', child.value);
+        if (file) {
+          if (file.path === undefined) continue;
+          const p = unquote(file.path);
+          const tree = unquote(file.sourceTree ?? '<group>');
+          resolved.set(
+            child.value,
+            tree === 'SOURCE_ROOT' ? path.resolve(projectDir, p) : path.resolve(dir, p),
+          );
+        } else {
+          walk(child.value, dir, seen);
+        }
+      }
+    };
+    const mainGroup = (
+      this.project.getFirstProject().firstProject as unknown as { mainGroup: string }
+    ).mainGroup;
+    walk(mainGroup, projectDir, new Set());
+
+    const out: string[] = [];
+    const targetRecord = found.target as unknown as Record<string, unknown>;
+    for (const ref of (targetRecord.buildPhases ?? []) as Array<{ value: UUID }>) {
+      const phase = rec('PBXSourcesBuildPhase', ref.value);
+      if (!phase) continue;
+      for (const f of (phase.files ?? []) as Array<{ value: UUID }>) {
+        const bf = rec('PBXBuildFile', f.value);
+        const abs = bf?.fileRef ? resolved.get(String(bf.fileRef)) : undefined;
+        if (abs) out.push(abs);
+      }
+    }
+    return out.length > 0 ? out : null;
   }
 
   /**
@@ -198,6 +338,7 @@ export class XcodeProject {
       }
       if ((obj as Record<string, unknown>).productName === productName) {
         packageRefUuid = ((obj as Record<string, unknown>).package as UUID) ?? null;
+        this.removeBuildFilesFor(found.target, dep.value);
         if (productSection) {
           delete productSection[dep.value];
           delete productSection[`${dep.value}_comment`];
@@ -233,6 +374,28 @@ export class XcodeProject {
     }
 
     return true;
+  }
+
+  /** Drop the PBXBuildFile(s) linking `productDepUuid` and their phase entries. */
+  private removeBuildFilesFor(target: PBXNativeTarget, productDepUuid: UUID): void {
+    const objects = this.project.hash.project.objects as unknown as Record<string, Section>;
+    const buildFiles = objects.PBXBuildFile;
+    if (!buildFiles) return;
+    const dropped = new Set<string>();
+    for (const [k, v] of Object.entries(buildFiles)) {
+      if (k.endsWith('_comment') || typeof v === 'string') continue;
+      if ((v as Record<string, unknown>).productRef === productDepUuid) dropped.add(k);
+    }
+    for (const k of dropped) {
+      delete buildFiles[k];
+      delete buildFiles[`${k}_comment`];
+    }
+    const files = this.frameworksPhaseFiles(target, false);
+    if (files) {
+      for (let i = files.length - 1; i >= 0; i--) {
+        if (dropped.has(files[i]?.value ?? '')) files.splice(i, 1);
+      }
+    }
   }
 
   async save(): Promise<void> {

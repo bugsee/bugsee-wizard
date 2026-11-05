@@ -92,10 +92,13 @@ function buildPostActionXml(token: string, opts: IosOptions, ref: BuildableRefer
  * ExecutionAction whose ActionContent title matches our marker constant.
  */
 function hasOurPostAction(scheme: string): boolean {
+  const span = findArchiveAction(scheme);
+  if (!span) return false;
+  const body = scheme.slice(span.bodyStart, span.bodyEnd);
   const re = new RegExp(
     `<ExecutionAction\\b[\\s\\S]*?<ActionContent[\\s\\S]*?title\\s*=\\s*"${POSTACTION_TITLE}"`,
   );
-  return re.test(scheme);
+  return re.test(body);
 }
 
 /**
@@ -242,6 +245,12 @@ export const addSchemePostActionStep: Step<IosContext> = {
       return {
         kind: 'blocked',
         reason: 'Could not read BuildableReference from scheme — unexpected scheme shape',
+      };
+    }
+    if (!findArchiveAction(content)) {
+      return {
+        kind: 'blocked',
+        reason: 'No <ArchiveAction> in scheme — unexpected scheme shape',
       };
     }
     return { kind: 'pending' };
