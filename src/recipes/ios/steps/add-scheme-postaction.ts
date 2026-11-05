@@ -12,11 +12,18 @@ interface BuildableReferenceAttrs {
 }
 
 function escapeXmlAttr(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return (
+    s
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      // Literal control characters are normalized to spaces by any XML parser,
+      // which would flatten the script to one line. Xcode writes character refs.
+      .replace(/\r/g, '&#13;')
+      .replace(/\n/g, '&#10;')
+      .replace(/\t/g, '&#9;')
+  );
 }
 
 /**
@@ -34,7 +41,8 @@ function extractBuildableReference(scheme: string): BuildableReferenceAttrs | nu
   const attrs = refMatch[1] ?? '';
   const get = (name: string): string | null => {
     const m = new RegExp(`${name}\\s*=\\s*"([^"]*)"`).exec(attrs);
-    return m ? (m[1] ?? null) : null;
+    // Raw attribute text -> value, so escapeXmlAttr does not double-escape it.
+    return m?.[1] !== undefined ? decodeXmlAttr(m[1]) : null;
   };
   const BlueprintIdentifier = get('BlueprintIdentifier');
   const BuildableName = get('BuildableName');
@@ -79,6 +87,7 @@ function decodeXmlAttr(s: string): string {
   return s
     .replace(/&#10;/g, '\n')
     .replace(/&#13;/g, '\r')
+    .replace(/&#9;/g, '\t')
     .replace(/&quot;/g, '"')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
@@ -94,16 +103,21 @@ function decodeXmlAttr(s: string): string {
 function isWizardAction(block: string): boolean {
   const raw = /\bscriptText\s*=\s*"([^"]*)"/.exec(block)?.[1];
   if (raw === undefined) return false;
-  const script = decodeXmlAttr(raw).replace(/\r\n/g, '\n');
-  if (script.split('\n')[0] === POSTACTION_SCRIPT_MARKER) return true;
-  const token = /\npython3 "\$\{SCRIPT_SRC\}" ([A-Za-z0-9._-]+)\s*$/.exec(script)?.[1];
+  // Whitespace-insensitive: a literal-newline script (written by an earlier
+  // version) is flattened to spaces by any XML parser that re-saves the file.
+  const flat = (t: string) => t.replace(/\s+/g, ' ').trim();
+  const script = flat(decodeXmlAttr(raw));
+  if (script === POSTACTION_SCRIPT_MARKER || script.startsWith(`${POSTACTION_SCRIPT_MARKER} `)) {
+    return true;
+  }
+  const token = /(?:^| )python3 "\$\{SCRIPT_SRC\}" ([A-Za-z0-9._-]+)$/.exec(script)?.[1];
   if (token === undefined) return false;
   const variants = [
     { sizeAnalysis: false, sizeAnalysisAllConfigurations: false },
     { sizeAnalysis: true, sizeAnalysisAllConfigurations: false },
     { sizeAnalysis: true, sizeAnalysisAllConfigurations: true },
   ];
-  return variants.some((v) => buildScriptText(token, v, false) === script.trimEnd());
+  return variants.some((v) => flat(buildScriptText(token, v, false)) === script);
 }
 
 function buildPostActionXml(token: string, opts: IosOptions, ref: BuildableReferenceAttrs): string {

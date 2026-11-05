@@ -17,9 +17,11 @@ export const POD_PROBE_TIMEOUT_MS = 5000;
 export function isPodOnPath(timeoutMs: number = POD_PROBE_TIMEOUT_MS): boolean {
   if (cached !== null) return cached;
   try {
-    // A timed-out probe is killed and reports `status: null`, which reads as
-    // unavailable below.
     const result = spawnSync('pod', ['--version'], { stdio: 'ignore', timeout: timeoutMs });
+    // A timed-out probe is killed (status null). Report unavailable for now but
+    // do not cache it: a slow-but-working CocoaPods (cold shim) must not read
+    // as "not found" for the rest of the process.
+    if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') return false;
     cached = result.status === 0;
   } catch {
     cached = false;

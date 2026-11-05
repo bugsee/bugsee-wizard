@@ -50,6 +50,13 @@ describe('isPodOnPath', () => {
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
+  it('does not cache a timed-out probe: a later probe can still succeed', async () => {
+    await fakePod('sleep 30');
+    expect(isPodOnPath(200)).toBe(false);
+    await fakePod('exit 0');
+    expect(isPodOnPath()).toBe(true);
+  });
+
   it('caches the first answer', async () => {
     await fakePod('exit 0');
     expect(isPodOnPath()).toBe(true);

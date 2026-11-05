@@ -6,6 +6,14 @@ import * as xcode from 'xcode';
 /** Loose alias used while traversing the parsed pbxproj graph. */
 type Section = Record<string, Record<string, unknown> | string>;
 
+/**
+ * The `xcode` parser keeps the surrounding quotes of quoted pbxproj strings
+ * (`name = "My App";`). Compare through this so quoting never matters.
+ */
+function unquote(v: unknown): string {
+  return String(v).replace(/^"|"$/g, '');
+}
+
 export interface SpmRequirement {
   readonly kind: 'upToNextMajorVersion' | 'branch' | 'exactVersion';
   readonly version?: string;
@@ -43,7 +51,7 @@ export class XcodeProject {
     for (const [uuid, value] of Object.entries(section)) {
       if (uuid.endsWith('_comment') || typeof value === 'string') continue;
       const target = value as PBXNativeTarget;
-      if (target.name === name) return { uuid, target };
+      if (unquote(target.name) === name) return { uuid, target };
     }
     return null;
   }
@@ -65,7 +73,7 @@ export class XcodeProject {
     for (const ref of targetDeps) {
       const dep = productSection[ref.value];
       if (!dep || typeof dep === 'string') continue;
-      if ((dep as Record<string, unknown>).productName !== productName) continue;
+      if (unquote((dep as Record<string, unknown>).productName) !== productName) continue;
       if (packageUrl === undefined) return true;
       if (this.productPackageUrlMatches(dep as Record<string, unknown>, packageUrl)) return true;
     }
@@ -256,7 +264,6 @@ export class XcodeProject {
       return v && typeof v !== 'string' ? (v as Record<string, unknown>) : null;
     };
     const projectDir = path.dirname(path.dirname(this.pbxprojPath));
-    const unquote = (v: unknown) => String(v).replace(/^"|"$/g, '');
 
     // Resolve every file reference to an absolute path by walking from the
     // main group down.
@@ -267,7 +274,7 @@ export class XcodeProject {
       const group = rec('PBXGroup', groupId) ?? rec('PBXVariantGroup', groupId);
       if (!group) return;
       let dir = base;
-      if (group.path !== undefined && (group.sourceTree ?? '<group>') !== 'SOURCE_ROOT') {
+      if (group.path !== undefined && unquote(group.sourceTree ?? '<group>') !== 'SOURCE_ROOT') {
         dir = path.resolve(base, unquote(group.path));
       } else if (group.path !== undefined) {
         dir = path.resolve(projectDir, unquote(group.path));
@@ -336,7 +343,7 @@ export class XcodeProject {
         remaining.push(dep);
         continue;
       }
-      if ((obj as Record<string, unknown>).productName === productName) {
+      if (unquote((obj as Record<string, unknown>).productName) === productName) {
         packageRefUuid = ((obj as Record<string, unknown>).package as UUID) ?? null;
         this.removeBuildFilesFor(found.target, dep.value);
         if (productSection) {
