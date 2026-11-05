@@ -71,6 +71,34 @@ export function stripMarkerBlock(source: string, beginMarker: string, endMarker:
   return source.replace(re, '');
 }
 
+function markerBlockRegex(beginMarker: string, endMarker: string): RegExp {
+  return new RegExp(
+    `[ \\t]*${escapeRegex(beginMarker)}(?:(?!${escapeRegex(beginMarker)})[\\s\\S])*?${escapeRegex(endMarker)}[ \\t]*\\r?\\n?`,
+  );
+}
+
+/** The first marker block exactly as `stripMarkerBlock` would remove it, or null. */
+export function findMarkerBlock(
+  source: string,
+  beginMarker: string,
+  endMarker: string,
+): string | null {
+  return markerBlockRegex(beginMarker, endMarker).exec(source)?.[0] ?? null;
+}
+
+/**
+ * Replace the first marker block (same extent `stripMarkerBlock` removes) with
+ * `block`, in place. Returns the source unchanged when no block is present.
+ */
+export function replaceMarkerBlock(
+  source: string,
+  beginMarker: string,
+  endMarker: string,
+  block: string,
+): string {
+  return source.replace(markerBlockRegex(beginMarker, endMarker), () => block);
+}
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
-import { readOrNull, stripMarkerBlock } from '../io.js';
+import { findMarkerBlock, readOrNull, replaceMarkerBlock, stripMarkerBlock } from '../io.js';
 import {
   type AndroidContext,
   type AndroidOptions,
@@ -44,6 +44,19 @@ ${EXT_BLOCK_MARKER_END}
 `;
 }
 
+/**
+ * Pre-apply content of files this step rewrote in place, per run context, so
+ * rollback restores the original rather than just stripping the (possibly
+ * previously-installed) block.
+ */
+const originals = new WeakMap<object, Map<string, string>>();
+
+function remember(ctx: object, file: string, content: string): void {
+  const m = originals.get(ctx) ?? new Map<string, string>();
+  originals.set(ctx, m);
+  if (!m.has(file)) m.set(file, content);
+}
+
 export const configureBugseeBlockStep: Step<AndroidContext> = {
   id: 'android.configure-bugsee-block',
   title: 'Add bugsee {} configuration block',
@@ -53,7 +66,11 @@ export const configureBugseeBlockStep: Step<AndroidContext> = {
     if (content === null) {
       return { kind: 'blocked', reason: `${ctx.androidPaths.appBuildGradle} not found` };
     }
-    return content.includes(EXT_BLOCK_MARKER_BEGIN) ? { kind: 'satisfied' } : { kind: 'pending' };
+    if (!content.includes(EXT_BLOCK_MARKER_BEGIN)) return { kind: 'pending' };
+    const expected = bugseeBlock(ctx.androidPaths.appBuildGradleDsl, ctx.androidOptions);
+    const existing = findMarkerBlock(content, EXT_BLOCK_MARKER_BEGIN, EXT_BLOCK_MARKER_END);
+    // Marker-owned block with different answers: update in place on re-run.
+    return existing === expected ? { kind: 'satisfied' } : { kind: 'pending' };
   },
 
   async apply(ctx) {
@@ -62,12 +79,29 @@ export const configureBugseeBlockStep: Step<AndroidContext> = {
     // Append the block at column 0 of a new line. If the original lacks a
     // trailing newline, add exactly one so the BEGIN marker starts a line —
     // any more would leave a stray blank line behind on rollback.
+    if (original.includes(EXT_BLOCK_MARKER_BEGIN)) {
+      const replaced = replaceMarkerBlock(
+        original,
+        EXT_BLOCK_MARKER_BEGIN,
+        EXT_BLOCK_MARKER_END,
+        block,
+      );
+      remember(ctx, ctx.androidPaths.appBuildGradle, original);
+      await writeFile(ctx.androidPaths.appBuildGradle, replaced);
+      return;
+    }
     const sep = original.length > 0 && !original.endsWith('\n') ? '\n' : '';
     const updated = `${original}${sep}${block}`;
     await writeFile(ctx.androidPaths.appBuildGradle, updated);
   },
 
   async rollback(ctx) {
+    const saved = originals.get(ctx)?.get(ctx.androidPaths.appBuildGradle);
+    if (saved !== undefined) {
+      originals.get(ctx)?.delete(ctx.androidPaths.appBuildGradle);
+      await writeFile(ctx.androidPaths.appBuildGradle, saved);
+      return;
+    }
     const content = await readOrNull(ctx.androidPaths.appBuildGradle);
     if (content === null) return;
     const stripped = stripMarkerBlock(content, EXT_BLOCK_MARKER_BEGIN, EXT_BLOCK_MARKER_END);
