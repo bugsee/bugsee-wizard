@@ -101,14 +101,15 @@ async function findAppDelegate(
     followSymbolicLinks: false,
     ignore: ['**/node_modules/**', '**/Pods/**', '**/build/**', '**/DerivedData/**'],
   });
-  // When the pbxproj lists an AppDelegate in the chosen target's Sources
-  // phase, only that one is eligible. If the target lists none (or the
-  // project has no explicit sources, e.g. synchronized folders) fall back to
-  // the heuristic below.
+  // When the pbxproj gives the target's source list, only an AppDelegate in
+  // it is eligible; if the list has none (e.g. a SwiftUI `@main App` target
+  // next to another target that has an AppDelegate) there is no AppDelegate
+  // for this target and the caller prints the snippet instead. Only a null
+  // list (no explicit sources, e.g. synchronized folders) falls back to the
+  // heuristic below.
   if (targetSources) {
     const members = new Set(targetSources.map((p) => path.resolve(p)));
-    const owned = matches.filter((m) => members.has(path.resolve(m)));
-    if (owned.length > 0) matches = owned;
+    matches = matches.filter((m) => members.has(path.resolve(m)));
   }
   if (matches.length === 0) return null;
   // Prefer a non-test location: paths without `Tests/` segment.
