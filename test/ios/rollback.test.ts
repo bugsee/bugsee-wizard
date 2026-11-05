@@ -1,5 +1,6 @@
 import { cp } from 'node:fs/promises';
 import path from 'node:path';
+import * as clack from '@clack/prompts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { runIosRecipe, runIosRollback } from '../../src/recipes/ios/run.js';
@@ -14,6 +15,7 @@ import {
   readFixture,
   SAMPLE_APP_DELEGATE_SWIFT,
   SAMPLE_RN_PODFILE,
+  SAMPLE_SIMPLE_PODFILE,
   SAMPLE_XCSCHEME,
 } from './helpers.js';
 
@@ -26,7 +28,16 @@ vi.mock('@clack/prompts', () => ({
     step: vi.fn(),
     message: vi.fn(),
   },
+  note: vi.fn(),
   cancel: vi.fn(),
+  isCancel: () => false,
+  text: vi.fn(async () => 'DISCOVERED_TOKEN'),
+  // Accept the heuristic default every prompt offers.
+  select: vi.fn(async (opts: { initialValue?: unknown; options: { value: unknown }[] }) =>
+    opts.initialValue !== undefined ? opts.initialValue : opts.options[0]?.value,
+  ),
+  // Everything off except the AppDelegate inject (no `pod install`, no size analysis).
+  confirm: vi.fn(async (opts: { message: string }) => /Auto-inject/.test(opts.message)),
   spinner: () => ({ start: vi.fn(), stop: vi.fn(), error: vi.fn() }),
 }));
 
@@ -226,5 +237,87 @@ describe('runIosRecipe result', () => {
     fixture = await makeFixture({ 'README.md': '' });
     const res = await runIosRecipe({ cwd: fixture, debug: false, dryRun: false, token: 'T' });
     expect(res).toBe('failed');
+  });
+});
+
+describe('runIosRecipe through discovery (no hand-built context)', () => {
+  const SCHEME_REL = 'MinimalApp.xcodeproj/xcshareddata/xcschemes/MinimalApp.xcscheme';
+  const PODFILE = SAMPLE_SIMPLE_PODFILE.replace("'MyApp'", "'MinimalApp'");
+
+  async function discoveredFixture(): Promise<string> {
+    const dir = await makeFixture({
+      Podfile: PODFILE,
+      'MinimalApp/AppDelegate.swift': SAMPLE_APP_DELEGATE_SWIFT,
+      [SCHEME_REL]: SAMPLE_XCSCHEME,
+    });
+    // Real pbxproj (target "MinimalApp"); the shared scheme above is kept.
+    await cp(
+      path.join(FIXTURE_PROJECT, 'project.pbxproj'),
+      path.join(dir, 'MinimalApp.xcodeproj/project.pbxproj'),
+    );
+    return dir;
+  }
+
+  async function snapshot(dir: string): Promise<Record<string, string>> {
+    const rels = [
+      'Podfile',
+      'MinimalApp/AppDelegate.swift',
+      SCHEME_REL,
+      'MinimalApp.xcodeproj/project.pbxproj',
+    ];
+    return Object.fromEntries(
+      await Promise.all(rels.map(async (r) => [r, await readFixture(dir, r)])),
+    );
+  }
+
+  it('CocoaPods: names derived from MinimalApp.xcscheme reach Podfile, scheme and AppDelegate; rollback is byte-exact', async () => {
+    fixture = await discoveredFixture();
+    const before = await snapshot(fixture);
+
+    const res = await runIosRecipe({ cwd: fixture, debug: false, dryRun: false });
+    expect(res).toBe('ok');
+    // The prompts really ran (token entered, not supplied).
+    expect(vi.mocked(clack.text)).toHaveBeenCalled();
+
+    const after = await snapshot(fixture);
+    // Podfile: the pod landed inside the discovered target block.
+    const podBlock = /target 'MinimalApp' do[\s\S]*?\n {2}pod 'Bugsee'/.exec(after.Podfile ?? '');
+    expect(podBlock).not.toBeNull();
+    // Scheme: post-action carries the prompted token.
+    expect(after[SCHEME_REL]).toContain('Bugsee Symbolication');
+    expect(after[SCHEME_REL]).toContain('DISCOVERED_TOKEN');
+    // AppDelegate discovered via the target's sources and injected.
+    expect(after['MinimalApp/AppDelegate.swift']).toContain(
+      'Bugsee.launch(token: "DISCOVERED_TOKEN")',
+    );
+    // CocoaPods path leaves the pbxproj alone.
+    expect(after['MinimalApp.xcodeproj/project.pbxproj']).toBe(
+      before['MinimalApp.xcodeproj/project.pbxproj'],
+    );
+
+    expect(await runIosRollback({ cwd: fixture, debug: false, dryRun: false })).toBe('ok');
+    expect(await snapshot(fixture)).toEqual(before);
+  });
+
+  it('SPM: the discovered target name reaches the pbxproj edit; rollback is byte-exact', async () => {
+    fixture = await discoveredFixture();
+    const before = await snapshot(fixture);
+    vi.mocked(clack.select).mockImplementationOnce(async () => 'spm' as never);
+
+    const res = await runIosRecipe({ cwd: fixture, debug: false, dryRun: false });
+    expect(res).toBe('ok');
+
+    const after = await snapshot(fixture);
+    expect(after['MinimalApp.xcodeproj/project.pbxproj']).not.toBe(
+      before['MinimalApp.xcodeproj/project.pbxproj'],
+    );
+    expect(after['MinimalApp.xcodeproj/project.pbxproj']).toContain(
+      'https://github.com/bugsee/spm',
+    );
+    expect(after.Podfile).toBe(before.Podfile);
+    expect(after[SCHEME_REL]).toContain('Bugsee Symbolication');
+
+    expect(await runIosRollback({ cwd: fixture, debug: false, dryRun: false })).toBe('ok');
+    expect(await snapshot(fixture)).toEqual(before);
   });
 });

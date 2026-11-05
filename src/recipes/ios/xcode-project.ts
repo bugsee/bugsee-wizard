@@ -373,6 +373,19 @@ export class XcodeProject {
       }
     }
 
+    // The `xcode` library creates these sections on add and leaves them as
+    // empty `Begin/End` stubs after removal; drop any we just emptied so an
+    // add -> remove round-trip restores the original file. (Xcode itself
+    // never writes an empty section.)
+    for (const name of [
+      'XCSwiftPackageProductDependency',
+      'XCRemoteSwiftPackageReference',
+      'PBXBuildFile',
+    ]) {
+      const section = objects[name];
+      if (section && Object.keys(section).length === 0) delete objects[name];
+    }
+
     return true;
   }
 

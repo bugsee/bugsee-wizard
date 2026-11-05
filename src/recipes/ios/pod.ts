@@ -11,10 +11,15 @@ import { spawnSync } from 'node:child_process';
  */
 let cached: boolean | null = null;
 
-export function isPodOnPath(): boolean {
+/** Upper bound on the probe so a hung `pod` cannot block the wizard. */
+export const POD_PROBE_TIMEOUT_MS = 5000;
+
+export function isPodOnPath(timeoutMs: number = POD_PROBE_TIMEOUT_MS): boolean {
   if (cached !== null) return cached;
   try {
-    const result = spawnSync('pod', ['--version'], { stdio: 'ignore' });
+    // A timed-out probe is killed and reports `status: null`, which reads as
+    // unavailable below.
+    const result = spawnSync('pod', ['--version'], { stdio: 'ignore', timeout: timeoutMs });
     cached = result.status === 0;
   } catch {
     cached = false;

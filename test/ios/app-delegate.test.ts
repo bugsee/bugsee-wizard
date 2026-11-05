@@ -182,3 +182,174 @@ describe('injectAppDelegateStep — existing launch with a different token', () 
     expect(String(warn.mock.calls[0]?.[0])).toMatch(/different token/i);
   });
 });
+
+describe('injectAppDelegateStep — launch must be active code inside didFinishLaunching', () => {
+  const SWIFT_COMMENT = `import UIKit
+import Bugsee
+
+class AppDelegate: UIResponder, UIApplicationDelegate {
+    // TODO: Bugsee.launch(token: "OLD")
+    /* Bugsee.launch(token: "OLD") */
+    let note = "Bugsee.launch(token: \\"OLD\\")"
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        return true
+    }
+}
+`;
+  const SWIFT_OTHER_METHOD = `import UIKit
+import Bugsee
+
+class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        return true
+    }
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        Bugsee.launch(token: "OLD")
+    }
+}
+`;
+  const OBJC_COMMENT = `#import "AppDelegate.h"
+#import <Bugsee/Bugsee.h>
+
+@implementation AppDelegate
+// [Bugsee launchWithToken:@"OLD"];
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    /* [Bugsee launchWithToken:@"OLD"]; */
+    return YES;
+}
+@end
+`;
+  const OBJC_OTHER_METHOD = `#import "AppDelegate.h"
+#import <Bugsee/Bugsee.h>
+
+@implementation AppDelegate
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    return YES;
+}
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    [Bugsee launchWithToken:@"OLD"];
+}
+@end
+`;
+  // Comments and strings INSIDE the body, carrying a call and a stray brace:
+  // the brace must not end the body early and the call must not count.
+  const SWIFT_BODY_COMMENT = `import UIKit
+import Bugsee
+
+class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Bugsee.launch(token: "OLD") }
+        /* Bugsee.launch(token: "OLD") } */
+        let s = "Bugsee.launch(token: 1) }"
+        let open = "{"
+        let q = "\\" Bugsee.launch(token: 1)"
+        return true
+    }
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        Bugsee.launch(token: "OLD")
+    }
+}
+`;
+  const OBJC_BODY_COMMENT = `#import "AppDelegate.h"
+#import <Bugsee/Bugsee.h>
+
+@implementation AppDelegate
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    // [Bugsee launchWithToken:@"OLD"]; }
+    /* [Bugsee launchWithToken:@"OLD"]; } */
+    NSString *s = @"[Bugsee launchWithToken:@\\"OLD\\"]; }";
+    char c = '{';
+    return YES;
+}
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    [Bugsee launchWithToken:@"OLD"];
+}
+@end
+`;
+  const cases = [
+    ['swift comment/string in body', 'swift', 'MyApp/AppDelegate.swift', SWIFT_BODY_COMMENT],
+    ['objc comment/string in body', 'objc', 'MyApp/AppDelegate.m', OBJC_BODY_COMMENT],
+    ['swift comment/string only', 'swift', 'MyApp/AppDelegate.swift', SWIFT_COMMENT],
+    ['swift other method', 'swift', 'MyApp/AppDelegate.swift', SWIFT_OTHER_METHOD],
+    ['objc comment only', 'objc', 'MyApp/AppDelegate.m', OBJC_COMMENT],
+    ['objc other method', 'objc', 'MyApp/AppDelegate.m', OBJC_OTHER_METHOD],
+  ] as const;
+
+  it.each(cases)(
+    '%s: precheck pending, apply injects into didFinishLaunching',
+    async (_n, language, rel, source) => {
+      fixture = await makeFixture({ [rel]: source });
+      const ctx = makeIosContext({
+        cwd: fixture,
+        schemeName: 'MyApp',
+        appDelegate: { path: `${fixture}/${rel}`, language },
+        iosOptions: { autoInjectAppDelegate: true },
+        tokens: { ios: 'NEW' },
+      });
+      expect(await injectAppDelegateStep.precheck(ctx)).toEqual({ kind: 'pending' });
+      await injectAppDelegateStep.apply(ctx);
+      const updated = await readFixture(fixture, rel);
+      const call =
+        language === 'swift' ? 'Bugsee.launch(token: "NEW")' : '[Bugsee launchWithToken:@"NEW"];';
+      const funcIdx = updated.indexOf('didFinishLaunchingWithOptions');
+      const callIdx = updated.indexOf(call);
+      expect(callIdx).toBeGreaterThan(funcIdx);
+      expect(updated.indexOf('return', funcIdx)).toBeGreaterThan(callIdx);
+      expect(await injectAppDelegateStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+      await injectAppDelegateStep.rollback(ctx);
+      expect(await readFixture(fixture, rel)).toBe(source);
+    },
+  );
+
+  it.each([
+    [
+      'swift',
+      'MyApp/AppDelegate.swift',
+      SAMPLE_APP_DELEGATE_SWIFT.replace(
+        'return true',
+        'if true { }\n        Bugsee.launch(token: "HAND")\n        return true',
+      ).replace('import UIKit', 'import UIKit\nimport Bugsee'),
+    ],
+    [
+      'objc',
+      'MyApp/AppDelegate.m',
+      SAMPLE_APP_DELEGATE_OBJC.replace(
+        'return YES',
+        'if (YES) { }\n    [Bugsee launchWithToken:@"HAND"];\n    return YES',
+      ).replace('#import "AppDelegate.h"', '#import "AppDelegate.h"\n#import <Bugsee/Bugsee.h>'),
+    ],
+  ] as const)(
+    '%s: a hand-written launch inside the method stays satisfied',
+    async (language, rel, source) => {
+      fixture = await makeFixture({ [rel]: source });
+      const ctx = makeIosContext({
+        cwd: fixture,
+        schemeName: 'MyApp',
+        appDelegate: { path: `${fixture}/${rel}`, language },
+        iosOptions: { autoInjectAppDelegate: true },
+        tokens: { ios: 'HAND' },
+      });
+      expect(await injectAppDelegateStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+    },
+  );
+
+  it('marker block fast path: satisfied even when the method cannot be located', async () => {
+    const rel = 'MyApp/AppDelegate.swift';
+    fixture = await makeFixture({
+      [rel]: `import UIKit
+import Bugsee
+// bugsee:wizard:launch:begin
+Bugsee.launch(token: "X")
+// bugsee:wizard:launch:end
+`,
+    });
+    const ctx = makeIosContext({
+      cwd: fixture,
+      schemeName: 'MyApp',
+      appDelegate: { path: `${fixture}/${rel}`, language: 'swift' },
+      iosOptions: { autoInjectAppDelegate: true },
+      tokens: { ios: 'X' },
+    });
+    expect(await injectAppDelegateStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+  });
+});
