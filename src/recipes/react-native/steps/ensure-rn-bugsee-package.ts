@@ -1,0 +1,83 @@
+import { writeFile } from 'node:fs/promises';
+
+import detectIndent from 'detect-indent';
+
+import type { Step, StepStatus } from '../../../core/step.js';
+import { readOrNull } from '../../android/io.js';
+import { RN_PACKAGE_NAME, RN_PACKAGE_VERSION, type RnContext } from '../types.js';
+
+interface PackageJsonShape {
+  dependencies?: Record<string, unknown>;
+  devDependencies?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/**
+ * Ensure the RN wrapper (`react-native-bugsee`) is in `package.json`'s
+ * `dependencies`. Doesn't run the install — that's the next step's job
+ * (and is opt-in). Preserves the user's indent style via `detect-indent`
+ * so the diff is minimal.
+ */
+export const ensureRnBugseePackageStep: Step<RnContext> = {
+  id: 'react-native.ensure-rn-bugsee-package',
+  title: `Add ${RN_PACKAGE_NAME} to package.json`,
+
+  async precheck(ctx): Promise<StepStatus> {
+    const content = await readOrNull(ctx.rnPaths.packageJson);
+    if (content === null) {
+      return { kind: 'blocked', reason: `${ctx.rnPaths.packageJson} not found` };
+    }
+    let parsed: PackageJsonShape;
+    try {
+      parsed = JSON.parse(content) as PackageJsonShape;
+    } catch (err) {
+      return {
+        kind: 'blocked',
+        reason: `${ctx.rnPaths.packageJson} is not valid JSON: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+    const inDeps = !!parsed.dependencies?.[RN_PACKAGE_NAME];
+    const inDevDeps = !!parsed.devDependencies?.[RN_PACKAGE_NAME];
+    return inDeps || inDevDeps ? { kind: 'satisfied' } : { kind: 'pending' };
+  },
+
+  async apply(ctx) {
+    const original = (await readOrNull(ctx.rnPaths.packageJson)) ?? '{}';
+    const indentInfo = detectIndent(original);
+    const indent = indentInfo.indent || '  ';
+    const parsed = JSON.parse(original) as PackageJsonShape;
+    parsed.dependencies = parsed.dependencies ?? {};
+    parsed.dependencies[RN_PACKAGE_NAME] = RN_PACKAGE_VERSION;
+    let serialized = JSON.stringify(parsed, null, indent);
+    if (original.endsWith('\n')) serialized += '\n';
+    await writeFile(ctx.rnPaths.packageJson, serialized);
+  },
+
+  async rollback(ctx) {
+    const original = await readOrNull(ctx.rnPaths.packageJson);
+    if (original === null) return;
+    let parsed: PackageJsonShape;
+    try {
+      parsed = JSON.parse(original) as PackageJsonShape;
+    } catch {
+      return;
+    }
+    let changed = false;
+    if (parsed.dependencies && RN_PACKAGE_NAME in parsed.dependencies) {
+      delete parsed.dependencies[RN_PACKAGE_NAME];
+      changed = true;
+    }
+    if (parsed.devDependencies && RN_PACKAGE_NAME in parsed.devDependencies) {
+      delete parsed.devDependencies[RN_PACKAGE_NAME];
+      changed = true;
+    }
+    if (!changed) return;
+    const indentInfo = detectIndent(original);
+    const indent = indentInfo.indent || '  ';
+    let serialized = JSON.stringify(parsed, null, indent);
+    if (original.endsWith('\n')) serialized += '\n';
+    await writeFile(ctx.rnPaths.packageJson, serialized);
+  },
+};

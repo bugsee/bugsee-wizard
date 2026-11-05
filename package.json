@@ -1,0 +1,57 @@
+{
+  "name": "@bugsee/wizard",
+  "version": "0.0.0",
+  "description": "Bugsee setup wizard — detects your project and integrates the Bugsee SDK in one command.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "bin": {
+    "bugsee-wizard": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "start": "node ./dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "@commander-js/extra-typings": "^15.0.0",
+    "commander": "^15.0.0",
+    "detect-indent": "^7.0.1",
+    "fast-glob": "^3.3.2",
+    "magicast": "^0.5.5",
+    "open": "^11.0.4",
+    "picocolors": "^1.1.1",
+    "xcode": "^4.0.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.4",
+    "@types/node": "^22.20.5",
+    "@types/semver": "^7.8.0",
+    "@types/xcode": "^3.0.0",
+    "@vitest/coverage-v8": "^5.1.0",
+    "semver": "^7.8.6",
+    "tsup": "^9.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0"
+  }
+}

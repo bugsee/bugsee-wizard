@@ -1,0 +1,166 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 70;
+	objects = {
+
+/* Begin PBXFileReference section */
+		AAAAAAAAAAAAAAAAAAAAAAA1 /* MinimalApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MinimalApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		BBBBBBBBBBBBBBBBBBBBBBB1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		CCCCCCCCCCCCCCCCCCCCCCC1 = {
+			isa = PBXGroup;
+			children = (
+				CCCCCCCCCCCCCCCCCCCCCCC2 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		CCCCCCCCCCCCCCCCCCCCCCC2 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AAAAAAAAAAAAAAAAAAAAAAA1 /* MinimalApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		DDDDDDDDDDDDDDDDDDDDDDD1 /* MinimalApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EEEEEEEEEEEEEEEEEEEEEE1 /* Build configuration list for PBXNativeTarget "MinimalApp" */;
+			buildPhases = (
+				FFFFFFFFFFFFFFFFFFFFFFF1 /* Sources */,
+				BBBBBBBBBBBBBBBBBBBBBBB1 /* Frameworks */,
+				4444444444444444444444F1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MinimalApp;
+			packageProductDependencies = (
+			);
+			productName = MinimalApp;
+			productReference = AAAAAAAAAAAAAAAAAAAAAAA1 /* MinimalApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		111111111111111111111111 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+			};
+			buildConfigurationList = 222222222222222222222222 /* Build configuration list for PBXProject "MinimalApp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = CCCCCCCCCCCCCCCCCCCCCCC1;
+			packageReferences = (
+			);
+			productRefGroup = CCCCCCCCCCCCCCCCCCCCCCC2 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				DDDDDDDDDDDDDDDDDDDDDDD1 /* MinimalApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		4444444444444444444444F1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		FFFFFFFFFFFFFFFFFFFFFFF1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		333333333333333333333301 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+			};
+			name = Debug;
+		};
+		333333333333333333333302 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+			};
+			name = Release;
+		};
+		555555555555555555555501 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.MinimalApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		555555555555555555555502 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.MinimalApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		222222222222222222222222 /* Build configuration list for PBXProject "MinimalApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				333333333333333333333301 /* Debug */,
+				333333333333333333333302 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EEEEEEEEEEEEEEEEEEEEEE1 /* Build configuration list for PBXNativeTarget "MinimalApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				555555555555555555555501 /* Debug */,
+				555555555555555555555502 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 111111111111111111111111 /* Project object */;
+}
