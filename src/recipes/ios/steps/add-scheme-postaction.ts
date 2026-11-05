@@ -46,8 +46,19 @@ function extractBuildableReference(scheme: string): BuildableReferenceAttrs | nu
   return { BlueprintIdentifier, BuildableName, BlueprintName, ReferencedContainer };
 }
 
-function buildScriptText(token: string, opts: IosOptions): string {
+/**
+ * First line of the script this wizard writes. Rollback uses it to tell our
+ * action from a user's own action that happens to share the title.
+ */
+export const POSTACTION_SCRIPT_MARKER = '# bugsee-wizard: ios symbolication post-action';
+
+function buildScriptText(
+  token: string,
+  opts: Pick<IosOptions, 'sizeAnalysis' | 'sizeAnalysisAllConfigurations'>,
+  marker = true,
+): string {
   const lines: string[] = [
+    ...(marker ? [POSTACTION_SCRIPT_MARKER] : []),
     `SCRIPT_SRC=$(find "$PROJECT_DIR" -name 'BugseeAgent' | head -1)`,
     `if [ ! "${'$'}{SCRIPT_SRC}" ]; then`,
     `  echo "Error: Bugsee build phase script not found. Make sure that you're including Bugsee in your project."`,
@@ -62,6 +73,37 @@ function buildScriptText(token: string, opts: IosOptions): string {
   }
   lines.push(`python3 "${'$'}{SCRIPT_SRC}" ${token}`);
   return lines.join('\n');
+}
+
+function decodeXmlAttr(s: string): string {
+  return s
+    .replace(/&#10;/g, '\n')
+    .replace(/&#13;/g, '\r')
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Whether an ExecutionAction block (already known to carry our title) was
+ * written by this wizard: either it carries the marker, or (earlier wizard
+ * versions wrote no marker) its script is byte-for-byte what the step would
+ * generate for some token/options combination. Anything else is a user's.
+ */
+function isWizardAction(block: string): boolean {
+  const raw = /\bscriptText\s*=\s*"([^"]*)"/.exec(block)?.[1];
+  if (raw === undefined) return false;
+  const script = decodeXmlAttr(raw).replace(/\r\n/g, '\n');
+  if (script.split('\n')[0] === POSTACTION_SCRIPT_MARKER) return true;
+  const token = /\npython3 "\$\{SCRIPT_SRC\}" ([A-Za-z0-9._-]+)\s*$/.exec(script)?.[1];
+  if (token === undefined) return false;
+  const variants = [
+    { sizeAnalysis: false, sizeAnalysisAllConfigurations: false },
+    { sizeAnalysis: true, sizeAnalysisAllConfigurations: false },
+    { sizeAnalysis: true, sizeAnalysisAllConfigurations: true },
+  ];
+  return variants.some((v) => buildScriptText(token, v, false) === script.trimEnd());
 }
 
 function buildPostActionXml(token: string, opts: IosOptions, ref: BuildableReferenceAttrs): string {
@@ -211,7 +253,7 @@ function removePostAction(scheme: string): string {
   let match: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: standard exec loop
   while ((match = execRe.exec(updatedBody))) {
-    if (titleRe.test(match[0])) {
+    if (titleRe.test(match[0]) && isWizardAction(match[0])) {
       // Strip leading whitespace on the same line so removing the block
       // doesn't leave a hanging indented blank line.
       const start = (() => {

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { addSchemePostActionStep } from '../../src/recipes/ios/steps/add-scheme-postaction.js';
+import {
+  addSchemePostActionStep,
+  POSTACTION_SCRIPT_MARKER,
+} from '../../src/recipes/ios/steps/add-scheme-postaction.js';
 import {
   cleanup,
   makeFixture,
@@ -141,5 +144,81 @@ describe('addSchemePostActionStep', () => {
     const ctx = makeIosContext({ cwd: fixture, schemeName: 'MyApp' });
     await addSchemePostActionStep.apply(ctx);
     expect(await addSchemePostActionStep.precheck(ctx)).toEqual({ kind: 'satisfied' });
+  });
+
+  describe('rollback only removes the action this wizard wrote', () => {
+    const LEGACY_SCRIPT = [
+      `SCRIPT_SRC=$(find "$PROJECT_DIR" -name 'BugseeAgent' | head -1)`,
+      'if [ ! "$' + '{SCRIPT_SRC}" ]; then',
+      `  echo "Error: Bugsee build phase script not found. Make sure that you're including Bugsee in your project."`,
+      '  exit 1',
+      'fi',
+      'python3 "$' + '{SCRIPT_SRC}" OLDTOKEN',
+    ].join('\n');
+    const esc = (t: string) =>
+      t.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const withAction = (script: string, newline: string) =>
+      SAMPLE_XCSCHEME.replace(
+        '   </ArchiveAction>',
+        `      <PostActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Bugsee Symbolication"
+               scriptText = "${esc(script).replace(/\n/g, newline)}"
+               shellToInvoke = "/bin/sh">
+            </ActionContent>
+         </ExecutionAction>
+      </PostActions>
+   </ArchiveAction>`,
+      );
+
+    it('writes a wizard marker into the script', async () => {
+      fixture = await makeFixture({ [SCHEME_REL]: SAMPLE_XCSCHEME });
+      await addSchemePostActionStep.apply(makeIosContext({ cwd: fixture, schemeName: 'MyApp' }));
+      expect(await readFixture(fixture, SCHEME_REL)).toContain(POSTACTION_SCRIPT_MARKER);
+    });
+
+    it('keeps a user action that merely shares the title', async () => {
+      const userScheme = withAction('echo "my own symbolication"', '\n');
+      fixture = await makeFixture({ [SCHEME_REL]: userScheme });
+      await addSchemePostActionStep.rollback(makeIosContext({ cwd: fixture, schemeName: 'MyApp' }));
+      expect(await readFixture(fixture, SCHEME_REL)).toBe(userScheme);
+    });
+
+    it('keeps a same-title user action ending in our python call but with extra content', async () => {
+      const userScheme = withAction(`echo "pre-step"\n${LEGACY_SCRIPT}`, '\n');
+      fixture = await makeFixture({ [SCHEME_REL]: userScheme });
+      await addSchemePostActionStep.rollback(makeIosContext({ cwd: fixture, schemeName: 'MyApp' }));
+      expect(await readFixture(fixture, SCHEME_REL)).toBe(userScheme);
+    });
+
+    it('keeps a same-title user action whose script only resembles ours', async () => {
+      const userScheme = withAction(`${LEGACY_SCRIPT}\necho extra`, '\n');
+      fixture = await makeFixture({ [SCHEME_REL]: userScheme });
+      await addSchemePostActionStep.rollback(makeIosContext({ cwd: fixture, schemeName: 'MyApp' }));
+      expect(await readFixture(fixture, SCHEME_REL)).toBe(userScheme);
+    });
+
+    it.each(['\n', '&#10;'])(
+      'removes an unmarked action written by the earlier version (newline %j)',
+      async (nl) => {
+        fixture = await makeFixture({ [SCHEME_REL]: withAction(LEGACY_SCRIPT, nl) });
+        await addSchemePostActionStep.rollback(
+          makeIosContext({ cwd: fixture, schemeName: 'MyApp' }),
+        );
+        expect(await readFixture(fixture, SCHEME_REL)).toBe(SAMPLE_XCSCHEME);
+      },
+    );
+
+    it('removes an unmarked earlier-version action with size-analysis exports', async () => {
+      const script = LEGACY_SCRIPT.replace(
+        'python3',
+        'export BUGSEE_SIZE_ANALYSIS_ENABLED=1\nexport BUGSEE_SIZE_ANALYSIS_ALL_CONFIGURATIONS=1\npython3',
+      );
+      fixture = await makeFixture({ [SCHEME_REL]: withAction(script, '\n') });
+      await addSchemePostActionStep.rollback(makeIosContext({ cwd: fixture, schemeName: 'MyApp' }));
+      expect(await readFixture(fixture, SCHEME_REL)).toBe(SAMPLE_XCSCHEME);
+    });
   });
 });

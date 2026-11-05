@@ -210,6 +210,13 @@ runJavaScriptRecipe(opts: WizardOptions): Promise<RunStepsResult>
 ```
 Most specific wins (framework over bundler over `typescript`); detection never executes user files.
 
+> **Scope note (review follow-up).** Tasks 12 and 13 resolve and bundle only the **`buildtool`** recipes (source-map
+> wiring). The design (§3 goal 2, C16) also calls for a **runtime** recipe per target (install the SDK package and add
+> SDK init to the entry file), and the `OpSpec` union has no op that edits an existing entry file. That part is **not
+> covered by this plan**: the first PRs ship source-map wiring only, and runtime SDK install/init needs its own task
+> (a runtime recipe kind in the snapshot, plus an entry-file op). The deferrals D3 and C8 (framework-specific init)
+> are unchanged. Owner to schedule.
+
 - [ ] **Step 1:** Tests: each fixture detects the expected runtime/framework/build tool; Electron fixture ⇒ `runtimes` includes `electron`; a version below `SUPPORTED[...].min` warns and continues; non-JS dir ⇒ `null`.
 - [ ] **Step 2:** `runJavaScriptRecipe`: git precondition (clean tree, `--ignore-git-changes`), pick package (prompt or `--package`), resolve token, resolve recipes for the detected build tool, `executeRecipe`, write manifest, print outro with production-build test steps. Exit code: `failed` ⇒ 1, `incomplete` with `--non-interactive` ⇒ 3, else 0.
 - [ ] **Step 3:** Remove the "not implemented" branch for `web` in `install.ts`; `flutter`/`unknown` keep it.

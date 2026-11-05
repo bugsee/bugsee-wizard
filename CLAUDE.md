@@ -18,7 +18,7 @@ End-to-end flow:
 
 `uninstall` is also a first-class command: every step ships with a `rollback()` from day one. After uninstall completes, a single optional question asks why the user is removing Bugsee.
 
-## Toolchain (locked decisions — see `memory/project_toolchain_decisions.md`)
+## Toolchain (locked decisions)
 
 - **Node ≥ 22.18**, **ESM only** (`"type": "module"`).
 - **TypeScript** strict mode, plus `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`. Module resolution is `bundler`; we drop `.js` extensions only inside the project's own bundled output, but **all relative imports in source must use the `.js` extension** to stay portable.

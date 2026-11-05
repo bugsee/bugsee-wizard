@@ -34,6 +34,99 @@ const LAUNCH_FUNC_RE = {
   objc: /-\s*\(\s*BOOL\s*\)\s*application\s*:\s*\(\s*UIApplication\s*\*\s*\)\s*application\s+didFinishLaunchingWithOptions\s*:\s*\([^)]*\)\s*\w+\s*\{/,
 } as const;
 
+/**
+ * Copy of `src` with comments and string/char-literal contents blanked to
+ * spaces (newlines and the quote characters themselves kept), so indices
+ * line up with the original while regexes and brace matching only ever see
+ * active code. Handles `//`, `/* *\/` (nested in Swift), Swift `"""` blocks,
+ * and ObjC `'c'` literals.
+ */
+function maskNonCode(src: string, language: AppDelegateLanguage): string {
+  const out = src.split('');
+  const blank = (from: number, to: number): void => {
+    for (let k = from; k < to; k++) if (out[k] !== '\n') out[k] = ' ';
+  };
+  const swift = language === 'swift';
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const two = src.slice(i, i + 2);
+    if (two === '//') {
+      let end = src.indexOf('\n', i);
+      if (end === -1) end = src.length;
+      blank(i, end);
+      i = end;
+    } else if (two === '/*') {
+      let depth = 1;
+      let j = i + 2;
+      while (j < src.length && depth > 0) {
+        const pair = src.slice(j, j + 2);
+        if (pair === '*/') {
+          depth--;
+          j += 2;
+        } else if (swift && pair === '/*') {
+          depth++;
+          j += 2;
+        } else {
+          j++;
+        }
+      }
+      blank(i, j);
+      i = j;
+    } else if (swift && src.startsWith('"""', i)) {
+      const close = src.indexOf('"""', i + 3);
+      const end = close === -1 ? src.length : close;
+      blank(i + 3, end);
+      i = close === -1 ? src.length : close + 3;
+    } else if (c === '"' || (!swift && c === "'")) {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && src[j] !== '\n') {
+        j += src[j] === '\\' ? 2 : 1;
+      }
+      blank(i + 1, Math.min(j, src.length));
+      i = j + 1;
+    } else {
+      i++;
+    }
+  }
+  return out.join('');
+}
+
+interface LaunchScan {
+  /** Active (non-comment, non-string) text of the whole source. */
+  readonly masked: string;
+  /** Index just past the `{` of didFinishLaunching, or null if absent. */
+  readonly bodyStart: number | null;
+  /** Index of the matching `}` (or end of source), or null if absent. */
+  readonly bodyEnd: number | null;
+}
+
+function scanLaunch(source: string, language: AppDelegateLanguage): LaunchScan {
+  const masked = maskNonCode(source, language);
+  const fn = LAUNCH_FUNC_RE[language].exec(masked);
+  if (!fn) return { masked, bodyStart: null, bodyEnd: null };
+  const bodyStart = fn.index + fn[0].length;
+  let depth = 1;
+  let j = bodyStart;
+  for (; j < masked.length && depth > 0; j++) {
+    if (masked[j] === '{') depth++;
+    else if (masked[j] === '}') depth--;
+  }
+  return { masked, bodyStart, bodyEnd: depth === 0 ? j - 1 : masked.length };
+}
+
+/**
+ * Whether the app already launches Bugsee from didFinishLaunching: either
+ * our marker block is present, or the launch call appears as active code
+ * inside that method's body. A mention in a comment/string or a call in
+ * some other method does not count — launch would never run at startup.
+ */
+function launchesBugsee(source: string, language: AppDelegateLanguage, scan: LaunchScan): boolean {
+  if (source.includes(LAUNCH_MARKER_BEGIN) && source.includes(LAUNCH_MARKER_END)) return true;
+  if (scan.bodyStart === null || scan.bodyEnd === null) return false;
+  return LAUNCH_PRESENT_RE[language].test(scan.masked.slice(scan.bodyStart, scan.bodyEnd));
+}
+
 function importBlock(language: AppDelegateLanguage): string {
   const importLine = language === 'swift' ? 'import Bugsee' : '#import <Bugsee/Bugsee.h>';
   return `${IMPORT_MARKER_BEGIN}
@@ -91,9 +184,14 @@ export const injectAppDelegateStep: Step<IosContext> = {
       };
     }
     const lang = ctx.iosPaths.appDelegateLanguage;
-    if (LAUNCH_PRESENT_RE[lang].test(content) && IMPORT_PRESENT_RE[lang].test(content)) {
+    const scan = scanLaunch(content, lang);
+    if (launchesBugsee(content, lang, scan) && IMPORT_PRESENT_RE[lang].test(content)) {
       // Not replaced automatically (the call may be hand-edited); just say so.
-      const existing = LAUNCH_TOKEN_RE[lang].exec(content)?.[1];
+      const body =
+        scan.bodyStart !== null && scan.bodyEnd !== null
+          ? content.slice(scan.bodyStart, scan.bodyEnd)
+          : content;
+      const existing = LAUNCH_TOKEN_RE[lang].exec(body)?.[1];
       const supplied = ctx.tokens.ios;
       if (existing !== undefined && supplied && existing !== supplied) {
         ctx.log.warn(
@@ -106,7 +204,7 @@ export const injectAppDelegateStep: Step<IosContext> = {
     // small adapter for `@UIApplicationDelegateAdaptor` that doesn't override
     // `application(_:didFinishLaunchingWithOptions:)`). Same fallback —
     // print the snippet rather than blocking.
-    if (!LAUNCH_FUNC_RE[lang].exec(content)) {
+    if (scan.bodyStart === null) {
       return {
         kind: 'satisfied',
         note: 'AppDelegate lacks didFinishLaunchingWithOptions — snippet will be printed at the end',
@@ -140,12 +238,12 @@ export const injectAppDelegateStep: Step<IosContext> = {
     }
 
     // 2) Insert Bugsee.launch at the start of the launch function body.
-    if (!LAUNCH_PRESENT_RE[lang].test(updated)) {
-      const funcMatch = LAUNCH_FUNC_RE[lang].exec(updated);
-      if (!funcMatch) {
+    const scan = scanLaunch(updated, lang);
+    if (!launchesBugsee(updated, lang, scan)) {
+      if (scan.bodyStart === null) {
         throw new Error('Could not find didFinishLaunchingWithOptions function');
       }
-      const braceEnd = funcMatch.index + funcMatch[0].length;
+      const braceEnd = scan.bodyStart;
       // Anchor at the start of the next line so the inserted block sits on
       // its own lines with consistent indentation; rollback can strip cleanly.
       const eol = updated.indexOf('\n', braceEnd);
