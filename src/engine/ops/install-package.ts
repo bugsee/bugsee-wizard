@@ -51,6 +51,8 @@ async function approvePnpmBuilds(
   if (doc.errors.length > 0) return; // a file we cannot read is left for pnpm to complain about
   let changed = false;
   try {
+    // a bare `allowBuilds:` has a null value: an empty map, ours to fill
+    if (doc.get('allowBuilds') == null) doc.set('allowBuilds', doc.createNode({}));
     for (const p of packages) {
       const current = doc.getIn(['allowBuilds', p]);
       if (current === true || current === false) continue;

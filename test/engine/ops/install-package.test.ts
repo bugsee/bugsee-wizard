@@ -390,6 +390,15 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     expect(await readFile(ws(), 'utf8')).toBe(original);
   });
 
+  it('treats a bare "allowBuilds:" key (null value) as an empty map', async () => {
+    await fakePnpm('11.3.0');
+    await writeFile(ws(), 'packages:\n  - apps/*\nallowBuilds:\n');
+    await run(['@bugsee/cli']).done;
+    const seen = await readFile(`${log}.ws`, 'utf8');
+    expect(seen).toMatch(/['"]@bugsee\/cli['"]: true/);
+    expect(seen).toContain('- apps/*');
+  });
+
   it('does nothing on pnpm 10, on an unreadable version, or on a workspace file it cannot parse', async () => {
     await fakePnpm('10.34.9');
     await run(['@bugsee/cli']).done;

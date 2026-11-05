@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -409,6 +409,66 @@ describe.skipIf(process.platform === 'win32')('generated script: review round 1 
     await writeFile(join(root, 'project', '.env.bugsee-build-plugin'), 'BUGSEE_APP_TOKEN=ab#c\n');
     run();
     expect((await calls())[0]?.token).toBe('ab#c');
+  });
+
+  it('quoted values: single quotes and escapes with a trailing comment', async () => {
+    await out();
+    const cases: [string, string][] = [
+      ["BUGSEE_APP_TOKEN='abc' # prod", 'abc'],
+      ['BUGSEE_APP_TOKEN="a\\"b" # prod', 'a"b'],
+      ["BUGSEE_APP_TOKEN='a # b'", 'a # b'],
+    ];
+    for (const [line, want] of cases) {
+      await rm(join(root, 'log'), { force: true });
+      await writeFile(join(root, 'project', '.env.bugsee-build-plugin'), `${line}\n`);
+      run();
+      expect((await calls())[0]?.token, line).toBe(want);
+    }
+  });
+
+  it('an empty value followed by a comment is no token', async () => {
+    await out();
+    await writeFile(
+      join(root, 'project', '.env.bugsee-build-plugin'),
+      'BUGSEE_APP_TOKEN= # todo\n',
+    );
+    const r = run();
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain('BUGSEE_APP_TOKEN is not set');
+    expect(await calls()).toEqual([]);
+  });
+
+  it('a symlink loop or unreadable file in the output never fails the build', async () => {
+    await out();
+    await symlink('loop', join(root, 'project', 'dist', 'loop'));
+    await writeFile(join(root, 'project', 'dist', 'a.js'), 'x');
+    await mkdir(join(root, 'project', 'build'));
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      '{"compilerOptions":{"outDir":"build"}}',
+    );
+    const r = run([], { BUGSEE_APP_TOKEN: 't' });
+    expect(r.stderr).not.toContain('ELOOP');
+    expect(r.status).toBe(0);
+    expect((await calls())[0]?.args.at(-1)).toBe('dist');
+  });
+
+  it('a large node_modules inside the output does not hide its fresh files', async () => {
+    await writeFile(
+      join(root, 'project', 'tsconfig.json'),
+      '{"compilerOptions":{"outDir":"build"}}',
+    );
+    await mkdir(join(root, 'project', 'dist', 'node_modules', 'big'), { recursive: true });
+    for (let i = 0; i < 5200; i++) {
+      await writeFile(join(root, 'project', 'dist', 'node_modules', 'big', `f${i}.js`), '');
+    }
+    await mkdir(join(root, 'project', 'build'));
+    await writeFile(join(root, 'project', 'build', 'a.js'), 'x');
+    await writeFile(join(root, 'project', 'dist', 'b.js'), 'x');
+    await at('dist/b.js', 900);
+    await at('build/a.js', 5);
+    // dist's own old file is all that counts; its node_modules is ignored (and cheap to skip)
+    expect(await first()).toBe('build');
   });
 
   it('never prints the token', async () => {
