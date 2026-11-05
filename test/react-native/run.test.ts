@@ -43,7 +43,7 @@ beforeEach(async () => {
     'package.json': SAMPLE_RN_PACKAGE_JSON,
     'App.tsx': SAMPLE_APP_TSX,
     'android/.keep': '',
-    'ios/.keep': '',
+    'ios/App.xcodeproj/project.pbxproj': '',
   });
   // Prompts: platforms=both, launch path=native.
   clack.select.mockResolvedValueOnce('both').mockResolvedValueOnce('native');

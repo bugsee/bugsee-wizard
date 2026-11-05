@@ -71,6 +71,17 @@ describe('discoverRnPaths', () => {
     expect(paths.packageJson.endsWith('/package.json')).toBe(true);
   });
 
+  it('an ios/ directory without an Xcode project (a Podfile only) is not a platform', async () => {
+    fixture = await makeFixture({
+      'package.json': '{}',
+      'android/build.gradle': '// stub',
+      'ios/Podfile': "platform :ios, '15.1'\n",
+    });
+    const paths = await discoverRnPaths(fixture);
+    expect(paths.androidPath?.endsWith('/android')).toBe(true);
+    expect(paths.iosPath).toBeNull();
+  });
+
   it('reports null platform paths when subdirs are missing', async () => {
     fixture = await makeFixture({ 'package.json': '{}' });
     const paths = await discoverRnPaths(fixture);

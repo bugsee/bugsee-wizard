@@ -45,10 +45,11 @@ export function isManagerOnPath(manager: PackageManager): boolean {
   try {
     // on Windows npm/yarn/pnpm/bun are .cmd shims that cannot be spawned without a shell; the
     // manager comes from a closed set and the arguments are fixed: no injection path
-    const result = spawnSync(manager, ['--version'], {
-      stdio: 'ignore',
-      shell: process.platform === 'win32',
-    });
+    // (one command string with the shell: an args array plus shell: true raises Node's DEP0190)
+    const result =
+      process.platform === 'win32'
+        ? spawnSync(`${manager} --version`, { stdio: 'ignore', shell: true })
+        : spawnSync(manager, ['--version'], { stdio: 'ignore' });
     const ok = result.status === 0;
     onPathCache.set(manager, ok);
     return ok;

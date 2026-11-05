@@ -13,7 +13,7 @@ async function fileExists(p: string): Promise<boolean> {
 }
 
 /** An `ios/` directory only counts as a platform when it holds an Xcode project. */
-async function hasXcodeProject(iosDir: string): Promise<boolean> {
+export async function hasXcodeProject(iosDir: string): Promise<boolean> {
   try {
     return (await readdir(iosDir)).some((name) => name.endsWith('.xcodeproj'));
   } catch {

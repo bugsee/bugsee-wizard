@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { hasXcodeProject } from '../../detectors/react-native.js';
 import type { JsEntry, JsEntryLanguage, RnPlatformPaths } from './types.js';
 
 async function fileExists(p: string): Promise<boolean> {
@@ -68,7 +69,8 @@ export async function discoverRnPaths(rnRoot: string): Promise<RnPlatformPaths> 
   const jsEntry = await discoverJsEntry(rnRoot);
   return {
     androidPath: (await dirExists(androidDir)) ? androidDir : null,
-    iosPath: (await dirExists(iosDir)) ? iosDir : null,
+    // an ios/ without an Xcode project (a Podfile only) is not a platform: never offer it
+    iosPath: (await hasXcodeProject(iosDir)) ? iosDir : null,
     packageJson,
     jsEntry,
   };
