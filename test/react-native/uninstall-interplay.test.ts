@@ -163,4 +163,33 @@ describe("uninstall: the new steps and the earlier wizards' rollbacks together",
     expect(await runReactNativeRollback(opts())).toBe('ok');
     expect((await tree(fixture))['android/bugsee.properties']).toBe('app_token=USER_OWN\n');
   });
+
+  it("finds an old install's marker in a large app: resources and assets do not use up the scan", async () => {
+    const res: Record<string, string> = {};
+    for (let i = 0; i < 900; i++) res[`android/aaa/res/layout/layout_${i}.xml`] = '<LinearLayout/>';
+    const oldApp = `${BARE_ANDROID_FILES['android/app/build.gradle']}\n// bugsee:wizard:apply-plugin:begin\napply plugin: 'com.bugsee.android.gradle'\n// bugsee:wizard:apply-plugin:end\n`;
+    fixture = await makeFixture(
+      project({
+        ...res,
+        'android/app/build.gradle': oldApp,
+        'android/bugsee.properties': 'app_token=OLD\n',
+      }),
+    );
+    expect(await runReactNativeRollback(opts())).toBe('ok');
+    expect((await tree(fixture))['android/app/build.gradle']).not.toContain(
+      'bugsee:wizard:apply-plugin',
+    );
+  });
+
+  it('finds the marker when many other native source files come first (files before subdirectories)', async () => {
+    const many: Record<string, string> = {};
+    for (let i = 0; i < 700; i++) many[`ios/AAA/Generated/File${i}.h`] = '// generated';
+    const oldDelegate =
+      '// bugsee:wizard:launch:begin\nBugsee.launch(token: "x")\n// bugsee:wizard:launch:end\n';
+    fixture = await makeFixture(project({ ...many, 'ios/AppDelegate.swift': oldDelegate }));
+    expect(await runReactNativeRollback(opts())).toBe('ok');
+    expect((await tree(fixture))['ios/AppDelegate.swift'] ?? '').not.toContain(
+      'bugsee:wizard:launch',
+    );
+  });
 });

@@ -48,6 +48,11 @@ async function isWorkspaceRoot(dir: string): Promise<boolean> {
  * the app belongs to (a monorepo keeps one lockfile at its root). A stray lockfile further up
  * (a home directory, an unrelated project) is not ours: it would run the wrong install.
  */
+/** Paths compare case-insensitively on Windows. */
+function samePath(a: string, b: string): boolean {
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
 async function findLockfile(
   rnRoot: string,
 ): Promise<{ dir: string; manager: PackageManager } | null> {
@@ -55,7 +60,7 @@ async function findLockfile(
   const home = path.resolve(os.homedir());
   let dir = start;
   for (let i = 0; i <= MAX_PARENTS; i++) {
-    if (dir === home && dir !== start) break;
+    if (dir !== start && samePath(dir, home)) break;
     for (const { file, manager } of LOCKFILE_BY_MANAGER) {
       if (await fileExists(path.join(dir, file))) {
         if (dir === start || (await isWorkspaceRoot(dir))) return { dir, manager };

@@ -55,6 +55,8 @@ export async function readRnProjectInfo(rnRoot: string): Promise<RnProjectInfo> 
   // satisfies what this app declares.
   const installedVersion =
     typeof installed?.version === 'string' ? semver.valid(installed.version) : null;
+  // (a range we cannot evaluate, such as `workspace:*` or `catalog:`, trusts the install: deliberate,
+  // there is nothing to check it against)
   const trusted =
     installedVersion !== null &&
     (!installedInParent ||

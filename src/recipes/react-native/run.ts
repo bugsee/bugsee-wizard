@@ -433,25 +433,42 @@ const OLD_NATIVE_MARKER =
   /bugsee:wizard:(?:loader|bugsee-block|manifest-placeholder|meta|provider-override|apply-plugin|buildscript-classpath|pod|import|launch)\b|Bugsee Symbolication/;
 
 const NATIVE_FILE = /(?:\.(?:gradle|kts|xml|swift|m|mm|h|xcscheme)|^Podfile)$/;
-const SKIP_DIRS = new Set(['Pods', 'build', 'node_modules', '.gradle', '.git', 'DerivedData']);
+// Android resources and assets are never edited by the old recipes, and are most of a large app's files.
+const SKIP_DIRS = new Set([
+  'Pods',
+  'build',
+  'node_modules',
+  '.gradle',
+  '.git',
+  'DerivedData',
+  'res',
+  'assets',
+]);
 
-/** A bounded walk over android/ and ios/ for a file holding one of the old recipes' markers. */
-async function hasOldNativeMarker(dir: string, budget = { files: 600 }): Promise<boolean> {
-  let entries: import('node:fs').Dirent[];
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return false;
-  }
-  for (const e of entries) {
-    if (budget.files <= 0) return false;
-    const full = path.join(dir, e.name);
-    if (e.isDirectory()) {
-      if (!SKIP_DIRS.has(e.name) && (await hasOldNativeMarker(full, budget))) return true;
-    } else if (NATIVE_FILE.test(e.name)) {
-      budget.files--;
-      const text = await readFile(full, 'utf8').catch(() => '');
-      if (OLD_NATIVE_MARKER.test(text)) return true;
+/**
+ * A bounded breadth-first walk over android/ and ios/ for a file holding one of the old recipes'
+ * markers: the shallow files (build.gradle, Podfile, AppDelegate, schemes) are looked at before
+ * the deep ones, so a large app cannot use the budget up before reaching them.
+ */
+async function hasOldNativeMarker(root: string, maxFiles = 3000): Promise<boolean> {
+  const queue = [root];
+  let seen = 0;
+  while (queue.length > 0 && seen < maxFiles) {
+    const dir = queue.shift() as string;
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name)) queue.push(full);
+      } else if (NATIVE_FILE.test(e.name) && seen++ < maxFiles) {
+        const text = await readFile(full, 'utf8').catch(() => '');
+        if (OLD_NATIVE_MARKER.test(text)) return true;
+      }
     }
   }
   return false;
