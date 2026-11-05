@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import * as clack from '@clack/prompts';
 import * as ask from '../../core/ask.js';
 
@@ -303,5 +305,19 @@ export async function runIosRollback(input: WizardOptions): Promise<RollbackResu
   ];
 
   const result = await runRollback(steps, ctx);
-  return result.failed ? 'failed' : 'ok';
+  let failed = result.failed;
+
+  // Install may have written the Archive post-action to a scheme the user
+  // picked in the multi-scheme prompt, which is not the default one discovery
+  // selected above. Rollback has no prompt, so sweep every other shared scheme.
+  for (const scheme of paths.availableSchemes) {
+    if (scheme === paths.scheme) continue;
+    const schemeCtx: IosContext = {
+      ...ctx,
+      iosPaths: { ...paths, scheme, schemeName: path.basename(scheme, '.xcscheme') },
+    };
+    const extra = await runRollback([addSchemePostActionStep], schemeCtx);
+    if (extra.failed) failed = true;
+  }
+  return failed ? 'failed' : 'ok';
 }

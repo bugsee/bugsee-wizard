@@ -716,3 +716,35 @@ describe('injectManifestMetaStep', () => {
     expect(await readFixture(fixture, 'app/src/main/AndroidManifest.xml')).toBe(original);
   });
 });
+
+describe('injectManifestMetaStep — self-closing <application/>', () => {
+  const REL = 'app/src/main/AndroidManifest.xml';
+  const SELF_CLOSING = `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="MyApp" />
+</manifest>
+`;
+  let dir: string | undefined;
+  afterEach(async () => {
+    if (dir) await cleanup(dir);
+    dir = undefined;
+  });
+
+  it('blocks instead of inserting outside the element, and apply refuses', async () => {
+    dir = await makeFixture({ [REL]: SELF_CLOSING });
+    const ctx = makeAndroidContext({ cwd: dir, dsl: 'kotlin' });
+    const status = await injectManifestMetaStep.precheck(ctx);
+    expect(status.kind).toBe('blocked');
+    expect(status.kind === 'blocked' && status.reason).toMatch(/self-closing/);
+    await expect(injectManifestMetaStep.apply(ctx)).rejects.toThrow(/self-closing/);
+    expect(await readFixture(dir, REL)).toBe(SELF_CLOSING);
+  });
+
+  it('still treats a paired <application> as pending', async () => {
+    dir = await makeFixture({
+      [REL]: '<manifest>\n<application android:label="x">\n</application>\n</manifest>\n',
+    });
+    const ctx = makeAndroidContext({ cwd: dir, dsl: 'kotlin' });
+    expect(await injectManifestMetaStep.precheck(ctx)).toEqual({ kind: 'pending' });
+  });
+});

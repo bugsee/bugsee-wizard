@@ -96,6 +96,19 @@ process.stderr.write('LAST-LINE\\n'); process.exit(4);`;
     expect(msg.length).toBeLessThan(20_000);
   }, 20_000);
 
+  it('reassembles a multi-byte character split across stderr chunks', async () => {
+    const script = `const b = Buffer.from('é🙂');
+process.stderr.write(b.subarray(0, 1));
+setTimeout(() => { process.stderr.write(b.subarray(1, 4)); }, 50);
+setTimeout(() => { process.stderr.write(b.subarray(4)); process.exit(6); }, 100);`;
+    const err = (await runChild(node, ['-e', script], {
+      cwd: process.cwd(),
+      forwardStdout: false,
+    }).catch((e: Error) => e)) as Error;
+    expect(err.message).toContain('é🙂');
+    expect(err.message).not.toContain('\uFFFD');
+  });
+
   it('caps the retained stderr tail at 64 KB (observable on one huge line)', async () => {
     const script = `process.stderr.write('z'.repeat(300 * 1024)); process.exit(5);`;
     const err = await runChild(node, ['-e', script], {
