@@ -13,8 +13,9 @@ export const SCRIPT_NAME = 'bugsee:sourcemaps';
 export const SCRIPT_COMMAND = 'node scripts/bugsee-sourcemaps.mjs';
 
 const TOKEN_OPS: OpSpec[] = [
-  { op: 'write-env-var', file: ENV_FILE, key: 'BUGSEE_APP_TOKEN', from: 'token' },
+  // the ignore rule first: nothing may leave the token file un-ignored, even if interrupted
   { op: 'ensure-gitignore', line: ENV_FILE },
+  { op: 'write-env-var', file: ENV_FILE, key: 'BUGSEE_APP_TOKEN', from: 'token' },
 ];
 
 function pluginOps(
@@ -23,7 +24,14 @@ function pluginOps(
   importName: string,
 ): OpSpec[] {
   return [
-    { op: 'install-package', packages: [pkg], dev: true, tag: 'beta' },
+    // the plugins' @bugsee/bugsee-cli dependency has the install script pnpm 11 wants decided
+    {
+      op: 'install-package',
+      packages: [pkg],
+      buildScripts: ['@bugsee/bugsee-cli'],
+      dev: true,
+      tag: 'beta',
+    },
     {
       op: 'add-bundler-plugin',
       target,

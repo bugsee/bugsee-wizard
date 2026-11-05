@@ -42,8 +42,8 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptUninstall', () => {
       { id: 'package.json', outcome: 'reverted' },
       { id: 'package-lock.json', outcome: 'reverted' },
       { id: 'vite.config.ts', outcome: 'reverted' },
-      { id: '.env.bugsee-build-plugin', outcome: 'deleted' },
       { id: '.gitignore', outcome: 'deleted' },
+      { id: '.env.bugsee-build-plugin', outcome: 'deleted' },
     ]);
     expect(await tree(sb.project)).toEqual(original);
     expect(exitCodeFor(r, true)).toBe(0);
@@ -128,16 +128,31 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptUninstall', () => {
     expect(exitCodeFor(r, true)).toBe(1);
   });
 
-  it('a file changed since the install is left alone and makes the result incomplete', async () => {
+  it('a file the user added a line to keeps that line; only the wizard lines are removed', async () => {
     await install();
     await appendFile(join(sb.project, 'vite.config.ts'), '// my edit\n');
     const cap = captureOutput();
     const r = await runJavaScriptUninstall(baseOpts(sb.project, { yes: true }), makeDeps(cap));
     expect(r.ok).toBe(true);
+    expect(r.steps.find((s) => s.id === 'vite.config.ts')?.outcome).toBe('reverted');
+    const now = await readFile(join(sb.project, 'vite.config.ts'), 'utf8');
+    expect(now).toContain('// my edit');
+    expect(now).not.toContain('bugsee');
+  });
+
+  it('a wizard line the user rewrote is left and named: manual, incomplete, exit 3', async () => {
+    await install();
+    const cfg = join(sb.project, 'vite.config.ts');
+    const src = await readFile(cfg, 'utf8');
+    await writeFile(cfg, src.replace('// bugsee-wizard', '// bugsee-wizard (mine)'));
+    const cap = captureOutput();
+    const r = await runJavaScriptUninstall(baseOpts(sb.project, { yes: true }), makeDeps(cap));
+    expect(r.ok).toBe(true);
     expect(r.incomplete).toBe(true);
     expect(r.steps.find((s) => s.id === 'vite.config.ts')?.outcome).toBe('manual');
-    expect(await readFile(join(sb.project, 'vite.config.ts'), 'utf8')).toContain('// my edit');
-    expect(cap.lines.join('\n')).toMatch(/vite\.config\.ts: changed since/);
+    expect(cap.lines.join('\n')).toMatch(
+      /vite\.config\.ts: reverted what it could; by hand: .*import/,
+    );
     expect(exitCodeFor(r, true)).toBe(3);
   });
 

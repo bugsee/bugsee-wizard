@@ -52,6 +52,8 @@ jobs:
           - rollup-build
           # pnpm 11 with the Bugsee install scripts not approved (a known bug, see e2e/run.test.ts)
           - unapproved-builds
+          # the same for a plugin recipe, whose dependency (not the installed package) has the script
+          - unapproved-plugin
     env:
       BUGSEE_E2E_FIXTURES: ${{ matrix.fixture }}
     steps:

@@ -6,7 +6,17 @@ import type { DetectedPackageManager } from './package-manager.js';
 export type DetectRule = { dependency: string } | { file: string };
 
 export type OpSpec =
-  | { op: 'install-package'; packages: string[]; dev?: boolean; tag?: string }
+  | {
+      op: 'install-package';
+      packages: string[];
+      dev?: boolean;
+      tag?: string;
+      /**
+       * Packages (typically dependencies of `packages`) whose install script must be decided on
+       * pnpm 11 for the install to succeed. Not installed themselves; only @bugsee/* is ever approved.
+       */
+      buildScripts?: string[];
+    }
   | {
       op: 'add-bundler-plugin';
       target: PluginTarget;
@@ -153,11 +163,19 @@ function checkOp(c: Check, raw: unknown, path: string): OpSpec | undefined {
   let spec: OpSpec | undefined;
   switch (op) {
     case 'install-package': {
-      const o = c.object(raw, path, ['op', 'packages', 'dev', 'tag']);
+      const o = c.object(raw, path, ['op', 'packages', 'dev', 'tag', 'buildScripts']);
       if (!o) return undefined;
       const packages = c.strings(o.packages, `${path}.packages`, true);
       packages?.forEach((p, i) => {
         if (!PACKAGE_RE.test(p)) c.fail(`${path}.packages[${i}]`, 'is not a valid package name');
+      });
+      const buildScripts =
+        o.buildScripts === undefined
+          ? undefined
+          : c.strings(o.buildScripts, `${path}.buildScripts`, false);
+      buildScripts?.forEach((p, i) => {
+        if (!PACKAGE_RE.test(p))
+          c.fail(`${path}.buildScripts[${i}]`, 'is not a valid package name');
       });
       const dev = c.optionalBool(o, 'dev', path);
       const tag = c.optionalString(o, 'tag', path);
@@ -169,6 +187,7 @@ function checkOp(c: Check, raw: unknown, path: string): OpSpec | undefined {
           packages,
           ...(dev !== undefined ? { dev } : {}),
           ...(tag !== undefined ? { tag } : {}),
+          ...(buildScripts !== undefined ? { buildScripts } : {}),
         };
       }
       break;

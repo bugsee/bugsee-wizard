@@ -9,6 +9,7 @@ import {
   type Output,
   type WizardRunResult,
 } from '../engine/noninteractive.js';
+import { runScriptCommand } from '../engine/ops/add-package-script.js';
 import { opToStep } from '../engine/ops/index.js';
 import { type DetectedPackageManager, detectPackageManager } from '../engine/package-manager.js';
 import type { OpSpec, Recipe, RecipeContext } from '../engine/recipe.js';
@@ -45,7 +46,22 @@ export interface Deps {
   rollback: typeof rollbackFromManifest;
   env: NodeJS.ProcessEnv;
   output: Output;
+  /** Where interrupt signals are caught for the length of a run (the process, outside tests). */
+  signals: SignalHost;
 }
+
+export type InterruptSignal = 'SIGINT' | 'SIGTERM';
+export interface SignalHost {
+  on(signal: InterruptSignal, handler: () => void): void;
+  off(signal: InterruptSignal, handler: () => void): void;
+  exit(code: number): void;
+}
+const SIGNAL_CODE: Record<InterruptSignal, number> = { SIGINT: 130, SIGTERM: 143 };
+const processSignals: SignalHost = {
+  on: (sig, h) => void process.on(sig, h),
+  off: (sig, h) => void process.off(sig, h),
+  exit: (code) => process.exit(code),
+};
 
 export function defaultDeps(opts: WizardOptions, over: Partial<Deps> = {}): Deps {
   return {
@@ -59,6 +75,7 @@ export function defaultDeps(opts: WizardOptions, over: Partial<Deps> = {}): Deps
     rollback: rollbackFromManifest,
     env: process.env,
     output: createOutput({ json: opts.json, debug: opts.debug }),
+    signals: processSignals,
     ...over,
   };
 }
@@ -126,8 +143,87 @@ export async function locatePackage(
   return { det };
 }
 
-function planText(recipe: Recipe): string {
-  return ['Planned changes:', ...recipe.ops.map((op) => `  - ${opToStep(op).title}`)].join('\n');
+const PLAN_MAX_INLINE = 2000;
+const PLAN_PREVIEW_LINES = 8;
+const PLAN_PREVIEW_WIDTH = 120;
+
+/** Control characters (ANSI escapes included) shown as visible `\xNN`, so a recipe cannot repaint the plan. */
+function visible(s: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point
+  return s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, (c) => {
+    return `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`;
+  });
+}
+
+function inline(s: string): string {
+  const cut =
+    s.length > PLAN_MAX_INLINE
+      ? `${s.slice(0, PLAN_MAX_INLINE)}... (${s.length - PLAN_MAX_INLINE} more characters)`
+      : s;
+  return visible(cut);
+}
+
+function preview(text: string): string[] {
+  const lines = text.split(/\r?\n/);
+  if (lines.at(-1) === '') lines.pop();
+  const shown = lines.slice(0, PLAN_PREVIEW_LINES).map((l) => {
+    const v = visible(l);
+    return v.length > PLAN_PREVIEW_WIDTH ? `${v.slice(0, PLAN_PREVIEW_WIDTH)}...` : v;
+  });
+  const rest = lines.length - shown.length;
+  return [
+    ...shown.map((l) => `      | ${l}`),
+    ...(rest > 0 ? [`      | ... (${rest} more lines)`] : []),
+  ];
+}
+
+/** What a step will actually write or run: the recipe's free-text fields, shown rather than hidden behind a title. */
+function opDetails(op: OpSpec, pm: DetectedPackageManager | null): string[] {
+  switch (op.op) {
+    case 'install-package': {
+      const pkgs = op.packages.map((p) => (op.tag ? `${p}@${op.tag}` : p));
+      const cmd =
+        pm === null
+          ? `npm install ${op.dev ? '-D ' : ''}${pkgs.join(' ')}`
+          : `${pm.name} ${pm.installArgs(pkgs, op.dev === true).join(' ')}`;
+      return [`      runs: ${inline(cmd)}`];
+    }
+    case 'add-package-script':
+      return [
+        `      script "${inline(op.name)}": ${inline(op.command)}`,
+        ...(op.chainInto === undefined
+          ? []
+          : [
+              `      appended to the "${inline(op.chainInto)}" script: ... && ${inline(runScriptCommand(pm, op.name))}`,
+            ]),
+      ];
+    case 'write-file':
+      return [
+        `      writes ${inline(op.path)} (${Buffer.byteLength(op.template, 'utf8')} bytes):`,
+        ...preview(op.template),
+      ];
+    case 'add-bundler-plugin':
+      return [
+        `      adds ${inline(`${op.importName}(${op.callArgs})`)} to the ${op.target} plugins, imported from "${inline(op.importFrom)}"`,
+      ];
+    case 'set-json-key':
+      return [
+        `      sets ${inline(op.path.join('.'))} in ${inline(op.file)} to ${inline(JSON.stringify(op.value))}`,
+      ];
+    case 'ensure-gitignore':
+      return [`      adds the line ${inline(op.line)} to .gitignore if missing`];
+    case 'write-env-var':
+      return [`      sets ${inline(op.key)} in ${inline(op.file)} from your token`];
+    default:
+      return [];
+  }
+}
+
+function planText(recipe: Recipe, pm: DetectedPackageManager | null): string {
+  return [
+    'Planned changes:',
+    ...recipe.ops.flatMap((op) => [`  - ${opToStep(op).title}`, ...opDetails(op, pm)]),
+  ].join('\n');
 }
 
 function snippetText(s: ManualSnippet): string {
@@ -201,7 +297,7 @@ export async function runJavaScriptInstall(
   if (resolved.warning !== undefined) log.warn(resolved.warning);
 
   const recipe: Recipe = { ...resolved.recipe, ops: [...resolved.recipe.ops, IGNORE_MANIFEST_DIR] };
-  log.info(planText(recipe));
+  log.info(planText(recipe, packageManager));
   if (recipe.notes !== undefined) log.info(`Notes:\n${recipe.notes}`);
   if (!opts.nonInteractive && !opts.yes && !opts.dryRun) {
     if (!(await deps.prompts.confirm('Apply these changes?'))) throw new CancelledError();
@@ -224,16 +320,42 @@ export async function runJavaScriptInstall(
     manifest: recorder,
     confirm: (m) => deps.prompts.confirm(m),
   };
-  const run = await executeRecipe(recipe, ctx);
-
-  if (!run.failed && !opts.dryRun) {
+  const abort = new AbortController();
+  let caught: InterruptSignal | undefined;
+  const quarantineWarnings: string[] = [];
+  const flush = async (): Promise<void> => {
     const { quarantined } = await recorder.flush();
     if (quarantined !== undefined) {
-      log.warn(
+      quarantineWarnings.push(
         `The previous wizard manifest could not be read; it was moved to ${quarantined} and a new one was written.`,
       );
     }
+  };
+  const handlers = (['SIGINT', 'SIGTERM'] as const).map((sig) => {
+    const handler = (): void => {
+      if (caught !== undefined) {
+        // second signal: stop now. Every applied step is already in the manifest (flushed per step).
+        deps.signals.exit(SIGNAL_CODE[sig]);
+        return;
+      }
+      caught = sig;
+      log.warn(
+        'Interrupted: finishing the current step, then rolling back what was applied (press again to quit now; run `uninstall` afterwards if anything is left).',
+      );
+      abort.abort();
+    };
+    deps.signals.on(sig, handler);
+    return [sig, handler] as const;
+  });
+  let run: Awaited<ReturnType<typeof executeRecipe>>;
+  try {
+    run = await executeRecipe(recipe, ctx, { onStepApplied: flush, signal: abort.signal });
+  } finally {
+    for (const [sig, handler] of handlers) deps.signals.off(sig, handler);
   }
+  // the steps were rolled back: the manifest must not list changes that are gone
+  if (run.failed && !opts.dryRun) await recorder.discard();
+  for (const w of quarantineWarnings) log.warn(w);
 
   const snippets = run.results.flatMap((r) => (r.snippet === undefined ? [] : [r.snippet]));
   for (const s of snippets) log.warn(snippetText(s));
@@ -246,10 +368,15 @@ export async function runJavaScriptInstall(
       ? { snippets: snippets.map((s) => ({ file: s.file, title: s.title, code: s.code })) }
       : {}),
     ...(run.failed
-      ? {
-          error: 'step-failed',
-          message: 'A step failed; the changes made so far were rolled back.',
-        }
+      ? caught !== undefined
+        ? {
+            error: caught === 'SIGINT' ? 'interrupted' : 'terminated',
+            message: 'Interrupted; the changes made so far were rolled back.',
+          }
+        : {
+            error: 'step-failed',
+            message: 'A step failed; the changes made so far were rolled back.',
+          }
       : {}),
   };
   if (opts.dryRun) log.info('Dry run: nothing was written.');

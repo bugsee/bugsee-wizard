@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import semver from 'semver';
+import { WIZARD_VERSION } from '../version.js';
 import { parseRecipe, type Recipe } from './recipe.js';
 
 /**
@@ -28,7 +29,6 @@ import { parseRecipe, type Recipe } from './recipe.js';
 export const DEFAULT_BASE_URL = 'https://download.bugsee.com/sdk/wizard-recipes';
 const TIMEOUT_MS = 5000;
 const MAX_BYTES = 1024 * 1024;
-const WIZARD_VERSION = '0.0.0';
 const UPGRADE_HINT =
   'Run `npx @bugsee/wizard@latest` to get a wizard that supports this SDK version.';
 const PLATFORM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;

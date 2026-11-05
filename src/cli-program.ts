@@ -1,10 +1,12 @@
 import { Command } from '@commander-js/extra-typings';
 
+import { WIZARD_VERSION } from './version.js';
+
 export function createBaseProgram() {
   return new Command()
     .name('bugsee-wizard')
     .description('Set up Bugsee in your project.')
-    .version('0.0.0', '-v, --version')
+    .version(WIZARD_VERSION, '-v, --version')
     .option('-C, --cwd <path>', 'run as if started in <path>', process.cwd())
     .option('--debug', 'enable verbose logging', false)
     .option('--dry-run', 'plan changes without writing files', false)

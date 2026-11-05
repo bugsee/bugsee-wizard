@@ -243,6 +243,18 @@ describe('parseRecipe', () => {
     ]);
     const { packages: _p, ...noPkgs } = op({});
     expect(violations(withOp(noPkgs))).toEqual(['recipe.ops[0].packages: is required']);
+    expect(parseRecipe(withOp(op({ buildScripts: ['@bugsee/bugsee-cli'] }))).ops[0]).toEqual({
+      op: 'install-package',
+      packages: ['a'],
+      buildScripts: ['@bugsee/bugsee-cli'],
+    });
+    expect(violations(withOp(op({ buildScripts: ['--x'] })))).toEqual([
+      'recipe.ops[0].buildScripts[0]: is not a valid package name',
+    ]);
+    expect(violations(withOp(op({ buildScripts: 'a' })))).toEqual([
+      'recipe.ops[0].buildScripts: must be an array of strings',
+    ]);
+    expect(violations(withOp(op({ buildScripts: [''] })))).toHaveLength(1);
     expect(violations(withOp(op({ tag: '--x' })))).toEqual([
       'recipe.ops[0].tag: is not a valid version or dist-tag',
     ]);

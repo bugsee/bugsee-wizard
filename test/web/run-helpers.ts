@@ -32,13 +32,13 @@ export const VITE_RECIPE: Recipe = parseRecipe({
       importName: 'bugsee',
       callArgs: '',
     },
+    { op: 'ensure-gitignore', line: '.env.bugsee-build-plugin' },
     {
       op: 'write-env-var',
       file: '.env.bugsee-build-plugin',
       key: 'BUGSEE_APP_TOKEN',
       from: 'token',
     },
-    { op: 'ensure-gitignore', line: '.env.bugsee-build-plugin' },
   ],
 });
 

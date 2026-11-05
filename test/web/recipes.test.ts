@@ -86,8 +86,8 @@ interface Case {
 const ENV_STEP = `write-env-var:${ENV_FILE}:BUGSEE_APP_TOKEN`;
 const GI_STEP = `ensure-gitignore:${ENV_FILE}`;
 const TAIL: [string, string, string][] = [
-  [ENV_STEP, 'applied', 'skipped'],
   [GI_STEP, 'applied', 'skipped'],
+  [ENV_STEP, 'applied', 'skipped'],
   ['ensure-gitignore:.bugsee/', 'applied', 'skipped'],
 ];
 

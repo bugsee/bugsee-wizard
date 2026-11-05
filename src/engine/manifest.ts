@@ -4,6 +4,15 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import type { Logger } from '../core/logger.js';
 import { writeFileAtomic } from './fs-edit.js';
 import { ensureGitignoreLine } from './gitignore.js';
+import {
+  addedPackages,
+  computeEdits,
+  isLockfile,
+  lockfileNote,
+  type ManifestEdit,
+  revertEdits,
+  validEdits,
+} from './manifest-edits.js';
 import { resolveInside } from './ops/shared.js';
 import { findWorkspace } from './workspace.js';
 
@@ -29,6 +38,11 @@ export interface ManifestFileEntry {
   marker?: string;
   /** Relative to the manifest dir, under `.bugsee/backup/`: the pre-edit text. */
   backup?: string;
+  /**
+   * What exactly the wizard changed, so uninstall can undo only that when the file was edited since.
+   * Absent on entries written by older wizards and on files that cannot be described safely.
+   */
+  edits?: ManifestEdit[];
 }
 
 export interface Manifest {
@@ -75,6 +89,7 @@ function validEntry(e: unknown): e is ManifestFileEntry {
   if (!optString(e['beforeSha256']) || !optString(e['afterSha256']) || !optString(e['marker'])) {
     return false;
   }
+  if (e['edits'] !== undefined && !validEdits(e['edits'])) return false;
   // the backup name is derived, never free-form: exactly `.bugsee/backup/<beforeSha256>`
   const backup = e['backup'];
   if (backup !== undefined) {
@@ -137,6 +152,10 @@ function toFileEntry(e: ManifestEntry, file: string): Pending {
   const entry: ManifestFileEntry = { file, action: e.action };
   if (e.marker !== undefined) entry.marker = e.marker;
   if (e.after !== undefined) entry.afterSha256 = sha256(e.after);
+  if (e.action !== 'manual' && !isEnvMarker(e.marker)) {
+    const edits = computeEdits(file, e.action, e.before, e.after);
+    if (edits !== undefined) entry.edits = edits;
+  }
   const pending: Pending = { entry };
   if (e.before !== undefined) {
     entry.beforeSha256 = sha256(e.before);
@@ -158,6 +177,11 @@ function mergeEntry(prevPending: Pending, next: Pending): Pending {
   if (prev.action === 'created') merged.action = 'created';
   delete merged.beforeSha256;
   delete merged.backup;
+  // edits are all-or-nothing: a chain with an undescribed link cannot be taken out piecemeal
+  delete merged.edits;
+  if (prev.edits !== undefined && next.entry.edits !== undefined) {
+    merged.edits = [...prev.edits, ...next.entry.edits];
+  }
   if (prev.beforeSha256 !== undefined) merged.beforeSha256 = prev.beforeSha256;
   if (prev.backup !== undefined) merged.backup = prev.backup;
   if (prev.action === 'created') return { entry: merged };
@@ -190,19 +214,45 @@ async function quarantine(dir: string): Promise<string | undefined> {
   return rel;
 }
 
+export interface FlushingRecorder extends ManifestRecorder {
+  /** Persist everything recorded so far (merged into what is on disk). Safe to call after every step. */
+  flush(): Promise<{ quarantined?: string }>;
+  /**
+   * Put the manifest (and the backups this recorder added) back as they were before its first
+   * flush: for a run that was rolled back, so the manifest never lists changes that are gone.
+   */
+  discard(): Promise<void>;
+}
+
 export function createManifestRecorder(
   dir: string,
   meta: { wizard: string; recipes: { id: string; revision: string }[] },
   opts: RecorderOptions = {},
-): ManifestRecorder & { flush(): Promise<{ quarantined?: string }> } {
+): FlushingRecorder {
   const queue: ManifestEntry[] = [];
   const base = resolve(opts.cwd ?? dir);
+  /** The manifest text before our first write (null: none), and the backups we added. */
+  let initial: string | null | undefined;
+  const addedBackups: string[] = [];
   return {
+    async discard() {
+      if (initial === undefined) return;
+      const path = join(dir, MANIFEST_FILE);
+      if (initial === null) await rm(path, { force: true });
+      else await writeFileAtomic(path, initial);
+      for (const b of addedBackups.splice(0)) await rm(b, { force: true });
+      initial = undefined;
+      for (const d of [join(dir, BACKUP_DIR), join(dir, BUGSEE_DIR)]) {
+        const left = await readdir(d).catch(() => null);
+        if (left !== null && left.length === 0) await rmdir(d);
+      }
+    },
     record(entry) {
       queue.push(entry);
     },
     async flush() {
       const batch = queue.splice(0);
+      if (initial === undefined) initial = await readIfExists(join(dir, MANIFEST_FILE));
       const existing = await loadManifest(dir);
       // an existing manifest we cannot read still holds the only record of the pre-wizard state
       const quarantined = existing === null ? await quarantine(dir) : undefined;
@@ -225,6 +275,7 @@ export function createManifestRecorder(
         if (p.backupText !== undefined && p.entry.backup !== undefined) {
           const target = join(dir, p.entry.backup);
           await mkdir(dirname(target), { recursive: true });
+          if (!(await pathExists(target))) addedBackups.push(target);
           await writeFile(target, p.backupText, 'utf8');
         }
       }
@@ -298,6 +349,7 @@ async function rollbackEntry(
   root: string,
   e: ManifestFileEntry,
   dryRun: boolean,
+  packages: readonly string[],
 ): Promise<RollbackResult> {
   const file = e.file;
   if (e.action === 'manual') return manual(file, 'needs a manual step');
@@ -337,7 +389,7 @@ async function rollbackEntry(
     return manual(file, 'no content hash was recorded; left untouched');
   }
   if (sha256(current) !== e.afterSha256) {
-    return manual(file, 'changed since the wizard wrote it; left untouched');
+    return revertChanged(e, abs, current, dryRun, packages);
   }
   if (e.action === 'created') {
     if (!dryRun) await rm(abs);
@@ -359,6 +411,55 @@ async function rollbackEntry(
   return { file, outcome: 'reverted' };
 }
 
+const MAX_NOTE = 3;
+
+/**
+ * The file differs from what the wizard wrote: the user has kept working in it. Take out only the
+ * wizard's recorded part where that is safe; otherwise say exactly what is left to do by hand.
+ */
+async function revertChanged(
+  e: ManifestFileEntry,
+  abs: string,
+  current: string,
+  dryRun: boolean,
+  packages: readonly string[],
+): Promise<RollbackResult> {
+  const file = e.file;
+  if (isLockfile(file)) return manual(file, lockfileNote(file, packages));
+  if (e.action === 'created' && (e.edits === undefined || basename(file) !== '.gitignore')) {
+    return manual(
+      file,
+      'created by the wizard but changed since; left untouched. Delete it if you no longer need it',
+    );
+  }
+  if (e.edits === undefined) {
+    const where = e.backup === undefined ? '' : ` (the original is saved in ${e.backup})`;
+    return manual(
+      file,
+      `changed since the wizard wrote it; left untouched. Remove the Bugsee entries by hand${where}`,
+    );
+  }
+  const res = revertEdits(current, e.edits);
+  const pending = res.manual.slice(0, MAX_NOTE).join('; ');
+  const more = res.manual.length > MAX_NOTE ? `; and ${res.manual.length - MAX_NOTE} more` : '';
+  if (res.text !== current && !dryRun) {
+    if (e.action === 'created' && res.text.trim() === '') await rm(abs);
+    else await writeFileAtomic(abs, res.text);
+  }
+  if (res.manual.length > 0) {
+    return manual(file, `reverted what it could; by hand: ${pending}${more}`);
+  }
+  if (e.action === 'created' && res.text.trim() === '') return { file, outcome: 'deleted' };
+  return {
+    file,
+    outcome: 'reverted',
+    note:
+      res.text === current
+        ? 'already reverted'
+        : 'removed only the wizard changes; your edits were kept',
+  };
+}
+
 export async function rollbackFromManifest(ctx: {
   dir: string;
   log: Logger;
@@ -371,12 +472,15 @@ export async function rollbackFromManifest(ctx: {
   const errored = new Set<number>();
   // reverse order: later changes are undone before the earlier ones they build on
   const order = manifest.entries.map((_, i) => i).reverse();
+  const packages = manifest.entries.flatMap((e) =>
+    isLockfile(e.file) ? [] : addedPackages(e.edits),
+  );
   const byIndex = new Map<number, RollbackResult>();
   for (const i of order) {
     const e = manifest.entries[i];
     if (e === undefined) continue;
     try {
-      byIndex.set(i, await rollbackEntry(ctx.dir, root, e, ctx.dryRun));
+      byIndex.set(i, await rollbackEntry(ctx.dir, root, e, ctx.dryRun, packages));
     } catch (err) {
       errored.add(i);
       const note = err instanceof Error ? err.message : String(err);

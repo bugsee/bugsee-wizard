@@ -117,6 +117,36 @@ describe('snapshot tools', () => {
       expect(r.out).toMatch(/r3\.json.*missing/);
     });
 
+    describe('token files must be ignored before they are written', () => {
+      const env = { op: 'write-env-var', file: '.env.x', key: 'K', from: 'token' };
+      const ignore = (line: string) => ({ op: 'ensure-gitignore', line });
+      const check = async (ops: unknown[]) => {
+        await writeFile(
+          join(snap, 'javascript-vite', 'r1.json'),
+          JSON.stringify(recipe('javascript-vite', { ops })),
+        );
+        await rebuild();
+        return run(VALIDATE, snap);
+      };
+
+      it('rejects write-env-var that comes before its ensure-gitignore', async () => {
+        const r = await check([env, ignore('.env.x')]);
+        expect(r.status).toBe(1);
+        expect(r.out).toMatch(/javascript-vite\/r1\.json.*ops\[0\].*\.env\.x.*ensure-gitignore/);
+      });
+
+      it('rejects write-env-var with no ensure-gitignore, or one for another file', async () => {
+        expect((await check([env])).status).toBe(1);
+        expect((await check([ignore('.env.y'), env])).status).toBe(1);
+      });
+
+      it('accepts the ignore first, in either spelling of the path', async () => {
+        expect((await check([ignore('.env.x'), env])).status).toBe(0);
+        expect((await check([ignore('/.env.x'), env])).status).toBe(0);
+        expect((await check([ignore('./.env.x'), env])).status).toBe(0);
+      });
+    });
+
     it('fails on a wrong index schema / platform, a file the index does not list, a stray root file', async () => {
       const path = join(snap, 'javascript-vite', 'index.json');
       const index = JSON.parse(await readFile(path, 'utf8'));

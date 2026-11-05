@@ -51,6 +51,7 @@ describe('createManifestRecorder', () => {
         beforeSha256: sha('old'),
         afterSha256: sha('new2'),
         backup: `.bugsee/backup/${sha('old')}`,
+        edits: [{ kind: 'lines', del: ['old'], add: ['new2'] }],
       },
       { file: 'c.txt', action: 'manual' },
       { file: '.env', action: 'edited', marker: 'env:KEY' },
@@ -80,6 +81,10 @@ describe('createManifestRecorder', () => {
         beforeSha256: sha('orig'),
         afterSha256: sha('last'),
         backup: `.bugsee/backup/${sha('orig')}`,
+        edits: [
+          { kind: 'lines', del: ['orig'], add: ['mid'] },
+          { kind: 'lines', del: ['mid'], add: ['last'] },
+        ],
       },
     ]);
     expect(await exists(join(dir, `.bugsee/backup/${sha('mid')}`))).toBe(false);

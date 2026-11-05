@@ -3,6 +3,8 @@
 //   - every index entry's sha256 matches the recipe bytes;
 //   - every recipe passes the real parseRecipe;
 //   - recipe id / platform agree with the directory, the index range / engineMin with the recipe;
+//   - a token file written by write-env-var is covered by an EARLIER ensure-gitignore (a crash
+//     in between must never leave the token un-ignored);
 //   - index urls are bare file names, every recipe file is listed, nothing stray at the top level.
 //
 //   npm run validate:snapshot         (or: node scripts/validate-snapshot.mjs [snapshotDir])
@@ -18,6 +20,9 @@ import {
   sha256,
   snapshotDirFromArgv,
 } from './snapshot-lib.mjs';
+
+// `.env`, `/.env` and `./.env` ignore the same root file
+const gitignoreKey = (p) => p.replace(/^(?:\.?\/)+/, '');
 
 const dir = snapshotDirFromArgv();
 const parseRecipe = await loadParseRecipe();
@@ -82,6 +87,15 @@ for (const platform of platforms) {
       );
     if (e.revision !== e.url.replace(/\.json$/, ''))
       fail(where, `revision "${e.revision}" does not match the file name`);
+    const ignored = new Set();
+    recipe.ops.forEach((op, i) => {
+      if (op.op === 'ensure-gitignore') ignored.add(gitignoreKey(op.line));
+      else if (op.op === 'write-env-var' && !ignored.has(gitignoreKey(op.file)))
+        fail(
+          where,
+          `ops[${i}] write-env-var writes ${op.file} without an earlier ensure-gitignore for it`,
+        );
+    });
     checked++;
   }
   for (const f of await recipeFiles(platformDir)) {

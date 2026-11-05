@@ -125,8 +125,13 @@ export function buildOptions(opts: RawCliOptions, env: NodeJS.ProcessEnv): Built
   };
 }
 
-/** 0 ok, 1 failed, 2 missing input, 3 incomplete in non-interactive mode. */
-export function exitCodeFor(result: WizardRunResult, nonInteractive: boolean): 0 | 1 | 2 | 3 {
+/** 0 ok, 1 failed, 2 missing input, 3 incomplete in non-interactive mode, 130/143 interrupted (SIGINT/SIGTERM). */
+export function exitCodeFor(
+  result: WizardRunResult,
+  nonInteractive: boolean,
+): 0 | 1 | 2 | 3 | 130 | 143 {
+  if (result.error === 'interrupted') return 130;
+  if (result.error === 'terminated') return 143;
   if (result.error === 'missing-input') return 2;
   if (!result.ok) return 1;
   if (result.incomplete && nonInteractive) return 3;

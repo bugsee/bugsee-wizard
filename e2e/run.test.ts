@@ -6,7 +6,7 @@
 // BUGSEE_ENDPOINT, which both the bundler plugins and bugsee-cli honour.
 //
 // Run with `npm run test:e2e` (builds first). Not part of `npm test`.
-//   BUGSEE_E2E_FIXTURES  comma-separated subset (default: all fixtures and `unapproved-builds`)
+//   BUGSEE_E2E_FIXTURES  comma-separated subset (default: all fixtures and the `unapproved-*` ones)
 //   BUGSEE_CLI_BIN       the bugsee-cli used for the dry-run discovery checks (default: `npx
 //                        --yes -p @bugsee/cli bugsee-cli`)
 //   BUGSEE_JS_REPO, BUGSEE_JS_REF, BUGSEE_SDK_VERSION, BUGSEE_E2E_WORKDIR: see fixtures.mjs
@@ -27,7 +27,29 @@ import { defaultWorkDir, FIXTURES, prepareFixture } from './fixtures.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(ROOT, 'dist', 'cli.js');
 const TOKEN = 'TESTTOKEN123';
-const UNAPPROVED = 'unapproved-builds';
+/**
+ * pnpm 11 projects that have not approved the Bugsee install scripts, per route. The plugin
+ * recipes install a package whose DEPENDENCY (@bugsee/bugsee-cli) has the script; the CLI route
+ * installs @bugsee/cli itself.
+ */
+const UNAPPROVED_CASES: Record<
+  string,
+  { base: string; installId: string; approved: string[]; transitiveCli: boolean }
+> = {
+  'unapproved-builds': {
+    base: 'node-service',
+    installId: 'install-package:@bugsee/cli',
+    approved: ['@bugsee/cli'],
+    transitiveCli: false,
+  },
+  'unapproved-plugin': {
+    base: 'react-spa',
+    installId: 'install-package:@bugsee/vite-plugin',
+    approved: ['@bugsee/vite-plugin', '@bugsee/bugsee-cli'],
+    transitiveCli: true,
+  },
+};
+const UNAPPROVED_NAMES = Object.keys(UNAPPROVED_CASES);
 
 /**
  * Steps the wizard cannot finish on a fixture and hands back as a snippet (outcome `manual`).
@@ -50,13 +72,14 @@ const MANUAL: Record<string, string[]> = {
 };
 
 const selected = (
-  process.env.BUGSEE_E2E_FIXTURES ?? [...Object.keys(FIXTURES), UNAPPROVED].join(',')
+  process.env.BUGSEE_E2E_FIXTURES ?? [...Object.keys(FIXTURES), ...UNAPPROVED_NAMES].join(',')
 )
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
 for (const name of selected) {
-  if (!(name in FIXTURES) && name !== UNAPPROVED) throw new Error(`unknown e2e fixture ${name}`);
+  if (!(name in FIXTURES) && !UNAPPROVED_NAMES.includes(name))
+    throw new Error(`unknown e2e fixture ${name}`);
 }
 
 // ---------------------------------------------------------------- helpers
@@ -499,50 +522,75 @@ const pnpmMajor = Number(
   spawnSync('pnpm', ['--version'], { encoding: 'utf8' }).stdout.split('.')[0],
 );
 
-if (selected.includes(UNAPPROVED) && !(pnpmMajor >= 11)) {
-  // a skipped job would look green while testing nothing
-  throw new Error(`the ${UNAPPROVED} fixture needs pnpm >= 11 (found ${pnpmMajor})`);
+for (const name of selected.filter((n) => UNAPPROVED_NAMES.includes(n))) {
+  if (!(pnpmMajor >= 11)) {
+    // a skipped job would look green while testing nothing
+    throw new Error(`the ${name} fixture needs pnpm >= 11 (found ${pnpmMajor})`);
+  }
 }
 
-describe.runIf(selected.includes(UNAPPROVED))(UNAPPROVED, () => {
-  let dir: string;
-  beforeAll(() => {
-    dir = prepareFixture('node-service', fresh(UNAPPROVED), { approveBuilds: false });
-  });
-
-  // pnpm 11 fails `pnpm add` with ERR_PNPM_IGNORED_BUILDS for any dependency whose install script
-  // is not approved; @bugsee/cli (and the plugins' @bugsee/bugsee-cli) have one. Editing the
-  // project's pnpm settings needs consent: without --yes (and non-interactively there is nobody to
-  // ask) the wizard leaves pnpm-workspace.yaml alone, the install fails with a hint, and the tree
-  // is exactly as it was. With --yes it approves exactly the packages it installs (merging with any
-  // approvals already there: the esbuild-build fixture covers that), and uninstall takes the
-  // approval out again.
-  it('without --yes: fails with the hint and leaves the tree exactly as it was', async () => {
-    const r = await wizard(dir, ['--non-interactive', '--json', '--token', TOKEN]);
-    const res = parseResult(r);
-    expect(res.ok, show(r)).toBe(false);
-    expect(res.steps).toEqual([{ id: 'install-package:@bugsee/cli', outcome: 'failed' }]);
-    expect(r.stderr + r.stdout).toContain('approve-builds');
-    expect(r.stderr + r.stdout).toContain('--yes');
-    expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
-  });
-
-  it('with --yes: installs on a pnpm project that has not approved the Bugsee install scripts', async () => {
-    const r = await wizard(dir, ['--non-interactive', '--yes', '--json', '--token', TOKEN]);
-    expect(parseResult(r).ok, show(r)).toBe(true);
-    const yaml = readFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'utf8');
-    expect(yaml).toMatch(/['"]?@bugsee\/cli['"]?:\s*true/);
-    // the install script really ran: the CLI binary resolves
-    const cli = spawnSync('npx', ['--no-install', 'bugsee-cli', '--version'], {
-      cwd: dir,
-      encoding: 'utf8',
+for (const name of selected.filter((n) => UNAPPROVED_NAMES.includes(n))) {
+  const c = UNAPPROVED_CASES[name] as (typeof UNAPPROVED_CASES)[string];
+  describe(name, () => {
+    let dir: string;
+    beforeAll(() => {
+      dir = prepareFixture(c.base, fresh(name), { approveBuilds: false });
     });
-    expect(cli.status, cli.stderr).toBe(0);
-  });
 
-  it('uninstall removes the approval it added', async () => {
-    const r = await wizard(dir, ['uninstall', '--non-interactive', '--json', '--yes']);
-    expect(parseResult(r).ok, show(r)).toBe(true);
-    expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
+    // pnpm 11 fails `pnpm add` with ERR_PNPM_IGNORED_BUILDS for any dependency whose install script
+    // is not approved; @bugsee/cli (and the plugins' @bugsee/bugsee-cli) have one. Editing the
+    // project's pnpm settings needs consent: without --yes (and non-interactively there is nobody to
+    // ask) the wizard leaves pnpm-workspace.yaml alone, the install fails with a hint, and the tree
+    // is exactly as it was. With --yes it approves exactly the @bugsee packages whose install scripts the install needs (merging with any
+    // approvals already there: the esbuild-build fixture covers that), and uninstall takes the
+    // approval out again.
+    it('without --yes: fails with the hint and leaves the tree exactly as it was', async () => {
+      const r = await wizard(dir, ['--non-interactive', '--json', '--token', TOKEN]);
+      const res = parseResult(r);
+      expect(res.ok, show(r)).toBe(false);
+      expect(res.steps).toEqual([{ id: c.installId, outcome: 'failed' }]);
+      expect(r.stderr + r.stdout).toContain('approve-builds');
+      expect(r.stderr + r.stdout).toContain('--yes');
+      expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
+    });
+
+    it('with --yes: installs on a pnpm project that has not approved the Bugsee install scripts', async () => {
+      const wsFile = path.join(dir, 'pnpm-workspace.yaml');
+      const keysOf = (text: string) =>
+        [...text.matchAll(/^ {2}['"]?([^'":\s]+)['"]?:\s*true/gm)].map((m) => m[1] as string);
+      // the sample's own approvals (esbuild, ...) are the project's and stay as they are
+      const own = existsSync(wsFile) ? keysOf(readFileSync(wsFile, 'utf8')) : [];
+      const r = await wizard(dir, ['--non-interactive', '--yes', '--json', '--token', TOKEN]);
+      expect(parseResult(r).ok, show(r)).toBe(true);
+      const yaml = readFileSync(wsFile, 'utf8');
+      for (const pkg of c.approved) {
+        expect(yaml).toMatch(new RegExp(`['"]?${pkg.replace('/', '\\/')}['"]?:\\s*true`));
+      }
+      // nothing outside the @bugsee scope is ever approved
+      for (const key of keysOf(yaml).filter((k) => !own.includes(k))) {
+        expect(key, yaml).toMatch(/^@bugsee\//);
+      }
+      // the install script really ran: the CLI binary resolves. @bugsee/bugsee-cli is only a
+      // dependency of the plugin there, so its bin is not linked at the root: run it from the store
+      let cmd = ['npx', '--no-install', 'bugsee-cli', '--version'];
+      if (c.transitiveCli) {
+        const store = path.join(dir, 'node_modules', '.pnpm');
+        const pkg = readdirSync(store).find((d) => d.startsWith('@bugsee+bugsee-cli@'));
+        expect(pkg, 'bugsee-cli in the pnpm store').toBeDefined();
+        cmd = [
+          process.execPath,
+          path.join(store, pkg as string, 'node_modules/@bugsee/bugsee-cli/run-bugsee-cli.js'),
+          '--version',
+        ];
+      }
+      const cli = spawnSync(cmd[0] as string, cmd.slice(1), { cwd: dir, encoding: 'utf8' });
+      expect(cli.status, cli.stderr).toBe(0);
+    });
+
+    it('uninstall removes the approval it added', async () => {
+      const r = await wizard(dir, ['uninstall', '--non-interactive', '--json', '--yes']);
+      expect(parseResult(r).ok, show(r)).toBe(true);
+      expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
+    });
   });
-});
+}

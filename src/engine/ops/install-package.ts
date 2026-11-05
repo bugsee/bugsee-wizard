@@ -34,7 +34,9 @@ export function installPackageStep(spec: Spec): Step<RecipeContext> {
   };
   return {
     id: `install-package:${spec.packages.join(',')}`,
-    title: `Install ${spec.packages.join(', ')}${spec.tag ? `@${spec.tag}` : ''}`,
+    title: `Install ${spec.packages.join(', ')}${spec.tag ? `@${spec.tag}` : ''}${
+      spec.buildScripts?.length ? ` (install script of ${spec.buildScripts.join(', ')})` : ''
+    }`,
     async precheck(ctx) {
       if (!ctx.packageManager) {
         return { kind: 'blocked', reason: 'No package manager detected (no lockfile found)' };
@@ -62,7 +64,7 @@ export function installPackageStep(spec: Spec): Step<RecipeContext> {
         if (pm.name === 'pnpm') {
           declined =
             (await decidePnpmBuilds({
-              packages: spec.packages,
+              packages: [...spec.packages, ...(spec.buildScripts ?? [])],
               value: true,
               cwd: ctx.packageDir,
               root: pm.root,

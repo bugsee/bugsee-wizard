@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { WIZARD_VERSION } from '../version.js';
 import { isTruthy } from './noninteractive.js';
 
 /**
@@ -7,7 +8,7 @@ import { isTruthy } from './noninteractive.js';
  * runId is generated per createTelemetry() call and never persisted.
  */
 
-export const WIZARD_VERSION = '0.0.0';
+export { WIZARD_VERSION };
 
 const NAMES = ['run', 'step'] as const;
 const OUTCOMES = ['applied', 'skipped', 'manual', 'failed'] as const;

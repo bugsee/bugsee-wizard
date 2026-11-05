@@ -357,8 +357,8 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
       ws(),
       '# my workspace\npackages:\n  - apps/*\nallowBuilds:\n  esbuild: true\n  sharp: false\n',
     );
-    await run(['@bugsee/cli', 'left-pad'], 'beta').done;
-    expect(await args()).toEqual(['add', '-D', '@bugsee/cli@beta', 'left-pad@beta']); // no flag
+    await run(['@bugsee/cli', '@bugsee/extra'], 'beta').done;
+    expect(await args()).toEqual(['add', '-D', '@bugsee/cli@beta', '@bugsee/extra@beta']); // no flag
     // what pnpm saw while installing
     const seen = await readFile(`${log}.ws`, 'utf8');
     expect(seen).toContain('# my workspace');
@@ -366,7 +366,7 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     expect(seen).toMatch(/esbuild: true/);
     expect(seen).toMatch(/sharp: false/);
     expect(seen).toMatch(/['"]@bugsee\/cli['"]: true/);
-    expect(seen).toMatch(/left-pad: true/);
+    expect(seen).toMatch(/['"]@bugsee\/extra['"]: true/);
   });
 
   it('creates pnpm-workspace.yaml when there is none, and records it as created', async () => {
@@ -381,12 +381,12 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     await fakePnpm('11.3.0');
     await writeFile(
       ws(),
-      "allowBuilds:\n  '@bugsee/cli': set this to true or false\n  other: false\n",
+      "allowBuilds:\n  '@bugsee/cli': set this to true or false\n  '@bugsee/other': false\n",
     );
-    await run(['@bugsee/cli', 'other']).done;
+    await run(['@bugsee/cli', '@bugsee/other']).done;
     const seen = await readFile(`${log}.ws`, 'utf8');
     expect(seen).toMatch(/['"]@bugsee\/cli['"]: true/);
-    expect(seen).toMatch(/other: false/);
+    expect(seen).toMatch(/['"]@bugsee\/other['"]: false/);
   });
 
   it('rollback and a failed install restore pnpm-workspace.yaml byte for byte', async () => {
@@ -439,16 +439,16 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     it('interactive: asks once, naming the packages and the file, and edits on yes', async () => {
       await fakePnpm('11.3.0');
       const a = asker(true);
-      await run(['@bugsee/cli', 'left-pad'], undefined, {
+      await run(['@bugsee/cli', '@bugsee/extra'], undefined, {
         yes: false,
         nonInteractive: false,
         confirm: a.confirm,
       }).done;
       expect(a.asked).toHaveLength(1);
       expect(a.asked[0]).toContain('@bugsee/cli');
-      expect(a.asked[0]).toContain('left-pad');
+      expect(a.asked[0]).toContain('@bugsee/extra');
       expect(a.asked[0]).toContain('pnpm-workspace.yaml');
-      expect(await readFile(ws(), 'utf8')).toMatch(/left-pad: true/);
+      expect(await readFile(ws(), 'utf8')).toMatch(/['"]@bugsee\/extra['"]: true/);
     });
 
     it('interactive: on no, the file is untouched and a failing install points at the fix', async () => {
@@ -486,9 +486,9 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
 
     it('does not ask when every package is already decided in allowBuilds', async () => {
       await fakePnpm('11.3.0');
-      await writeFile(ws(), "allowBuilds:\n  '@bugsee/cli': true\n  other: false\n");
+      await writeFile(ws(), "allowBuilds:\n  '@bugsee/cli': true\n  '@bugsee/other': false\n");
       const a = asker(true);
-      await run(['@bugsee/cli', 'other'], undefined, {
+      await run(['@bugsee/cli', '@bugsee/other'], undefined, {
         yes: false,
         nonInteractive: false,
         confirm: a.confirm,
@@ -500,13 +500,50 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
       await fakePnpm('11.3.0');
       await writeFile(ws(), "allowBuilds:\n  '@bugsee/cli': true\n");
       const a = asker(true);
-      await run(['@bugsee/cli', 'left-pad'], undefined, {
+      await run(['@bugsee/cli', '@bugsee/extra'], undefined, {
         yes: false,
         nonInteractive: false,
         confirm: a.confirm,
       }).done;
-      expect(a.asked[0]).toContain('left-pad');
+      expect(a.asked[0]).toContain('@bugsee/extra');
       expect(a.asked[0]).not.toContain('@bugsee/cli');
+    });
+  });
+
+  describe('buildScripts (dependencies whose install script must be decided)', () => {
+    const runWith = (spec: Record<string, unknown>) => {
+      const ctx = makeCtx(dir, { packageDir: proj, packageManager: pnpmAt(proj), yes: true });
+      return opToStep({ op: 'install-package', dev: true, ...spec } as OpSpec).apply(ctx);
+    };
+
+    it('decides them too, but does not install them', async () => {
+      await fakePnpm('11.3.0');
+      await runWith({ packages: ['@bugsee/vite-plugin'], buildScripts: ['@bugsee/bugsee-cli'] });
+      expect(await args()).toEqual(['add', '-D', '@bugsee/vite-plugin']);
+      const seen = await readFile(`${log}.ws`, 'utf8');
+      expect(seen).toMatch(/['"]@bugsee\/bugsee-cli['"]: true/);
+      expect(seen).toMatch(/['"]@bugsee\/vite-plugin['"]: true/);
+    });
+
+    it('is shown in the step title but does not change the id', () => {
+      const step = opToStep({
+        op: 'install-package',
+        packages: ['@bugsee/vite-plugin'],
+        buildScripts: ['@bugsee/bugsee-cli'],
+      });
+      expect(step.id).toBe('install-package:@bugsee/vite-plugin');
+      expect(step.title).toContain('@bugsee/bugsee-cli');
+    });
+
+    it('never records a decision for a package outside the @bugsee scope, even with --yes', async () => {
+      await fakePnpm('11.3.0');
+      await runWith({ packages: ['left-pad', '@evil/pkg'], buildScripts: ['evil-dep'] });
+      await expect(readFile(ws(), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      await runWith({ packages: ['@bugsee/cli', 'left-pad'], buildScripts: ['@bugsee/x/../y'] });
+      const seen = await readFile(`${log}.ws`, 'utf8');
+      expect(seen).toMatch(/['"]@bugsee\/cli['"]: true/);
+      expect(seen).not.toContain('left-pad');
+      expect(seen).not.toContain('@bugsee/x');
     });
   });
 
@@ -542,10 +579,10 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     await writeFile(join(bin, 'npm'), `#!/bin/sh\nprintf '%s\\n' "$@" > "${log}.args"\n`);
     await chmod(join(bin, 'npm'), 0o755);
     process.env.PATH = `${bin}:${saved}`;
-    await opToStep({ op: 'install-package', packages: ['left-pad'] }).apply(
+    await opToStep({ op: 'install-package', packages: ['@bugsee/extra'] }).apply(
       makeCtx(dir, { packageDir: proj, packageManager: npmAt(proj) }),
     );
-    expect(await args()).toEqual(['install', 'left-pad']);
+    expect(await args()).toEqual(['install', '@bugsee/extra']);
     await expect(readFile(ws())).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

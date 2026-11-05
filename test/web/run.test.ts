@@ -57,8 +57,8 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptInstall', () => {
         steps: [
           { id: 'install-package:@bugsee/vite-plugin', outcome: 'applied' },
           { id: 'add-bundler-plugin:vite', outcome: 'applied' },
-          { id: 'write-env-var:.env.bugsee-build-plugin:BUGSEE_APP_TOKEN', outcome: 'applied' },
           { id: 'ensure-gitignore:.env.bugsee-build-plugin', outcome: 'applied' },
+          { id: 'write-env-var:.env.bugsee-build-plugin:BUGSEE_APP_TOKEN', outcome: 'applied' },
           { id: 'ensure-gitignore:.bugsee/', outcome: 'applied' },
         ],
       });
@@ -86,8 +86,8 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptInstall', () => {
         ['package.json', 'edited'],
         ['package-lock.json', 'edited'],
         ['vite.config.ts', 'edited'],
-        ['.env.bugsee-build-plugin', 'created'],
         ['.gitignore', 'created'],
+        ['.env.bugsee-build-plugin', 'created'],
       ]);
       // the recipe is resolved for the build tool, the resolved SDK version and this wizard
       expect(deps.resolveRecipe).toHaveBeenCalledWith({

@@ -19,6 +19,9 @@ import { readBytes } from './ops/shared.js';
  * pending and is replaced by `value`. The file is part of the callers' install snapshot, so a failed
  * install or an uninstall restores it byte for byte.
  *
+ * Only `@bugsee/*` packages are ever decided (names outside the scope are ignored, with or without
+ * consent).
+ *
  * Resolves to `declined` when a decision was needed but consent was not given.
  */
 export interface PnpmBuildsRequest {
@@ -33,6 +36,10 @@ export interface PnpmBuildsRequest {
   readonly nonInteractive: boolean;
   readonly confirm?: ((message: string) => Promise<boolean>) | undefined;
 }
+
+/** Only our own scope may be approved: a recipe is remote data and must not widen what runs. */
+const BUGSEE_PACKAGE_RE = /^@bugsee\/[a-z0-9][a-z0-9._~-]*$/i;
+const isBugseePackage = (name: string): boolean => BUGSEE_PACKAGE_RE.test(name);
 
 export async function decidePnpmBuilds(req: PnpmBuildsRequest): Promise<'done' | 'declined'> {
   let major: number;
@@ -52,7 +59,7 @@ export async function decidePnpmBuilds(req: PnpmBuildsRequest): Promise<'done' |
   // a bare `allowBuilds:` has a null value: an empty map, ours to fill
   if (doc.get('allowBuilds') == null) doc.set('allowBuilds', doc.createNode({}));
   if (!isMap(doc.get('allowBuilds'))) return 'done'; // not a map: not ours to rewrite
-  const pending = req.packages.filter((p) => {
+  const pending = req.packages.filter(isBugseePackage).filter((p) => {
     const current = doc.getIn(['allowBuilds', p]);
     return current !== true && current !== false;
   });
