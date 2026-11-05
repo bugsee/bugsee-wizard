@@ -1,0 +1,16 @@
+{
+  "name": "e2e-rspack-build",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rspack build"
+  },
+  "dependencies": {
+    "@bugsee/browser": "beta"
+  },
+  "devDependencies": {
+    "@rspack/cli": "2.2.9",
+    "@rspack/core": "2.2.9"
+  }
+}

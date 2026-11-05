@@ -149,6 +149,10 @@ describe('recipe through the multi-scheme prompt', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
       token: 'TOK',
       options,
     });
@@ -166,6 +170,10 @@ describe('recipe through the multi-scheme prompt', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
       token: 'TOK',
       options,
     });
@@ -174,7 +182,17 @@ describe('recipe through the multi-scheme prompt', () => {
     expect(await readFixture(fixture, 'Other/AppDelegate.swift')).toContain('Bugsee.launch');
     // Rollback discovers the DEFAULT scheme's AppDelegate only; it must still
     // clean the other target's.
-    expect(await runIosRollback({ cwd: fixture, debug: false, dryRun: false })).toBe('ok');
+    expect(
+      await runIosRollback({
+        cwd: fixture,
+        debug: false,
+        dryRun: false,
+        nonInteractive: false,
+        json: false,
+        ignoreGitChanges: false,
+        yes: false,
+      }),
+    ).toBe('ok');
     expect(await readFixture(fixture, 'Other/AppDelegate.swift')).toBe(otherBefore);
     expect(await readFixture(fixture, 'App/AppDelegate.swift')).toBe(appBefore);
   });

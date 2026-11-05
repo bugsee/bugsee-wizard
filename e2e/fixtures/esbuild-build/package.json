@@ -1,0 +1,15 @@
+{
+  "name": "e2e-esbuild-build",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --format=esm --platform=browser --sourcemap --outdir=dist"
+  },
+  "dependencies": {
+    "@bugsee/browser": "beta"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

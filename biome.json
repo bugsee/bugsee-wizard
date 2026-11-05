@@ -6,7 +6,17 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules", "!**/coverage", "!**/*.md", "!**/*.yml"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/coverage",
+      "!**/*.md",
+      "!**/*.yml",
+      "!**/test/fixtures/configs",
+      "!**/test/fixtures/js",
+      "!**/e2e/fixtures"
+    ]
   },
   "formatter": {
     "enabled": true,

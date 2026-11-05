@@ -5,7 +5,11 @@ import path from 'node:path';
 import type { WizardContext } from '../../src/core/context.js';
 import { createLogger } from '../../src/core/logger.js';
 import { discoverRnPaths } from '../../src/recipes/react-native/paths.js';
-import type { RnContext, RnLaunchPath, RnOptions } from '../../src/recipes/react-native/types.js';
+import type {
+  RnContext,
+  RnNativeVersions,
+  RnOptions,
+} from '../../src/recipes/react-native/types.js';
 
 export async function makeFixture(files: Record<string, string>): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'bugsee-rn-'));
@@ -27,24 +31,36 @@ export async function cleanup(dir: string): Promise<void> {
 
 interface MakeRnContextOpts {
   cwd: string;
-  launchPath?: RnLaunchPath;
   autoInjectJsEntry?: boolean;
   runPackageInstall?: boolean;
+  runPodInstall?: boolean;
   tokens?: Record<string, string>;
+  nativeVersions?: RnNativeVersions;
 }
+
+export const FAKE_NATIVE_VERSIONS: RnNativeVersions = {
+  androidSdk: '7.4.2',
+  androidGradlePlugin: '4.0.8',
+  iosSdk: '7.0.0',
+};
 
 /** Constructs an RnContext after running real path discovery. */
 export async function makeRnContext(opts: MakeRnContextOpts): Promise<RnContext> {
   const paths = await discoverRnPaths(opts.cwd);
   const rnOptions: RnOptions = {
-    launchPath: opts.launchPath ?? 'native',
     autoInjectJsEntry: opts.autoInjectJsEntry ?? true,
     runPackageInstall: opts.runPackageInstall ?? false,
+    runPodInstall: opts.runPodInstall ?? false,
+    nativeVersions: opts.nativeVersions ?? FAKE_NATIVE_VERSIONS,
   };
   const base: WizardContext = {
     cwd: opts.cwd,
     debug: false,
     dryRun: false,
+    nonInteractive: false,
+    json: false,
+    ignoreGitChanges: false,
+    yes: false,
     kind: 'react-native',
     tokens: opts.tokens ?? { android: 'AND_TOK', ios: 'IOS_TOKEN' },
     log: createLogger({ debug: false }),

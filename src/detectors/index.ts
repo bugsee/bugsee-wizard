@@ -1,6 +1,7 @@
 import { registerDetector } from '../core/detect.js';
 import { androidDetector } from './android.js';
 import { iosDetector } from './ios.js';
+import { javascriptDetector } from './javascript.js';
 import { reactNativeDetector } from './react-native.js';
 
 let registered = false;
@@ -14,5 +15,7 @@ export function registerAllDetectors(): void {
   registerDetector(reactNativeDetector);
   registerDetector(androidDetector);
   registerDetector(iosDetector);
+  // After react-native: a `react-native` dependency makes this detector return null.
+  registerDetector(javascriptDetector);
   registered = true;
 }

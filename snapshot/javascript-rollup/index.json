@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-rollup",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "efd48ac1927872cfbf5bc361d2ae521267f5279b4c6e44f1d0c034f476dc11f4",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

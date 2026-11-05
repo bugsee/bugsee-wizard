@@ -1,24 +1,18 @@
 #!/usr/bin/env node
-import * as clack from '@clack/prompts';
-import { Command } from '@commander-js/extra-typings';
-
+import { createBaseProgram } from './cli-program.js';
 import { runInstall } from './commands/install.js';
 import { runUninstall } from './commands/uninstall.js';
+import { readEnvFlags, reportError, resolveOptions } from './engine/noninteractive.js';
 
-const program = new Command()
-  .name('bugsee-wizard')
-  .description('Set up Bugsee in your project.')
-  .version('0.0.0', '-v, --version')
-  .option('-C, --cwd <path>', 'run as if started in <path>', process.cwd())
-  .option('--debug', 'enable verbose logging', false)
-  .option('--dry-run', 'plan changes without writing files', false);
+const program = createBaseProgram();
 
 program
   .command('install', { isDefault: true })
   .description('install and configure Bugsee in the current project')
   .action(async () => {
     const opts = program.opts();
-    await runInstall({ cwd: opts.cwd, debug: opts.debug, dryRun: opts.dryRun });
+    // the command sets process.exitCode from its result (exitCodeFor in non-interactive mode)
+    await runInstall(await resolveOptions(opts, process.env));
   });
 
 program
@@ -26,12 +20,13 @@ program
   .description('remove Bugsee configuration from the current project')
   .action(async () => {
     const opts = program.opts();
-    await runUninstall({ cwd: opts.cwd, debug: opts.debug, dryRun: opts.dryRun });
+    await runUninstall(await resolveOptions(opts, process.env));
   });
 
 try {
   await program.parseAsync();
 } catch (err) {
-  clack.log.error(err instanceof Error ? err.message : String(err));
-  process.exit(1);
+  // flag over env, as in buildOptions (which may itself be what threw)
+  const json = program.opts().json ?? readEnvFlags(process.env).json;
+  process.exit(reportError(err, { json }));
 }

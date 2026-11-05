@@ -60,7 +60,8 @@ export const reactNativeDetector: Detector = {
 
     const hasAndroid = await fileExists(path.join(cwd, 'android'));
     const hasIos = await hasXcodeProject(path.join(cwd, 'ios'));
-    if (!hasAndroid && !hasIos) return null;
+    // a managed Expo project has neither directory until `expo prebuild`
+    if (!hasAndroid && !hasIos && !('expo' in deps)) return null;
 
     const evidence: Array<{ path: string; note?: string }> = [
       { path: 'package.json', note: 'react-native dependency' },

@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { runChild } from '../../core/run-child.js';
@@ -9,12 +10,16 @@ export type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
 const LOCKFILE_BY_MANAGER: ReadonlyArray<{ file: string; manager: PackageManager }> = [
   // Bun and pnpm checked first — both can also produce a `package-lock.json`
   // alongside their own lockfile in some setups, so the more specific lock
-  // wins. Yarn last because RN's default historically used yarn.
+  // wins. Yarn last because RN's default historically used yarn. Bun 1.2+ writes the text
+  // `bun.lock`; older Bun wrote the binary `bun.lockb`.
   { file: 'bun.lockb', manager: 'bun' },
+  { file: 'bun.lock', manager: 'bun' },
   { file: 'pnpm-lock.yaml', manager: 'pnpm' },
   { file: 'package-lock.json', manager: 'npm' },
   { file: 'yarn.lock', manager: 'yarn' },
 ];
+
+const MAX_PARENTS = 8;
 
 async function fileExists(p: string): Promise<boolean> {
   try {
@@ -25,16 +30,61 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
+/** A directory that owns the lockfile of the workspace the app sits in (not just any parent). */
+async function isWorkspaceRoot(dir: string): Promise<boolean> {
+  if (await fileExists(path.join(dir, 'pnpm-workspace.yaml'))) return true;
+  try {
+    const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8')) as {
+      workspaces?: unknown;
+    };
+    return pkg.workspaces !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Detect the package manager in use at `rnRoot` by looking for the
- * lockfile each manager produces. Falls back to `npm` when no lockfile
- * is present (the most universal default).
+ * The lockfile of the app: in the app directory, or in a parent that is the root of a workspace
+ * the app belongs to (a monorepo keeps one lockfile at its root). A stray lockfile further up
+ * (a home directory, an unrelated project) is not ours: it would run the wrong install.
+ */
+/** Paths compare case-insensitively on Windows. */
+function samePath(a: string, b: string): boolean {
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+async function findLockfile(
+  rnRoot: string,
+): Promise<{ dir: string; manager: PackageManager } | null> {
+  const start = path.resolve(rnRoot);
+  const home = path.resolve(os.homedir());
+  let dir = start;
+  for (let i = 0; i <= MAX_PARENTS; i++) {
+    if (dir !== start && samePath(dir, home)) break;
+    for (const { file, manager } of LOCKFILE_BY_MANAGER) {
+      if (await fileExists(path.join(dir, file))) {
+        if (dir === start || (await isWorkspaceRoot(dir))) return { dir, manager };
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/**
+ * Detect the package manager in use for `rnRoot` by looking for the lockfile each manager
+ * produces, in the app directory and its parents. Falls back to `npm` when none is found (the most
+ * universal default).
  */
 export async function detectPackageManager(rnRoot: string): Promise<PackageManager> {
-  for (const { file, manager } of LOCKFILE_BY_MANAGER) {
-    if (await fileExists(path.join(rnRoot, file))) return manager;
-  }
-  return 'npm';
+  return (await findLockfile(rnRoot))?.manager ?? 'npm';
+}
+
+/** Where the lockfile (and a pnpm-workspace.yaml) lives; the app directory when there is none. */
+export async function findLockfileRoot(rnRoot: string): Promise<string> {
+  return (await findLockfile(rnRoot))?.dir ?? path.resolve(rnRoot);
 }
 
 const PROBE_TIMEOUT_MS = 5000;

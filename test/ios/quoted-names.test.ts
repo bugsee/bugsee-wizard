@@ -93,6 +93,15 @@ async function quotedProject(targetName: string): Promise<string> {
   return dir;
 }
 
+const BASE_OPTS = {
+  debug: false,
+  dryRun: false,
+  nonInteractive: false,
+  json: false,
+  ignoreGitChanges: false,
+  yes: false,
+};
+
 describe.each(['My App', 'App-Staging'])(
   'pbxproj target named "%s" (quoted in the file)',
   (name) => {
@@ -125,9 +134,8 @@ describe.each(['My App', 'App-Staging'])(
       const files = [PBX, `${name}/AppDelegate.swift`];
       const before = await Promise.all(files.map((f) => readFixture(fixture as string, f)));
       const res = await runIosRecipe({
+        ...BASE_OPTS,
         cwd: fixture,
-        debug: false,
-        dryRun: false,
         token: 'TOK',
         silent: true,
         options: {
@@ -141,7 +149,7 @@ describe.each(['My App', 'App-Staging'])(
       expect(res).toBe('ok');
       expect(await readFixture(fixture, PBX)).toContain('https://github.com/bugsee/spm');
       expect(await readFixture(fixture, `${name}/AppDelegate.swift`)).toContain('Bugsee.launch');
-      expect(await runIosRollback({ cwd: fixture, debug: false, dryRun: false })).toBe('ok');
+      expect(await runIosRollback({ ...BASE_OPTS, cwd: fixture })).toBe('ok');
       const after = await Promise.all(files.map((f) => readFixture(fixture as string, f)));
       expect(after).toEqual(before);
     });

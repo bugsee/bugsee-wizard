@@ -188,6 +188,10 @@ describe('T19 / T11 process notes', () => {
     await runAndroidRecipe({
       cwd: await setup(),
       debug: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
       dryRun: false,
       token: 'T',
       options: opts,
@@ -205,6 +209,10 @@ describe('T19 / T11 process notes', () => {
     const res = await runAndroidRecipe({
       cwd: await setup(),
       debug: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
       dryRun: false,
       token: 'T',
       silent: true,
@@ -225,6 +233,10 @@ describe('T19 / T11 process notes', () => {
     await runAndroidRecipe({
       cwd: await setup(),
       debug: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
       dryRun: false,
       token: 'T',
       silent: true,
@@ -239,6 +251,10 @@ describe('T19 / T11 process notes', () => {
     await runAndroidRecipe({
       cwd: await setup(),
       debug: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
       dryRun: false,
       token: 'T',
       options: opts,

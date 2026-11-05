@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import * as clack from '@clack/prompts';
+import * as ask from '../../core/ask.js';
 import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
 import type { RecipeResult, RollbackResult } from '../../core/result.js';
@@ -104,7 +105,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
   if (input.options?.initMode !== undefined) {
     initMode = input.options.initMode;
   } else {
-    const choice = await clack.select<AndroidInitMode>({
+    const choice = await ask.select<AndroidInitMode>(input.yes, {
       message: 'How should Bugsee initialize?',
       options: [
         {
@@ -131,7 +132,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
   if (input.options?.ndk !== undefined) {
     ndk = input.options.ndk;
   } else {
-    const answer = await clack.confirm({
+    const answer = await ask.confirm(input.yes, {
       message: 'Enable native (NDK) crash reporting?',
       initialValue: false,
     });
@@ -146,7 +147,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
   if (input.options?.feedback !== undefined) {
     feedback = input.options.feedback;
   } else {
-    const answer = await clack.confirm({
+    const answer = await ask.confirm(input.yes, {
       message: 'Include the in-app feedback module?',
       initialValue: false,
     });
@@ -161,7 +162,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
   if (input.options?.sizeAnalysis !== undefined) {
     sizeAnalysis = input.options.sizeAnalysis;
   } else {
-    const answer = await clack.confirm({
+    const answer = await ask.confirm(input.yes, {
       message: 'Enable build size analysis?',
       initialValue: false,
     });
@@ -198,7 +199,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
       ].join('\n'),
       'Multi-process detected',
     );
-    const choice = await clack.select<'auto' | 'snippet' | 'manual'>({
+    const choice = await ask.select<'auto' | 'snippet' | 'manual'>(input.yes, {
       message: 'How would you like to handle this?',
       options: [
         { value: 'auto', label: `Add the <provider> override automatically (process="${proc}")` },
@@ -251,6 +252,10 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
     cwd: input.cwd,
     debug: input.debug,
     dryRun: input.dryRun,
+    nonInteractive: false,
+    json: false,
+    ignoreGitChanges: false,
+    yes: input.yes,
     kind: 'android',
     tokens: { android: tokenValue.trim() },
     log,
@@ -362,6 +367,10 @@ export async function runAndroidRollback(input: WizardOptions): Promise<Rollback
     cwd: input.cwd,
     debug: input.debug,
     dryRun: input.dryRun,
+    nonInteractive: false,
+    json: false,
+    ignoreGitChanges: false,
+    yes: input.yes,
     kind: 'android',
     tokens: {},
     log,

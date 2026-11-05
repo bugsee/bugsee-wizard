@@ -1,0 +1,70 @@
+name: E2E
+
+# The wizard against real projects: the bugsee-javascript samples at the ref pinned in
+# e2e/fixtures.mjs, @bugsee/* from the public npm registry at the `beta` dist-tag, the projects'
+# real builds and the real bugsee-cli. Uploads go to a local mock collector, never to Bugsee.
+on:
+  workflow_dispatch:
+  schedule:
+    # the suite tracks the floating npm `beta` tag and the public registry: catch upstream breakage
+    - cron: '17 5 * * 1'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'snapshot/**'
+      - 'scripts/**'
+      - 'e2e/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsup.config.ts'
+      - 'vitest.e2e.config.ts'
+      - '.github/workflows/e2e.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: e2e (${{ matrix.fixture }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture:
+          - react-spa
+          - webpack-sourcemaps
+          - vue-spa
+          - svelte-spa
+          - angular-spa
+          - node-service
+          # not samples as such: object-form bundler configs, the only shape the wizard edits itself
+          - vite-object-config
+          - webpack-object-config
+          # synthetic projects (e2e/fixtures/): no sample builds with these tools
+          - tsc-build
+          - esbuild-build
+          - rspack-build
+          - rollup-build
+          # pnpm 11 with the Bugsee install scripts not approved (a known bug, see e2e/run.test.ts)
+          - unapproved-builds
+          # the same for a plugin recipe, whose dependency (not the installed package) has the script
+          - unapproved-plugin
+    env:
+      BUGSEE_E2E_FIXTURES: ${{ matrix.fixture }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+        with:
+          version: 11
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # builds dist/cli.js, then runs e2e/run.test.ts for this fixture
+      - run: npm run test:e2e

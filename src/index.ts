@@ -10,6 +10,8 @@ export { getDetectors, registerDetector, runDetectors } from './core/detect.js';
 export type { Logger, LoggerOptions } from './core/logger.js';
 export { createLogger } from './core/logger.js';
 export type {
+  ApplyResult,
+  ManualSnippet,
   RunRollbackResult,
   RunStepsResult,
   Step,

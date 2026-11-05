@@ -28,13 +28,27 @@ vi.mock('../../src/recipes/react-native/run.js', () => ({
   runReactNativeRollback: rollbacks.runReactNativeRollback,
 }));
 
+const web = vi.hoisted(() => ({ runJavaScriptUninstall: vi.fn() }));
+vi.mock('../../src/web/uninstall.js', () => ({
+  runJavaScriptUninstall: web.runJavaScriptUninstall,
+}));
+
 const detectors = vi.hoisted(() => ({ detected: [] as unknown[] }));
 vi.mock('../../src/core/detect.js', () => ({ runDetectors: async () => detectors.detected }));
 vi.mock('../../src/detectors/index.js', () => ({ registerAllDetectors: () => {} }));
 
 import { runUninstall } from '../../src/commands/uninstall.js';
+import { CancelledError, MissingInputError } from '../../src/engine/noninteractive.js';
 
-const opts = { cwd: '/x', debug: false, dryRun: false };
+const opts = {
+  cwd: '/x',
+  debug: false,
+  dryRun: false,
+  nonInteractive: false,
+  json: false,
+  ignoreGitChanges: false,
+  yes: false,
+};
 const outros = () => clack.outro.mock.calls.map((c) => String(c[0]));
 
 beforeEach(() => {
@@ -96,13 +110,171 @@ describe('runUninstall (several platforms)', () => {
   });
 });
 
-describe('runUninstall (dry run)', () => {
-  it('reports a dry run instead of "Bugsee removed." and skips the exit poll', async () => {
+describe('runUninstall (javascript, interactive)', () => {
+  beforeEach(() => {
+    detectors.detected = [{ kind: 'javascript', confidence: 'high' }];
+  });
+  const removed = { ok: true, incomplete: false, steps: [{ id: 'a', outcome: 'reverted' }] };
+
+  it('goes straight to the JavaScript flow (which lists and confirms), then the exit poll', async () => {
+    web.runJavaScriptUninstall.mockResolvedValue(removed);
+    await runUninstall(opts);
+    expect(web.runJavaScriptUninstall).toHaveBeenCalledWith(opts);
+    expect(clack.confirm).not.toHaveBeenCalled();
+    expect(clack.select).toHaveBeenCalledTimes(1);
+    expect(outros()).toEqual(['Bugsee removed.']);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('--dry-run: says nothing was changed, never "removed", no exit poll', async () => {
+    web.runJavaScriptUninstall.mockResolvedValue(removed);
+    await runUninstall({ ...opts, dryRun: true });
+    expect(outros()).toEqual(['Dry run — nothing was changed.']);
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('incomplete: lists what remains, never "removed", no exit poll', async () => {
+    web.runJavaScriptUninstall.mockResolvedValue({
+      ok: true,
+      incomplete: true,
+      steps: [
+        { id: 'package.json', outcome: 'reverted' },
+        { id: 'vite.config.ts', outcome: 'manual' },
+      ],
+    });
+    await runUninstall(opts);
+    expect(outros()).toHaveLength(1);
+    expect(outros()[0]).toContain('vite.config.ts');
+    expect(outros()[0]).not.toContain('package.json');
+    expect(outros()[0]).not.toMatch(/Bugsee removed/);
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('nothing to uninstall: no exit poll', async () => {
+    web.runJavaScriptUninstall.mockResolvedValue({ ok: true, incomplete: false, steps: [] });
+    await runUninstall(opts);
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(outros()).toEqual(['No rollback was performed.']);
+  });
+
+  it('failed (e.g. an invalid manifest): exit 1, no exit poll', async () => {
+    web.runJavaScriptUninstall.mockResolvedValue({
+      ok: false,
+      incomplete: false,
+      steps: [],
+      error: 'invalid-manifest',
+    });
+    await runUninstall(opts);
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('cancelled: Cancelled., exit 0, no poll', async () => {
+    web.runJavaScriptUninstall.mockRejectedValue(new CancelledError());
+    await runUninstall(opts);
+    expect(clack.cancel).toHaveBeenCalledWith('Cancelled.');
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
+  });
+});
+
+describe('runUninstall (non-interactive)', () => {
+  let stdout: string[];
+  beforeEach(() => {
+    stdout = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((c) => {
+      stdout.push(String(c));
+      return true;
+    });
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  const ni = { ...opts, nonInteractive: true, json: true, yes: true };
+
+  it('javascript: one JSON object, never an exit poll or a prompt', async () => {
+    detectors.detected = [{ kind: 'javascript', confidence: 'medium' }];
+    web.runJavaScriptUninstall.mockResolvedValue({
+      ok: true,
+      incomplete: true,
+      steps: [{ id: 'a', outcome: 'manual' }],
+    });
+    await runUninstall({ ...ni, nonInteractive: false });
+    expect(web.runJavaScriptUninstall).toHaveBeenCalledWith(
+      { ...ni, nonInteractive: true },
+      expect.objectContaining({ output: expect.anything() }),
+    );
+    expect(JSON.parse(stdout.join(''))).toMatchObject({ ok: true, incomplete: true });
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(clack.confirm).not.toHaveBeenCalled();
+    expect(clack.intro).not.toHaveBeenCalled();
+    expect(clack.outro).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(3);
+  });
+
+  it('a native kind is unsupported: exit 1', async () => {
+    detectors.detected = [{ kind: 'android', confidence: 'high' }];
+    await runUninstall(ni);
+    expect(JSON.parse(stdout.join(''))).toMatchObject({
+      ok: false,
+      error: 'unsupported-non-interactive',
+      field: 'android',
+    });
+    expect(rollbacks.runAndroidRollback).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('nothing detected: nothing to uninstall, exit 0', async () => {
+    detectors.detected = [];
+    await runUninstall(ni);
+    expect(JSON.parse(stdout.join(''))).toEqual({ ok: true, incomplete: false, steps: [] });
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('several kinds: MissingInputError(kind)', async () => {
+    detectors.detected = [
+      { kind: 'android', confidence: 'high' },
+      { kind: 'ios', confidence: 'high' },
+    ];
+    await expect(runUninstall(ni)).rejects.toEqual(new MissingInputError('kind'));
+  });
+});
+
+describe('runUninstall --yes', () => {
+  const yes = { ...opts, yes: true };
+
+  it('confirms the removal it was asked for without a question, and skips the exit poll', async () => {
     detectors.detected = [{ kind: 'android', confidence: 'high' }];
     rollbacks.runAndroidRollback.mockResolvedValue('ok');
-    await runUninstall({ ...opts, dryRun: true });
-    expect(outros()).toEqual(['Dry run complete — no changes were made.']);
+    await runUninstall(yes);
+    expect(clack.confirm).not.toHaveBeenCalled(); // the "Remove Bugsee from this project?" gate
+    expect(rollbacks.runAndroidRollback).toHaveBeenCalledWith(yes);
+    expect(clack.select).not.toHaveBeenCalled(); // no exit poll: a survey is not a confirmation
+    expect(outros()).toEqual(['Bugsee removed.']);
+  });
+
+  it('with several platforms takes "all detected" without asking', async () => {
+    detectors.detected = [
+      { kind: 'android', confidence: 'high' },
+      { kind: 'ios', confidence: 'high' },
+    ];
+    rollbacks.runAndroidRollback.mockResolvedValue('ok');
+    rollbacks.runIosRollback.mockResolvedValue('ok');
+    await runUninstall(yes);
     expect(clack.select).not.toHaveBeenCalled();
+    expect(rollbacks.runAndroidRollback).toHaveBeenCalled();
+    expect(rollbacks.runIosRollback).toHaveBeenCalled();
+  });
+
+  it('without --yes the removal is still asked, defaulting to no', async () => {
+    detectors.detected = [{ kind: 'android', confidence: 'high' }];
+    clack.confirm.mockResolvedValueOnce(false);
+    await runUninstall(opts);
+    expect(clack.confirm).toHaveBeenCalledWith(expect.objectContaining({ initialValue: false }));
+    expect(rollbacks.runAndroidRollback).not.toHaveBeenCalled();
   });
 });
 

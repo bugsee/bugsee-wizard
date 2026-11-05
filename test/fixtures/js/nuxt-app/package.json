@@ -1,0 +1,13 @@
+{
+  "name": "nuxt-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build"
+  },
+  "dependencies": {
+    "nuxt": "^3.12.0",
+    "vue": "^3.4.0"
+  }
+}

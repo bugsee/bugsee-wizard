@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "id": "javascript-vite",
+  "kind": "buildtool",
+  "platform": "javascript-vite",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Bundler-plugin route: bugseeVitePlugin from @bugsee/vite-plugin injects debug ids and uploads source maps at build time. Source maps must be enabled (build.sourcemap); the wizard only reports that switch, it never edits it. The plugin reads the app token from BUGSEE_APP_TOKEN. Reading .env.bugsee-build-plugin itself only lands with JS issue #182: until then, export BUGSEE_APP_TOKEN in CI (and locally to upload from a local build).",
+  "detect": [
+    {
+      "dependency": "vite"
+    },
+    {
+      "file": "vite.config.ts"
+    }
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/vite-plugin"],
+      "buildScripts": ["@bugsee/bugsee-cli"],
+      "dev": true,
+      "tag": "beta"
+    },
+    {
+      "op": "add-bundler-plugin",
+      "target": "vite",
+      "importFrom": "@bugsee/vite-plugin",
+      "importName": "bugseeVitePlugin",
+      "callArgs": "{ appToken: process.env.BUGSEE_APP_TOKEN }",
+      "ensureSourcemap": true
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env.bugsee-build-plugin"
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env.bugsee-build-plugin",
+      "key": "BUGSEE_APP_TOKEN",
+      "from": "token"
+    }
+  ]
+}

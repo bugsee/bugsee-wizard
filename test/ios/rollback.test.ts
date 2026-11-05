@@ -118,6 +118,10 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
     });
     expect(ran).toBe('ok');
 
@@ -148,6 +152,10 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
     });
     expect(ran).toBe('ok');
 
@@ -174,7 +182,15 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
     await addSchemePostActionStep.apply(otherCtx);
     expect(await readFixture(fixture, rel('Other'))).toContain('Bugsee Symbolication');
 
-    const ran = await runIosRollback({ cwd: fixture, debug: false, dryRun: false });
+    const ran = await runIosRollback({
+      cwd: fixture,
+      debug: false,
+      dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
+    });
     expect(ran).toBe('ok');
     expect(await readFixture(fixture, rel('Other'))).toBe(SAMPLE_XCSCHEME);
     expect(await readFixture(fixture, rel('MinimalApp'))).toBe(defaultBefore);
@@ -186,6 +202,10 @@ describe('iOS full rollback (install → uninstall round-trip)', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
     });
     expect(ran).toBe('not-found');
   });
@@ -213,6 +233,10 @@ describe('runIosRecipe result', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
       token: 'TOK',
       silent: true,
       options: { ...baseOptions, distribution: 'cocoapods' },
@@ -226,6 +250,10 @@ describe('runIosRecipe result', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
       token: 'TOK',
       silent: true,
       options: { ...baseOptions, distribution: 'spm' },
@@ -235,10 +263,29 @@ describe('runIosRecipe result', () => {
 
   it("returns 'failed' when no iOS project is found", async () => {
     fixture = await makeFixture({ 'README.md': '' });
-    const res = await runIosRecipe({ cwd: fixture, debug: false, dryRun: false, token: 'T' });
+    const res = await runIosRecipe({
+      cwd: fixture,
+      debug: false,
+      dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
+      token: 'T',
+    });
     expect(res).toBe('failed');
   });
 });
+
+const BASE_OPTS = {
+  cwd: '',
+  debug: false,
+  dryRun: false,
+  nonInteractive: false,
+  json: false,
+  ignoreGitChanges: false,
+  yes: false,
+};
 
 describe('runIosRecipe through discovery (no hand-built context)', () => {
   const SCHEME_REL = 'MinimalApp.xcodeproj/xcshareddata/xcschemes/MinimalApp.xcscheme';
@@ -274,7 +321,11 @@ describe('runIosRecipe through discovery (no hand-built context)', () => {
     fixture = await discoveredFixture();
     const before = await snapshot(fixture);
 
-    const res = await runIosRecipe({ cwd: fixture, debug: false, dryRun: false });
+    const res = await runIosRecipe({
+      ...BASE_OPTS,
+      cwd: fixture,
+      options: { distribution: 'cocoapods' },
+    });
     expect(res).toBe('ok');
     // The prompts really ran (token entered, not supplied).
     expect(vi.mocked(clack.text)).toHaveBeenCalled();
@@ -295,16 +346,15 @@ describe('runIosRecipe through discovery (no hand-built context)', () => {
       before['MinimalApp.xcodeproj/project.pbxproj'],
     );
 
-    expect(await runIosRollback({ cwd: fixture, debug: false, dryRun: false })).toBe('ok');
+    expect(await runIosRollback({ ...BASE_OPTS, cwd: fixture })).toBe('ok');
     expect(await snapshot(fixture)).toEqual(before);
   });
 
   it('SPM: the discovered target name reaches the pbxproj edit; rollback is byte-exact', async () => {
     fixture = await discoveredFixture();
     const before = await snapshot(fixture);
-    vi.mocked(clack.select).mockImplementationOnce(async () => 'spm' as never);
 
-    const res = await runIosRecipe({ cwd: fixture, debug: false, dryRun: false });
+    const res = await runIosRecipe({ ...BASE_OPTS, cwd: fixture });
     expect(res).toBe('ok');
 
     const after = await snapshot(fixture);
@@ -317,7 +367,7 @@ describe('runIosRecipe through discovery (no hand-built context)', () => {
     expect(after.Podfile).toBe(before.Podfile);
     expect(after[SCHEME_REL]).toContain('Bugsee Symbolication');
 
-    expect(await runIosRollback({ cwd: fixture, debug: false, dryRun: false })).toBe('ok');
+    expect(await runIosRollback({ ...BASE_OPTS, cwd: fixture })).toBe('ok');
     expect(await snapshot(fixture)).toEqual(before);
   });
 });

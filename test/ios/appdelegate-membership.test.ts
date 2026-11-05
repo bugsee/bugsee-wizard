@@ -109,6 +109,10 @@ describe('AppDelegate selection vs. target membership', () => {
       cwd: fixture,
       debug: false,
       dryRun: false,
+      nonInteractive: false,
+      json: false,
+      ignoreGitChanges: false,
+      yes: false,
       token: 'TOK',
       options: {
         distribution: 'spm',

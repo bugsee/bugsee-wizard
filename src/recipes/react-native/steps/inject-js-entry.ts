@@ -15,22 +15,36 @@ import {
 const IMPORT_LINE_RE =
   /^\s*import\s+[^;]+?from\s+['"][^'"]+['"]\s*;?\s*$|^\s*import\s+['"][^'"]+['"]\s*;?\s*$/gm;
 
-function jsLaunchBlock(androidToken: string, iosToken: string): string {
-  return `${JS_LAUNCH_MARKER_BEGIN}
-import Bugsee from '${RN_PACKAGE_NAME}';
-import { Platform } from 'react-native';
-
-Bugsee.launch(Platform.OS === 'ios' ? '${iosToken}' : '${androidToken}');
-${JS_LAUNCH_MARKER_END}
-`;
+/**
+ * The launch call for the platforms whose token is known. A platform without a token gets no
+ * branch: a placeholder would ship as a real token string. Null when there is no token at all.
+ */
+export function launchStatement(
+  tokens: Readonly<Record<string, string>>,
+  platformIdent: string,
+): string | null {
+  const { ios, android } = tokens;
+  if (ios !== undefined && android !== undefined) {
+    return `Bugsee.launch(${platformIdent}.OS === 'ios' ? '${ios}' : '${android}');`;
+  }
+  if (ios !== undefined) {
+    return `if (${platformIdent}.OS === 'ios') {\n  Bugsee.launch('${ios}');\n}`;
+  }
+  if (android !== undefined) {
+    return `if (${platformIdent}.OS === 'android') {\n  Bugsee.launch('${android}');\n}`;
+  }
+  return null;
 }
 
-function jsInitBlock(): string {
-  return `${JS_INIT_MARKER_BEGIN}
+function jsLaunchBlock(tokens: Readonly<Record<string, string>>): string | null {
+  const statement = launchStatement(tokens, 'BugseePlatform');
+  if (statement === null) return null;
+  return `${JS_LAUNCH_MARKER_BEGIN}
 import Bugsee from '${RN_PACKAGE_NAME}';
+import { Platform as BugseePlatform } from 'react-native';
 
-Bugsee.initialize();
-${JS_INIT_MARKER_END}
+${statement}
+${JS_LAUNCH_MARKER_END}
 `;
 }
 
@@ -52,9 +66,15 @@ function findInsertPosition(source: string): number {
   return source[lastEnd] === '\n' ? lastEnd + 1 : lastEnd;
 }
 
+/** The note a skipped step carries when the user still has to add the launch by hand. */
+export const SNIPPET_NOTE_MARK = 'snippet will be printed at the end';
+
+/** The entry file as it was before this run replaced its launch block (per run). */
+const replaced = new WeakMap<object, string>();
+
 export const injectJsEntryStep: Step<RnContext> = {
   id: 'react-native.inject-js-entry',
-  title: 'Inject Bugsee launch / init into JS entry',
+  title: 'Launch Bugsee from the JS entry',
 
   async precheck(ctx): Promise<StepStatus> {
     if (!ctx.rnOptions.autoInjectJsEntry) {
@@ -63,17 +83,23 @@ export const injectJsEntryStep: Step<RnContext> = {
     if (!ctx.rnPaths.jsEntry) {
       return {
         kind: 'satisfied',
-        note: 'no App.tsx / index.js found — snippet will be printed at the end',
+        note: `no App.tsx / index.js found — ${SNIPPET_NOTE_MARK}`,
       };
     }
     const content = await readOrNull(ctx.rnPaths.jsEntry.path);
     if (content === null) {
       return {
         kind: 'satisfied',
-        note: 'JS entry not readable — snippet will be printed at the end',
+        note: `JS entry not readable — ${SNIPPET_NOTE_MARK}`,
       };
     }
-    if (content.includes(JS_LAUNCH_MARKER_BEGIN) || content.includes(JS_INIT_MARKER_BEGIN)) {
+    // only the exact block for these tokens counts: a stale or foreign one is replaced on apply
+    const expected = jsLaunchBlock(ctx.tokens);
+    if (
+      expected !== null &&
+      content.includes(expected) &&
+      !content.includes(JS_INIT_MARKER_BEGIN)
+    ) {
       return { kind: 'satisfied' };
     }
     return { kind: 'pending' };
@@ -81,15 +107,12 @@ export const injectJsEntryStep: Step<RnContext> = {
 
   async apply(ctx) {
     if (!ctx.rnPaths.jsEntry) throw new Error('JS entry path not resolved');
-    const original = (await readOrNull(ctx.rnPaths.jsEntry.path)) ?? '';
-    let block: string;
-    if (ctx.rnOptions.launchPath === 'javascript') {
-      const androidToken = ctx.tokens.android ?? '<ANDROID_TOKEN>';
-      const iosToken = ctx.tokens.ios ?? '<IOS_TOKEN>';
-      block = jsLaunchBlock(androidToken, iosToken);
-    } else {
-      block = jsInitBlock();
-    }
+    const block = jsLaunchBlock(ctx.tokens);
+    if (block === null) throw new Error('No Bugsee token to launch with');
+    const read = (await readOrNull(ctx.rnPaths.jsEntry.path)) ?? '';
+    replaced.set(ctx, read);
+    let original = stripMarkerBlock(read, JS_LAUNCH_MARKER_BEGIN, JS_LAUNCH_MARKER_END);
+    original = stripMarkerBlock(original, JS_INIT_MARKER_BEGIN, JS_INIT_MARKER_END);
     const insertAt = findInsertPosition(original);
     const updated = original.slice(0, insertAt) + block + original.slice(insertAt);
     await writeFile(ctx.rnPaths.jsEntry.path, updated);
@@ -97,11 +120,16 @@ export const injectJsEntryStep: Step<RnContext> = {
 
   async rollback(ctx) {
     if (!ctx.rnPaths.jsEntry) return;
+    // this run replaced the entry: put back exactly what was there (a customised or stale block)
+    const before = replaced.get(ctx);
+    if (before !== undefined) {
+      replaced.delete(ctx);
+      await writeFile(ctx.rnPaths.jsEntry.path, before);
+      return;
+    }
+    // uninstall: strip the launch block, and the init block an earlier wizard wrote
     const content = await readOrNull(ctx.rnPaths.jsEntry.path);
     if (content === null) return;
-    // Strip whichever marker block is present — at most one is at any
-    // given time (launch and init are mutually exclusive), but the user
-    // may have re-run the wizard with a different launch path.
     let stripped = stripMarkerBlock(content, JS_LAUNCH_MARKER_BEGIN, JS_LAUNCH_MARKER_END);
     stripped = stripMarkerBlock(stripped, JS_INIT_MARKER_BEGIN, JS_INIT_MARKER_END);
     if (stripped !== content) {

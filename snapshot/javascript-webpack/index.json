@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-webpack",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "bdbf2cd51060c68aae2b5d1b81cd9e2799f5fbf9a474a12ee1daf3d5a40873dd",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

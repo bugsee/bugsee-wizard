@@ -1,0 +1,17 @@
+{
+  "name": "e2e-tsc-build",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node lib/index.js"
+  },
+  "dependencies": {
+    "@bugsee/node": "beta"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}

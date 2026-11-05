@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import * as clack from '@clack/prompts';
+import * as ask from '../../core/ask.js';
 
 import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
@@ -53,7 +54,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
       const name = schemePath.split('/').pop()?.replace('.xcscheme', '') ?? schemePath;
       return { value: schemePath, label: name };
     });
-    const picked = await clack.select<string>({
+    const picked = await ask.select<string>(input.yes, {
       message: 'Multiple schemes found — which one is the main app target?',
       options,
       initialValue: paths.scheme,
@@ -98,39 +99,17 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
     tokenValue = tokenAnswer;
   }
 
-  let distribution: IosDistributionMethod;
-  if (input.options?.distribution !== undefined) {
-    distribution = input.options.distribution;
-  } else {
-    const distributionDefault: IosDistributionMethod = paths.podfile ? 'cocoapods' : 'spm';
-    const choice = await clack.select<IosDistributionMethod>({
-      message: 'Distribution method for the Bugsee SDK',
-      options: [
-        {
-          value: 'cocoapods',
-          label: 'CocoaPods',
-          hint: paths.podfile ? 'Podfile detected' : 'no Podfile detected',
-        },
-        {
-          value: 'spm',
-          label: 'Swift Package Manager',
-          hint: 'github.com/bugsee/spm',
-        },
-      ],
-      initialValue: distributionDefault,
-    });
-    if (clack.isCancel(choice)) {
-      clack.cancel('Cancelled.');
-      return 'cancelled';
-    }
-    distribution = choice;
-  }
+  // The Bugsee iOS SDK ships only through Swift Package Manager (CocoaPods artifacts stopped in
+  // September 2026), so there is nothing to ask, even in a project that has a Podfile. A parent
+  // recipe may still pass its own choice (React Native, until it moves to SPM too). Rolling back a
+  // CocoaPods install made by an older wizard keeps working: see runIosRollback.
+  const distribution: IosDistributionMethod = input.options?.distribution ?? 'spm';
 
   let sizeAnalysis: boolean;
   if (input.options?.sizeAnalysis !== undefined) {
     sizeAnalysis = input.options.sizeAnalysis;
   } else {
-    const answer = await clack.confirm({
+    const answer = await ask.confirm(input.yes, {
       message: 'Enable build size analysis?',
       initialValue: false,
     });
@@ -145,7 +124,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
   if (input.options?.sizeAnalysisAllConfigurations !== undefined) {
     sizeAnalysisAllConfigurations = input.options.sizeAnalysisAllConfigurations;
   } else if (sizeAnalysis) {
-    const allConfigs = await clack.confirm({
+    const allConfigs = await ask.confirm(input.yes, {
       message: 'Upload for all build configurations? (default: Release only)',
       initialValue: false,
     });
@@ -161,7 +140,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
     runPodInstall = input.options.runPodInstall;
   } else if (distribution === 'cocoapods') {
     const podAvailable = isPodOnPath();
-    const answer = await clack.confirm({
+    const answer = await ask.confirm(input.yes, {
       message: podAvailable
         ? 'Run `pod install` now to sync everything?'
         : 'Run `pod install` now? (CocoaPods is not on PATH — this will fail unless installed first)',
@@ -178,7 +157,7 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
   if (input.options?.autoInjectAppDelegate !== undefined) {
     autoInjectAppDelegate = input.options.autoInjectAppDelegate;
   } else {
-    const answer = await clack.confirm({
+    const answer = await ask.confirm(input.yes, {
       message:
         paths.appDelegate !== null
           ? `Auto-inject Bugsee.launch into ${paths.appDelegate.split('/').slice(-2).join('/')}?`
@@ -204,6 +183,10 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
     cwd: input.cwd,
     debug: input.debug,
     dryRun: input.dryRun,
+    nonInteractive: false,
+    json: false,
+    ignoreGitChanges: false,
+    yes: input.yes,
     kind: 'ios',
     tokens: { ios: tokenValue.trim() },
     log,
@@ -294,6 +277,10 @@ export async function runIosRollback(input: WizardOptions): Promise<RollbackResu
     cwd: input.cwd,
     debug: input.debug,
     dryRun: input.dryRun,
+    nonInteractive: false,
+    json: false,
+    ignoreGitChanges: false,
+    yes: input.yes,
     kind: 'ios',
     tokens: {},
     log,

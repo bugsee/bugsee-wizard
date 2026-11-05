@@ -110,7 +110,17 @@ describe('T27 rollback without a shared scheme', () => {
     });
     await addPodStep.apply(ctx);
     expect(await readFixture(fixture, 'Podfile')).toContain("pod 'Bugsee'");
-    expect(await runIosRollback({ cwd: fixture, debug: false, dryRun: false })).toBe('ok');
+    expect(
+      await runIosRollback({
+        cwd: fixture,
+        debug: false,
+        dryRun: false,
+        nonInteractive: false,
+        json: false,
+        ignoreGitChanges: false,
+        yes: false,
+      }),
+    ).toBe('ok');
     expect(await readFixture(fixture, 'Podfile')).not.toContain("pod 'Bugsee'");
   });
 });

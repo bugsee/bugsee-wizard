@@ -1,0 +1,9 @@
+// top comment
+{
+  /* compiler block */
+  "compilerOptions": {
+    "target": "ES2022", // keep
+    "strict": true
+  },
+  "include": ["src"] // trailing
+}
