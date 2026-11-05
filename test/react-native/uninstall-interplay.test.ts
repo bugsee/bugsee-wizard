@@ -98,7 +98,8 @@ describe("uninstall: the new steps and the earlier wizards' rollbacks together",
           null,
           2,
         ),
-        'android/bugsee.properties': 'app_token=OLD_WIZARD_TOKEN\nsomething=else\n',
+        'android/bugsee.properties':
+          '# bugsee:wizard\napp_token=OLD_WIZARD_TOKEN\nsomething=else\n',
       }),
     );
     expect(await runReactNativeRollback(opts())).toBe('ok');
@@ -115,7 +116,7 @@ describe("uninstall: the new steps and the earlier wizards' rollbacks together",
     fixture = await makeFixture(
       project({
         'App.tsx': `${legacyInit}${SAMPLE_APP_TSX}`,
-        'android/bugsee.properties': 'app_token=OLD_WIZARD_TOKEN\n',
+        'android/bugsee.properties': '# bugsee:wizard\napp_token=OLD_WIZARD_TOKEN\n',
       }),
     );
     expect(await runReactNativeRollback(opts())).toBe('ok');
@@ -130,7 +131,10 @@ describe("uninstall: the new steps and the earlier wizards' rollbacks together",
       `const Bugsee = require('react-native-bugsee');\n${SAMPLE_APP_TSX}`,
     ]) {
       fixture = await makeFixture(
-        project({ 'index.js': body, 'android/bugsee.properties': 'app_token=OLD\n' }),
+        project({
+          'index.js': body,
+          'android/bugsee.properties': '# bugsee:wizard\napp_token=OLD\n',
+        }),
       );
       expect(await runReactNativeRollback(opts())).toBe('ok');
       expect((await tree(fixture))['android/bugsee.properties'] ?? '', body).not.toContain(
@@ -146,7 +150,7 @@ describe("uninstall: the new steps and the earlier wizards' rollbacks together",
     fixture = await makeFixture(
       project({
         'android/app/build.gradle': oldApp,
-        'android/bugsee.properties': 'app_token=OLD\nsomething=else\n',
+        'android/bugsee.properties': '# bugsee:wizard\napp_token=OLD\nsomething=else\n',
       }),
     );
     expect(await runReactNativeRollback(opts())).toBe('ok');
@@ -172,7 +176,7 @@ describe("uninstall: the new steps and the earlier wizards' rollbacks together",
       project({
         ...res,
         'android/app/build.gradle': oldApp,
-        'android/bugsee.properties': 'app_token=OLD\n',
+        'android/bugsee.properties': '# bugsee:wizard\napp_token=OLD\n',
       }),
     );
     expect(await runReactNativeRollback(opts())).toBe('ok');

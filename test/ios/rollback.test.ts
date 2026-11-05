@@ -277,6 +277,16 @@ describe('runIosRecipe result', () => {
   });
 });
 
+const BASE_OPTS = {
+  cwd: '',
+  debug: false,
+  dryRun: false,
+  nonInteractive: false,
+  json: false,
+  ignoreGitChanges: false,
+  yes: false,
+};
+
 describe('runIosRecipe through discovery (no hand-built context)', () => {
   const SCHEME_REL = 'MinimalApp.xcodeproj/xcshareddata/xcschemes/MinimalApp.xcscheme';
   const PODFILE = SAMPLE_SIMPLE_PODFILE.replace("'MyApp'", "'MinimalApp'");
@@ -311,7 +321,11 @@ describe('runIosRecipe through discovery (no hand-built context)', () => {
     fixture = await discoveredFixture();
     const before = await snapshot(fixture);
 
-    const res = await runIosRecipe({ cwd: fixture, debug: false, dryRun: false });
+    const res = await runIosRecipe({
+      ...BASE_OPTS,
+      cwd: fixture,
+      options: { distribution: 'cocoapods' },
+    });
     expect(res).toBe('ok');
     // The prompts really ran (token entered, not supplied).
     expect(vi.mocked(clack.text)).toHaveBeenCalled();
@@ -332,16 +346,15 @@ describe('runIosRecipe through discovery (no hand-built context)', () => {
       before['MinimalApp.xcodeproj/project.pbxproj'],
     );
 
-    expect(await runIosRollback({ cwd: fixture, debug: false, dryRun: false })).toBe('ok');
+    expect(await runIosRollback({ ...BASE_OPTS, cwd: fixture })).toBe('ok');
     expect(await snapshot(fixture)).toEqual(before);
   });
 
   it('SPM: the discovered target name reaches the pbxproj edit; rollback is byte-exact', async () => {
     fixture = await discoveredFixture();
     const before = await snapshot(fixture);
-    vi.mocked(clack.select).mockImplementationOnce(async () => 'spm' as never);
 
-    const res = await runIosRecipe({ cwd: fixture, debug: false, dryRun: false });
+    const res = await runIosRecipe({ ...BASE_OPTS, cwd: fixture });
     expect(res).toBe('ok');
 
     const after = await snapshot(fixture);
@@ -354,7 +367,7 @@ describe('runIosRecipe through discovery (no hand-built context)', () => {
     expect(after.Podfile).toBe(before.Podfile);
     expect(after[SCHEME_REL]).toContain('Bugsee Symbolication');
 
-    expect(await runIosRollback({ cwd: fixture, debug: false, dryRun: false })).toBe('ok');
+    expect(await runIosRollback({ ...BASE_OPTS, cwd: fixture })).toBe('ok');
     expect(await snapshot(fixture)).toEqual(before);
   });
 });
