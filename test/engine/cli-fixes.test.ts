@@ -180,6 +180,8 @@ describe('program definition', () => {
       expect(parse([])[k]).toBeUndefined();
     }
     expect(parse(['--no-yes']).yes).toBe(false);
+    expect(parse(['-y']).yes).toBe(true);
+    expect(parse(['--yes']).yes).toBe(true);
     expect(parse(['--no-telemetry']).telemetry).toBe(false);
     expect(parse(['--no-ignore-git-changes']).ignoreGitChanges).toBe(false);
     expect(parse(['--no-non-interactive']).nonInteractive).toBe(false);

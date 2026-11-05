@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { opToStep } from '../../../src/engine/ops/index.js';
-import type { OpSpec } from '../../../src/engine/recipe.js';
+import type { OpSpec, RecipeContext } from '../../../src/engine/recipe.js';
 import { makeCtx, makeTmp, npmAt } from '../helpers.js';
 
 // A fake `npm` first on PATH, executed for real through runChild (shell: false).
@@ -322,8 +322,14 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     process.env.PATH = saved;
     await tmp.cleanup();
   });
-  const run = (pkgs: string[], tag?: string) => {
-    const ctx = makeCtx(dir, { packageDir: proj, packageManager: pnpmAt(proj) });
+  // `--yes` by default: the approval edits the project's pnpm settings, so it needs consent
+  const run = (pkgs: string[], tag?: string, over: Partial<RecipeContext> = {}) => {
+    const ctx = makeCtx(dir, {
+      packageDir: proj,
+      packageManager: pnpmAt(proj),
+      yes: true,
+      ...over,
+    });
     const step = opToStep({
       op: 'install-package',
       packages: pkgs,
@@ -332,6 +338,17 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     });
     return { ctx, step, done: step.apply(ctx) };
   };
+  const asker = (answer = true) => {
+    const asked: string[] = [];
+    return {
+      asked,
+      confirm: async (m: string) => {
+        asked.push(m);
+        return answer;
+      },
+    };
+  };
+
   const args = async () => (await readFile(`${log}.args`, 'utf8')).trim().split('\n');
 
   it('on pnpm 11 approves the installed packages BEFORE the install and keeps the other entries and comments', async () => {
@@ -399,6 +416,100 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     expect(seen).toContain('- apps/*');
   });
 
+  describe('consent', () => {
+    const failing = async () => {
+      await fakePnpm('11.3.0');
+      await writeFile(
+        join(dir, 'pbin', 'pnpm'),
+        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 11.3.0; exit 0; fi\necho boom >&2; exit 1\n',
+      );
+    };
+    it('--yes edits without asking', async () => {
+      await fakePnpm('11.3.0');
+      const a = asker(false);
+      await run(['@bugsee/cli'], undefined, {
+        yes: true,
+        nonInteractive: false,
+        confirm: a.confirm,
+      }).done;
+      expect(a.asked).toEqual([]);
+      expect(await readFile(ws(), 'utf8')).toMatch(/@bugsee\/cli['"]: true/);
+    });
+
+    it('interactive: asks once, naming the packages and the file, and edits on yes', async () => {
+      await fakePnpm('11.3.0');
+      const a = asker(true);
+      await run(['@bugsee/cli', 'left-pad'], undefined, {
+        yes: false,
+        nonInteractive: false,
+        confirm: a.confirm,
+      }).done;
+      expect(a.asked).toHaveLength(1);
+      expect(a.asked[0]).toContain('@bugsee/cli');
+      expect(a.asked[0]).toContain('left-pad');
+      expect(a.asked[0]).toContain('pnpm-workspace.yaml');
+      expect(await readFile(ws(), 'utf8')).toMatch(/left-pad: true/);
+    });
+
+    it('interactive: on no, the file is untouched and a failing install points at the fix', async () => {
+      await failing();
+      const a = asker(false);
+      await expect(
+        run(['@bugsee/cli'], undefined, { yes: false, nonInteractive: false, confirm: a.confirm })
+          .done,
+      ).rejects.toThrow(/boom[\s\S]*approve-builds[\s\S]*--yes/);
+      expect(a.asked).toHaveLength(1);
+      await expect(readFile(ws())).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('interactive: on no, an install that succeeds anyway (strictDepBuilds off) is fine', async () => {
+      await fakePnpm('11.3.0');
+      await run(['@bugsee/cli'], undefined, {
+        yes: false,
+        nonInteractive: false,
+        confirm: asker(false).confirm,
+      }).done;
+      expect(await args()).toEqual(['add', '-D', '@bugsee/cli']);
+      await expect(readFile(ws())).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('non-interactive without --yes never edits and never asks', async () => {
+      await failing();
+      const a = asker(true);
+      await expect(
+        run(['@bugsee/cli'], undefined, { yes: false, nonInteractive: true, confirm: a.confirm })
+          .done,
+      ).rejects.toThrow(/approve-builds[\s\S]*--yes/);
+      expect(a.asked).toEqual([]);
+      await expect(readFile(ws())).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('does not ask when every package is already decided in allowBuilds', async () => {
+      await fakePnpm('11.3.0');
+      await writeFile(ws(), "allowBuilds:\n  '@bugsee/cli': true\n  other: false\n");
+      const a = asker(true);
+      await run(['@bugsee/cli', 'other'], undefined, {
+        yes: false,
+        nonInteractive: false,
+        confirm: a.confirm,
+      }).done;
+      expect(a.asked).toEqual([]);
+    });
+
+    it('asks only about the packages that still need approval', async () => {
+      await fakePnpm('11.3.0');
+      await writeFile(ws(), "allowBuilds:\n  '@bugsee/cli': true\n");
+      const a = asker(true);
+      await run(['@bugsee/cli', 'left-pad'], undefined, {
+        yes: false,
+        nonInteractive: false,
+        confirm: a.confirm,
+      }).done;
+      expect(a.asked[0]).toContain('left-pad');
+      expect(a.asked[0]).not.toContain('@bugsee/cli');
+    });
+  });
+
   it('does nothing on pnpm 10, on an unreadable version, or on a workspace file it cannot parse', async () => {
     await fakePnpm('10.34.9');
     await run(['@bugsee/cli']).done;
@@ -415,7 +526,13 @@ describe.skipIf(process.platform === 'win32')('install-package op with pnpm', ()
     await run(['@bugsee/cli']).done;
     expect(await readFile(ws(), 'utf8')).toBe(dup);
     await writeFile(ws(), 'allowBuilds: nope\n');
-    await run(['@bugsee/cli']).done;
+    const never = asker();
+    await run(['@bugsee/cli'], undefined, {
+      yes: false,
+      nonInteractive: false,
+      confirm: never.confirm,
+    }).done;
+    expect(never.asked).toEqual([]); // nothing to offer: no question either
     expect(await readFile(ws(), 'utf8')).toBe('allowBuilds: nope\n');
   });
 

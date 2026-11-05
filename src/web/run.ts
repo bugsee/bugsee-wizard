@@ -222,6 +222,7 @@ export async function runJavaScriptInstall(
     packageManager,
     token,
     manifest: recorder,
+    confirm: (m) => deps.prompts.confirm(m),
   };
   const run = await executeRecipe(recipe, ctx);
 

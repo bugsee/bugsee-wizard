@@ -40,6 +40,8 @@ export interface RecipeContext extends WizardContext {
   readonly packageManager: DetectedPackageManager | null;
   readonly token: string;
   readonly manifest: ManifestRecorder;
+  /** Ask the user a yes/no question (interactive runs only; absent in tests and non-interactive use). */
+  readonly confirm?: (message: string) => Promise<boolean>;
 }
 
 export class RecipeError extends Error {

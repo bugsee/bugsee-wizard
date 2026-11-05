@@ -34,8 +34,8 @@ export function createBaseProgram() {
     )
     .option('--no-ignore-git-changes', 'override the env var and turn this off')
     .option(
-      '--yes',
-      'confirm destructive actions such as uninstall in non-interactive mode (env: BUGSEE_WIZARD_YES)',
+      '-y, --yes',
+      'answer yes to confirmations: destructive actions such as uninstall, and approving the Bugsee install scripts in pnpm-workspace.yaml on pnpm 11 (env: BUGSEE_WIZARD_YES)',
     )
     .option('--no-yes', 'override the env var and turn this off')
     .option(

@@ -1,6 +1,7 @@
 import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { WizardOptions } from '../../src/core/context.js';
 import type { WizardRunResult } from '../../src/engine/noninteractive.js';
 import { type RecipeQuery, resolveRecipe } from '../../src/engine/recipe-store.js';
 import { runJavaScriptInstall } from '../../src/web/run.js';
@@ -35,7 +36,10 @@ const path = require('node:path');
 const name = path.basename(process.argv[1]);
 const args = process.argv.slice(2);
 // the wizard asks \`pnpm --version\` to decide on approving install scripts: this fake stays silent
-if (args.includes('--version')) process.exit(0);
+if (args.includes('--version')) {
+  if (process.env.FAKE_PNPM_VERSION) console.log(process.env.FAKE_PNPM_VERSION);
+  process.exit(0);
+}
 fs.appendFileSync(process.env.FAKE_NPM_LOG, JSON.stringify({ pm: name, args, cwd: process.cwd() }) + '\\n');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const field = args.includes('-D') ? 'devDependencies' : 'dependencies';
@@ -221,6 +225,73 @@ describe.skipIf(process.platform === 'win32')('bundled recipes, end to end', () 
     });
   });
 });
+
+describe.skipIf(process.platform === 'win32')(
+  'pnpm 11 install-script approval, through the run',
+  () => {
+    let sb: Sandbox | undefined;
+    afterEach(async () => {
+      delete process.env.FAKE_PNPM_VERSION;
+      await sb?.cleanup();
+      sb = undefined;
+    });
+    const interactive = (project: string, over: Partial<WizardOptions> = {}) =>
+      baseOpts(project, { yes: false, nonInteractive: false, ...over });
+
+    it('asks the user, edits pnpm-workspace.yaml on yes, and uninstall takes it back out', async () => {
+      sb = await sandbox('rspack-app');
+      await withFakePms(sb);
+      process.env.FAKE_PNPM_VERSION = '11.3.0';
+      const original = await tree(sb.project);
+      const asked: string[] = [];
+      const confirm = vi.fn(async (m: string) => {
+        asked.push(m);
+        return true;
+      });
+      const deps = () =>
+        makeDeps(captureOutput(), {
+          resolveRecipe: realStore([]),
+          prompts: { confirm, select: vi.fn() },
+        });
+      const first = await runJavaScriptInstall(interactive(sb.project), deps());
+      expect(first.ok).toBe(true);
+      const approval = asked.filter((m) => m.includes('allowBuilds'));
+      expect(approval).toHaveLength(1);
+      expect(approval[0]).toContain('@bugsee/cli');
+      expect(await readFile(join(sb.project, 'pnpm-workspace.yaml'), 'utf8')).toMatch(
+        /@bugsee\/cli['"]: true/,
+      );
+      const second = await runJavaScriptInstall(interactive(sb.project), deps());
+      expect(second.ok).toBe(true);
+      expect(asked.filter((m) => m.includes('allowBuilds'))).toHaveLength(1); // no second question
+      const un = await runJavaScriptUninstall(
+        baseOpts(sb.project, { yes: true }),
+        makeDeps(captureOutput()),
+      );
+      expect(un.ok).toBe(true);
+      expect(await tree(sb.project)).toEqual(original);
+    });
+
+    it('non-interactive without --yes leaves pnpm-workspace.yaml alone', async () => {
+      sb = await sandbox('rspack-app');
+      await withFakePms(sb);
+      process.env.FAKE_PNPM_VERSION = '11.3.0';
+      const confirm = vi.fn(async () => true);
+      const r = await runJavaScriptInstall(
+        baseOpts(sb.project, { yes: false, nonInteractive: true }),
+        makeDeps(captureOutput(), {
+          resolveRecipe: realStore([]),
+          prompts: { confirm, select: vi.fn() },
+        }),
+      );
+      expect(r.ok).toBe(true); // the fake pnpm succeeds: the real one would fail with the hint
+      expect(confirm).not.toHaveBeenCalled();
+      await expect(readFile(join(sb.project, 'pnpm-workspace.yaml'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    });
+  },
+);
 
 // referenced by the CLI-route cases
 void SCRIPT_COMMAND;

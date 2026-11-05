@@ -511,12 +511,24 @@ describe.runIf(selected.includes(UNAPPROVED))(UNAPPROVED, () => {
   });
 
   // pnpm 11 fails `pnpm add` with ERR_PNPM_IGNORED_BUILDS for any dependency whose install script
-  // is not approved; @bugsee/cli (and the plugins' @bugsee/bugsee-cli) have one. The wizard approves
-  // exactly the packages it installs in pnpm-workspace.yaml before installing (merging with any
-  // approvals already there: the esbuild-build fixture covers that), so a stock project works, and
-  // uninstall takes the approval out again.
-  it('installs on a pnpm project that has not approved the Bugsee install scripts', async () => {
+  // is not approved; @bugsee/cli (and the plugins' @bugsee/bugsee-cli) have one. Editing the
+  // project's pnpm settings needs consent: without --yes (and non-interactively there is nobody to
+  // ask) the wizard leaves pnpm-workspace.yaml alone, the install fails with a hint, and the tree
+  // is exactly as it was. With --yes it approves exactly the packages it installs (merging with any
+  // approvals already there: the esbuild-build fixture covers that), and uninstall takes the
+  // approval out again.
+  it('without --yes: fails with the hint and leaves the tree exactly as it was', async () => {
     const r = await wizard(dir, ['--non-interactive', '--json', '--token', TOKEN]);
+    const res = parseResult(r);
+    expect(res.ok, show(r)).toBe(false);
+    expect(res.steps).toEqual([{ id: 'install-package:@bugsee/cli', outcome: 'failed' }]);
+    expect(r.stderr + r.stdout).toContain('approve-builds');
+    expect(r.stderr + r.stdout).toContain('--yes');
+    expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
+  });
+
+  it('with --yes: installs on a pnpm project that has not approved the Bugsee install scripts', async () => {
+    const r = await wizard(dir, ['--non-interactive', '--yes', '--json', '--token', TOKEN]);
     expect(parseResult(r).ok, show(r)).toBe(true);
     const yaml = readFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'utf8');
     expect(yaml).toMatch(/['"]?@bugsee\/cli['"]?:\s*true/);
