@@ -89,18 +89,25 @@ function pickMainScheme(schemes: string[], xcodeProjectName: string): string | n
 
 const APPDELEGATE_GLOBS = ['**/AppDelegate.swift', '**/AppDelegate.m', '**/AppDelegate.mm'];
 
-async function findAppDelegate(
-  cwd: string,
-  targetSources: readonly string[] | null,
-): Promise<{ path: string; language: AppDelegateLanguage } | null> {
-  // Scan the cwd and the typical RN `ios/` subdir. Skip vendored folders so
-  // we don't match Pods/, node_modules/, build artefacts, etc.
-  let matches = await fastGlob(APPDELEGATE_GLOBS, {
+/**
+ * Every AppDelegate file discovery would consider under `cwd`. Skips vendored
+ * folders (Pods/, node_modules/, build artefacts). Used by rollback to clean
+ * AppDelegates of every target, not just the default scheme's.
+ */
+export async function listAppDelegates(cwd: string): Promise<string[]> {
+  return fastGlob(APPDELEGATE_GLOBS, {
     cwd,
     absolute: true,
     followSymbolicLinks: false,
     ignore: ['**/node_modules/**', '**/Pods/**', '**/build/**', '**/DerivedData/**'],
   });
+}
+
+async function findAppDelegate(
+  cwd: string,
+  targetSources: readonly string[] | null,
+): Promise<{ path: string; language: AppDelegateLanguage } | null> {
+  let matches = await listAppDelegates(cwd);
   // When the pbxproj gives the target's source list, only an AppDelegate in
   // it is eligible; if the list has none (e.g. a SwiftUI `@main App` target
   // next to another target that has an AppDelegate) there is no AppDelegate
@@ -228,7 +235,9 @@ export async function withScheme(paths: IosPaths, scheme: string): Promise<IosPa
     scheme,
     schemeName,
     targetName,
-    appDelegate: appDelegate?.path ?? paths.appDelegate,
-    appDelegateLanguage: appDelegate?.language ?? paths.appDelegateLanguage,
+    // Never fall back to the previous scheme's AppDelegate: it belongs to a
+    // different target. null stays null (the recipe prints the snippet).
+    appDelegate: appDelegate?.path ?? null,
+    appDelegateLanguage: appDelegate?.language ?? null,
   };
 }
