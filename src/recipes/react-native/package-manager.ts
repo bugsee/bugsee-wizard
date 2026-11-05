@@ -37,6 +37,8 @@ export async function detectPackageManager(rnRoot: string): Promise<PackageManag
   return 'npm';
 }
 
+const PROBE_TIMEOUT_MS = 5000;
+
 const onPathCache = new Map<PackageManager, boolean>();
 
 export function isManagerOnPath(manager: PackageManager): boolean {
@@ -46,10 +48,19 @@ export function isManagerOnPath(manager: PackageManager): boolean {
     // on Windows npm/yarn/pnpm/bun are .cmd shims that cannot be spawned without a shell; the
     // manager comes from a closed set and the arguments are fixed: no injection path
     // (one command string with the shell: an args array plus shell: true raises Node's DEP0190)
+    // bounded, like the pod probe: a corepack shim that downloads a pinned version must not hang
+    // the prompt
     const result =
       process.platform === 'win32'
-        ? spawnSync(`${manager} --version`, { stdio: 'ignore', shell: true })
-        : spawnSync(manager, ['--version'], { stdio: 'ignore' });
+        ? spawnSync(`${manager} --version`, {
+            stdio: 'ignore',
+            shell: true,
+            timeout: PROBE_TIMEOUT_MS,
+          })
+        : spawnSync(manager, ['--version'], { stdio: 'ignore', timeout: PROBE_TIMEOUT_MS });
+    // a timed-out probe is unavailable for now but not cached: a slow-but-working manager must
+    // not read as "not found" for the rest of the process
+    if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') return false;
     const ok = result.status === 0;
     onPathCache.set(manager, ok);
     return ok;

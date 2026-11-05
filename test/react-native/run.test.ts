@@ -55,6 +55,19 @@ afterEach(async () => {
   await cleanup(fixture);
 });
 
+describe('runReactNativeRecipe — Android notes', () => {
+  it('prints the multi-process provider snippet the Android recipe hands back in silent mode', async () => {
+    platform.runAndroidRecipe.mockImplementation(async (input: { notes?: string[] }) => {
+      input.notes?.push('Add inside <application> in AndroidManifest.xml: <provider … />');
+      return 'ok';
+    });
+    platform.runIosRecipe.mockResolvedValue('ok');
+    await runReactNativeRecipe(opts());
+    const done = clack.note.mock.calls.find((c) => c[1] === 'Done')?.[0] as string;
+    expect(done).toContain('Add inside <application> in AndroidManifest.xml');
+  });
+});
+
 describe('runReactNativeRecipe — native platform results', () => {
   it("returns 'ok' and keeps the RN-level edits when both platforms succeed", async () => {
     platform.runAndroidRecipe.mockResolvedValue('ok');

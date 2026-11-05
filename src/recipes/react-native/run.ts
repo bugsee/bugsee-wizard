@@ -202,6 +202,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   const configured: string[] = [];
   let failedPlatform: string | null = null;
   let platformOutcome: RecipeResult = 'failed';
+  const androidNotes: string[] = [];
   if (targets.includes('android') && paths.androidPath && androidToken) {
     clack.log.step('Configuring Android…');
     const res = await runAndroidRecipe({
@@ -216,6 +217,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
         initMode: launchPath === 'native' ? 'automatic' : 'manual',
       },
       silent: true,
+      notes: androidNotes,
     });
     if (res === 'ok') configured.push('Android');
     else {
@@ -290,6 +292,9 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
       summary.push('');
       summary.push('  Bugsee.initialize();');
     }
+  }
+  if (androidNotes.length > 0) {
+    summary.push('', ...androidNotes);
   }
   clack.note(summary.join('\n'), 'Done');
   return 'ok';

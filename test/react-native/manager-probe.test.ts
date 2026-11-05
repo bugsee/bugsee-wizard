@@ -34,6 +34,19 @@ describe('isManagerOnPath', () => {
     expect(spawnSync.mock.calls[0]?.[2]).not.toHaveProperty('shell');
   });
 
+  it('the probe has a bounded timeout, and a timed-out probe is not cached as "not found"', () => {
+    setPlatform('linux');
+    spawnSync.mockReturnValueOnce({ status: null, error: { code: 'ETIMEDOUT' } });
+    expect(isManagerOnPath('npm')).toBe(false);
+    expect(spawnSync.mock.calls[0]?.[2]).toMatchObject({ timeout: 5000 });
+    spawnSync.mockReturnValueOnce({ status: 0 });
+    expect(isManagerOnPath('npm')).toBe(true); // asked again, not stuck on the slow answer
+    setPlatform('win32');
+    _resetManagerOnPathCache();
+    isManagerOnPath('yarn');
+    expect(spawnSync.mock.calls.at(-1)?.[1]).toMatchObject({ shell: true, timeout: 5000 });
+  });
+
   it('a non-zero or failed probe reads as not on PATH, and is cached', () => {
     spawnSync.mockReturnValue({ status: 1 });
     expect(isManagerOnPath('yarn')).toBe(false);
