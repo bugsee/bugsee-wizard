@@ -79,3 +79,18 @@ describe('ensureMavenCentralStep one-line repositories', () => {
     expect(await readFixture(fixture, name)).toBe(out);
   });
 });
+
+describe('round 4: duplicate token restore', () => {
+  it('restores every removed app_token line in place and order (CRLF too)', async () => {
+    for (const eol of ['\n', '\r\n']) {
+      const orig = `app_token=a${eol}x=1${eol}app_token=b${eol}y=2${eol}`;
+      fixture = await makeFixture({ [FILE]: orig });
+      await writeBugseePropertiesStep.apply(ctxFor('c'));
+      const mid = await readFixture(fixture, FILE);
+      expect(mid.match(/^app_token=/gm)).toHaveLength(1);
+      await writeBugseePropertiesStep.rollback(ctxFor());
+      expect(await readFixture(fixture, FILE)).toBe(orig);
+      await cleanup(fixture);
+    }
+  });
+});

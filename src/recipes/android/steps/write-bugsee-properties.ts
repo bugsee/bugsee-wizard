@@ -11,7 +11,7 @@ const TOKEN_VALUE_RE = new RegExp(`^${TOKEN_PROPERTY_KEY.replace(/\./g, '\\.')}\
 // above the token line we wrote. When we replaced a user's own token the
 // marker also carries the original line so rollback can restore it.
 const MARKER = '# bugsee:wizard';
-const MARKER_RE = /^#\s*bugsee:wizard(?: replaced: (.*?))?\r?$/;
+const MARKER_RE = /^#\s*bugsee:wizard(?: (replaced|removed): (.*?))?\r?$/;
 
 /** The stored token (trimmed; tolerates CRLF), or null when no token line exists. */
 function storedToken(content: string): string | null {
@@ -56,7 +56,11 @@ export const writeBugseePropertiesStep: Step<AndroidContext> = {
       for (const line of existing.split('\n')) {
         if (!TOKEN_LINE_RE.test(line)) {
           lines.push(line);
-        } else if (!replaced) {
+        } else if (replaced) {
+          // Duplicate: keep its place as a comment so rollback can restore it.
+          const cr = line.endsWith('\r') ? '\r' : '';
+          lines.push(`${MARKER} removed: ${line.replace(/\r$/, '')}${cr}`);
+        } else {
           // Keep the line's own ending (a CRLF file stays CRLF).
           const cr = line.endsWith('\r') ? '\r' : '';
           // Mark ownership unless an earlier run already did; remember the
@@ -89,9 +93,14 @@ export const writeBugseePropertiesStep: Step<AndroidContext> = {
       const line = lines[i] as string;
       const m = MARKER_RE.exec(line);
       const next = lines[i + 1];
-      if (m && next !== undefined && TOKEN_LINE_RE.test(next)) {
+      const cr = line.endsWith('\r') ? '\r' : '';
+      if (m?.[1] === 'removed') {
+        // A duplicate we dropped at apply time: put it back where it was.
+        out.push(`${m[2]}${cr}`);
+        touched = true;
+      } else if (m && next !== undefined && TOKEN_LINE_RE.test(next)) {
         // Wizard-written entry: drop it, restoring the user's original line.
-        if (m[1] !== undefined) out.push(`${m[1]}${line.endsWith('\r') ? '\r' : ''}`);
+        if (m[1] === 'replaced') out.push(`${m[2]}${cr}`);
         i++;
         touched = true;
       } else {
