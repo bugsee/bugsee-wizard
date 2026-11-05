@@ -342,6 +342,12 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     return 'failed';
   }
 
+  // a dry run wrote nothing: no summary of what to do next, no snippets
+  if (input.dryRun) {
+    clack.log.info('Dry run: nothing was changed.');
+    return 'ok';
+  }
+
   // 6. What is left for the user.
   for (const r of [...packageResult.results, ...setupResult.results]) {
     if (r.snippet) clack.note(`${r.snippet.file}\n\n${r.snippet.code}`, r.snippet.title);

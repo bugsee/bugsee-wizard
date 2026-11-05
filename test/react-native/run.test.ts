@@ -292,6 +292,18 @@ describe('runReactNativeRecipe: the JS side', () => {
       '@bugsee/react-native',
     );
   });
+
+  it('a dry run prints no "Done" summary or snippets, and says nothing was changed', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer({ inject: false });
+    expect(await runReactNativeRecipe(opts({ dryRun: true }))).toBe('ok');
+    expect(clack.note.mock.calls.map((c) => c[1])).not.toContain('Done');
+    expect(logged(clack.log.info)).toContain('Dry run: nothing was changed.');
+  });
 });
 
 describe('runReactNativeRecipe: Expo', () => {

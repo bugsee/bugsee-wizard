@@ -95,7 +95,7 @@ describe('runIosRecipe distribution (the SDK ships through SPM only since Septem
   it('never offers CocoaPods, even in a project that has a Podfile: SPM, no pod install', async () => {
     await withPodfile();
     clack.confirm.mockResolvedValue(false);
-    expect(await runIosRecipe(input())).toBe('ok');
+    expect(await runIosRecipe(input({ dryRun: false }))).toBe('ok');
     const asked = [...clack.select.mock.calls, ...clack.confirm.mock.calls].map((c) =>
       JSON.stringify(c[0]),
     );
@@ -106,7 +106,7 @@ describe('runIosRecipe distribution (the SDK ships through SPM only since Septem
 
   it('--yes in a Podfile project takes SPM too', async () => {
     await withPodfile();
-    await runIosRecipe(input({ yes: true }));
+    await runIosRecipe(input({ yes: true, dryRun: false }));
     expect(clack.select).not.toHaveBeenCalled();
     expect(notes()).toContain('SPM');
     expect(notes()).not.toContain('pod install');
@@ -115,7 +115,9 @@ describe('runIosRecipe distribution (the SDK ships through SPM only since Septem
   it('a parent recipe that still passes cocoapods keeps working (React Native, until it moves)', async () => {
     await withPodfile();
     clack.confirm.mockResolvedValue(false);
-    await runIosRecipe(input({ options: { distribution: 'cocoapods', runPodInstall: false } }));
+    await runIosRecipe(
+      input({ dryRun: false, options: { distribution: 'cocoapods', runPodInstall: false } }),
+    );
     expect(notes()).toContain('pod install');
   });
 });
