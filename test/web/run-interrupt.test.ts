@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { access, readFile, writeFile } from 'node:fs/promises';
+import { chmodSync, readFileSync } from 'node:fs';
+import { access, chmod, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadManifest } from '../../src/engine/manifest.js';
 import { exitCodeFor } from '../../src/engine/noninteractive.js';
 import { parseRecipe } from '../../src/engine/recipe.js';
 import { type InterruptSignal, runJavaScriptInstall, type SignalHost } from '../../src/web/run.js';
@@ -160,6 +161,125 @@ describe.skipIf(process.platform === 'win32')('interrupted and failing runs', ()
       manifestBefore,
     );
     expect(await exists(join(sb.project, 'extra.txt'))).toBe(false);
+  });
+});
+
+describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'rollback that fails',
+  () => {
+    let sb: Sandbox;
+    beforeEach(async () => {
+      sb = await sandbox('vite-react-spa');
+    });
+    afterEach(async () => {
+      await chmod(join(sb.project, 'package.json'), 0o644).catch(() => undefined);
+      await sb.cleanup();
+    });
+
+    it('keeps the manifest and backups so uninstall can still revert', async () => {
+      const original = await readFile(join(sb.project, 'package.json'), 'utf8');
+      const recipe = parseRecipe({
+        ...VITE_RECIPE,
+        ops: [
+          { op: 'add-package-script', name: 'bugsee-up', command: 'echo up' },
+          // blocked: package.json exists with other content, so the run fails after step 1
+          { op: 'write-file', path: 'package.json', template: 'x' },
+        ],
+      });
+      const cap = captureOutput();
+      const success = cap.output.log.success;
+      cap.output.log.success = (m: string) => {
+        success(m);
+        // read-only before the rollback starts: restoring package.json then fails with EACCES
+        if (m.includes('bugsee-up')) chmodSync(join(sb.project, 'package.json'), 0o444);
+      };
+      const r = await runJavaScriptInstall(
+        baseOpts(sb.project),
+        makeDeps(cap, {
+          resolveRecipe: vi.fn(async () => ({
+            recipe,
+            revision: 'r',
+            source: 'snapshot' as const,
+          })),
+        }),
+      );
+      expect(r).toMatchObject({ ok: false, error: 'step-failed' });
+      expect(r.message).toContain('uninstall');
+      expect(cap.lines.join('\n')).toContain('manifest was kept');
+      expect(await readFile(join(sb.project, 'package.json'), 'utf8')).toContain('bugsee-up');
+      expect((await loadManifest(sb.project))?.entries.map((e) => e.file)).toContain(
+        'package.json',
+      );
+      expect(await readdir(join(sb.project, '.bugsee/backup'))).toHaveLength(1);
+
+      await chmod(join(sb.project, 'package.json'), 0o644);
+      const u = await runJavaScriptUninstall(
+        baseOpts(sb.project, { yes: true }),
+        makeDeps(captureOutput()),
+      );
+      expect(u.steps.find((s) => s.id === 'package.json')?.outcome).toBe('reverted');
+      expect(await readFile(join(sb.project, 'package.json'), 'utf8')).toBe(original);
+    });
+  },
+);
+
+describe.skipIf(process.platform === 'win32')('a signal the steps never see', () => {
+  let sb: Sandbox;
+  beforeEach(async () => {
+    sb = await sandbox('vite-react-spa');
+  });
+  afterEach(async () => {
+    await sb.cleanup();
+  });
+  const run = (ops: unknown[], sig: FakeSignals, cap = captureOutput()) =>
+    runJavaScriptInstall(
+      baseOpts(sb.project),
+      makeDeps(cap, {
+        signals: sig,
+        resolveRecipe: vi.fn(async () => ({
+          recipe: parseRecipe({ ...VITE_RECIPE, ops }),
+          revision: 'r',
+          source: 'snapshot' as const,
+        })),
+      }),
+    );
+  const fireAfter = (title: string, sig: FakeSignals, which: InterruptSignal = 'SIGINT') => {
+    const cap = captureOutput();
+    const success = cap.output.log.success;
+    cap.output.log.success = (m: string) => {
+      success(m);
+      if (m.includes(title)) sig.emit(which);
+    };
+    return cap;
+  };
+
+  it('arriving during the last applying step still rolls back and exits 130', async () => {
+    const sig = new FakeSignals();
+    const cap = fireAfter('Create a.txt', sig);
+    const r = await run([{ op: 'write-file', path: 'a.txt', template: 'a' }], sig, cap);
+    expect(r).toMatchObject({ ok: false, error: 'interrupted' });
+    expect(exitCodeFor(r, true)).toBe(130);
+    expect(await exists(join(sb.project, 'a.txt'))).toBe(false);
+    expect(await exists(join(sb.project, '.bugsee'))).toBe(false);
+  });
+
+  it('arriving before a run of already-satisfied steps still rolls back (SIGTERM: 143)', async () => {
+    await writeFile(join(sb.project, 'b.txt'), 'b');
+    await writeFile(join(sb.project, 'c.txt'), 'c');
+    const sig = new FakeSignals();
+    const cap = fireAfter('Create a.txt', sig, 'SIGTERM');
+    const r = await run(
+      [
+        { op: 'write-file', path: 'a.txt', template: 'a' },
+        { op: 'write-file', path: 'b.txt', template: 'b' },
+        { op: 'write-file', path: 'c.txt', template: 'c' },
+      ],
+      sig,
+      cap,
+    );
+    expect(r).toMatchObject({ ok: false, error: 'terminated' });
+    expect(exitCodeFor(r, true)).toBe(143);
+    expect(await exists(join(sb.project, 'a.txt'))).toBe(false);
   });
 });
 

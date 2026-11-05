@@ -150,8 +150,11 @@ const PLAN_PREVIEW_WIDTH = 120;
 /** Control characters (ANSI escapes included) shown as visible `\xNN`, so a recipe cannot repaint the plan. */
 function visible(s: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point
-  return s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, (c) => {
-    return `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`;
+  return s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/g, (c) => {
+    const n = c.charCodeAt(0);
+    return n > 0xff
+      ? `\\u${n.toString(16).padStart(4, '0')}`
+      : `\\x${n.toString(16).padStart(2, '0')}`;
   });
 }
 
@@ -160,7 +163,8 @@ function inline(s: string): string {
     s.length > PLAN_MAX_INLINE
       ? `${s.slice(0, PLAN_MAX_INLINE)}... (${s.length - PLAN_MAX_INLINE} more characters)`
       : s;
-  return visible(cut);
+  // a single-line field must not be able to start a plan line of its own
+  return visible(cut.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t'));
 }
 
 function preview(text: string): string[] {
@@ -353,8 +357,14 @@ export async function runJavaScriptInstall(
   } finally {
     for (const [sig, handler] of handlers) deps.signals.off(sig, handler);
   }
-  // the steps were rolled back: the manifest must not list changes that are gone
-  if (run.failed && !opts.dryRun) await recorder.discard();
+  // every step rolled back: the manifest must not list changes that are gone. When a rollback
+  // failed, edits are still on disk, so the manifest and its backups are the only way back.
+  if (run.failed && !opts.dryRun && run.rollbackFailed !== true) await recorder.discard();
+  if (run.rollbackFailed === true) {
+    log.error(
+      'Some changes could not be rolled back. The wizard manifest was kept: run `bugsee-wizard uninstall` to revert them.',
+    );
+  }
   for (const w of quarantineWarnings) log.warn(w);
 
   const snippets = run.results.flatMap((r) => (r.snippet === undefined ? [] : [r.snippet]));
@@ -371,11 +381,15 @@ export async function runJavaScriptInstall(
       ? caught !== undefined
         ? {
             error: caught === 'SIGINT' ? 'interrupted' : 'terminated',
-            message: 'Interrupted; the changes made so far were rolled back.',
+            message: run.rollbackFailed
+              ? 'Interrupted; some changes could not be rolled back. Run `bugsee-wizard uninstall` to revert them.'
+              : 'Interrupted; the changes made so far were rolled back.',
           }
         : {
             error: 'step-failed',
-            message: 'A step failed; the changes made so far were rolled back.',
+            message: run.rollbackFailed
+              ? 'A step failed and some changes could not be rolled back. Run `bugsee-wizard uninstall` to revert them.'
+              : 'A step failed; the changes made so far were rolled back.',
           }
       : {}),
   };

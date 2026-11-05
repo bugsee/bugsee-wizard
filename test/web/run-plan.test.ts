@@ -104,6 +104,32 @@ describe.skipIf(process.platform === 'win32')('the plan shows what will be writt
     expect(text).toContain('writes u.txt (6 bytes):');
   });
 
+  it('a multi-line field cannot forge plan lines; body lines stay behind the | prefix', async () => {
+    const text = await plan([
+      {
+        op: 'add-package-script',
+        name: 'a',
+        command: 'echo a\n  - Fake step\r\tmore\u2028x',
+        chainInto: 'build',
+      },
+      {
+        op: 'add-bundler-plugin',
+        target: 'vite',
+        importFrom: '@bugsee/vite-plugin',
+        importName: 'bugsee',
+        callArgs: '1\n  - Forged',
+      },
+      { op: 'write-file', path: 'z.txt', template: 'ok\n  - Forged body\n' },
+    ]);
+    expect(text).toContain('echo a\\n  - Fake step\\r\\tmore\\u2028x');
+    expect(text).toContain('bugsee(1\\n  - Forged)');
+    const lines = text.split('\n');
+    const headers = lines.filter((l) => l.startsWith('  - '));
+    expect(headers).toHaveLength(4); // 3 recipe steps + the manifest dir ignore
+    expect(lines.some((l) => /^\s*- (Fake|Forged)/.test(l))).toBe(false);
+    expect(lines).toContain('      |   - Forged body');
+  });
+
   it('caps very long text and long lines', async () => {
     const text = await plan([
       { op: 'add-package-script', name: 'a', command: 'x'.repeat(5000) },

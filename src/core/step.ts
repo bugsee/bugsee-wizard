@@ -55,18 +55,32 @@ export interface RunStepsResult {
   readonly failed: boolean;
   /** True when at least one step needs a manual follow-up. */
   readonly incomplete: boolean;
+  /** True when undoing an applied step threw: its changes may still be on disk. */
+  readonly rollbackFailed?: boolean;
+}
+
+export interface RunStepsOptions {
+  /** Polled before each step and after the last: true stops the run and rolls back what was applied. */
+  readonly interrupted?: () => boolean;
 }
 
 export async function runSteps<Ctx extends WizardContext>(
   steps: readonly Step<Ctx>[],
   ctx: Ctx,
+  opts: RunStepsOptions = {},
 ): Promise<RunStepsResult> {
   const results: StepResult[] = [];
   const applied: Step<Ctx>[] = [];
   let incomplete = false;
 
+  const stop = async (): Promise<RunStepsResult> => {
+    const rollbackFailed = await rollbackAll(applied, ctx, results);
+    return { results, failed: true, incomplete, rollbackFailed };
+  };
+
   for (const step of steps) {
     const status = await step.precheck(ctx);
+    if (opts.interrupted?.() === true) return stop();
 
     if (status.kind === 'satisfied') {
       results.push({
@@ -81,8 +95,7 @@ export async function runSteps<Ctx extends WizardContext>(
     if (status.kind === 'blocked') {
       results.push({ id: step.id, outcome: 'blocked', note: status.reason });
       ctx.log.error(`${step.title} — blocked: ${status.reason}`);
-      await rollbackAll(applied, ctx, results);
-      return { results, failed: true, incomplete };
+      return stop();
     }
 
     try {
@@ -106,11 +119,11 @@ export async function runSteps<Ctx extends WizardContext>(
       const error = err instanceof Error ? err : new Error(String(err));
       results.push({ id: step.id, outcome: 'failed', error });
       ctx.log.error(`${step.title} — failed: ${error.message}`);
-      await rollbackAll(applied, ctx, results);
-      return { results, failed: true, incomplete };
+      return stop();
     }
   }
 
+  if (opts.interrupted?.() === true) return stop();
   return { results, failed: false, incomplete };
 }
 
@@ -118,7 +131,8 @@ async function rollbackAll<Ctx extends WizardContext>(
   applied: readonly Step<Ctx>[],
   ctx: Ctx,
   results: StepResult[],
-): Promise<void> {
+): Promise<boolean> {
+  let anyFailed = false;
   for (const step of [...applied].reverse()) {
     try {
       if (!ctx.dryRun) await step.rollback(ctx);
@@ -127,8 +141,10 @@ async function rollbackAll<Ctx extends WizardContext>(
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       ctx.log.error(`Failed to roll back ${step.title}: ${error.message}`);
+      anyFailed = true;
     }
   }
+  return anyFailed;
 }
 
 export interface RunRollbackResult {

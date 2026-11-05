@@ -1,7 +1,7 @@
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { executeRecipe, InterruptedError } from '../../src/engine/execute.js';
+import { executeRecipe } from '../../src/engine/execute.js';
 import {
   createManifestRecorder,
   loadManifest,
@@ -369,10 +369,58 @@ describe('manifest is a prefix of what was done', () => {
       },
     });
     expect(run.failed).toBe(true);
-    expect(run.results.map((r) => r.outcome)).toEqual(['applied', 'failed', 'rolled-back']);
-    expect(run.results[1]?.error).toBeInstanceOf(InterruptedError);
+    expect(run.results.map((r) => r.outcome)).toEqual(['applied', 'rolled-back']);
     expect(await exists(join(dir, 'a.txt'))).toBe(false);
   });
+
+  it('a signal during the last applying step is honoured: rolled back, failed', async () => {
+    const one = parseRecipe({
+      schema: 1,
+      id: 'r',
+      kind: 'buildtool',
+      platform: 'javascript-vite',
+      engine: { min: '1.0.0' },
+      sdk: { range: '*' },
+      detect: [],
+      ops: [{ op: 'write-file', path: 'a.txt', template: 'a' }],
+    });
+    const { ctx } = recorderCtx();
+    const abort = new AbortController();
+    const run = await executeRecipe(one, ctx, {
+      signal: abort.signal,
+      onStepApplied: async () => abort.abort(),
+    });
+    expect(run.failed).toBe(true);
+    expect(run.results.map((r) => r.outcome)).toEqual(['applied', 'rolled-back']);
+    expect(await exists(join(dir, 'a.txt'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'reports a rollback that failed (flush-failure path and runner path)',
+    async () => {
+      const { ctx } = recorderCtx();
+      await mkdir(join(dir, 'bugsee'));
+      const nested = parseRecipe({
+        schema: 1,
+        id: 'r',
+        kind: 'buildtool',
+        platform: 'javascript-vite',
+        engine: { min: '1.0.0' },
+        sdk: { range: '*' },
+        detect: [],
+        ops: [{ op: 'write-file', path: 'bugsee/a.txt', template: 'a' }],
+      });
+      const run = await executeRecipe(nested, ctx, {
+        onStepApplied: async () => {
+          await chmod(join(dir, 'bugsee'), 0o555); // the step's own rollback can no longer delete a.txt
+          throw new Error('boom');
+        },
+      });
+      await chmod(join(dir, 'bugsee'), 0o755);
+      expect(run.failed).toBe(true);
+      expect(run.rollbackFailed).toBe(true);
+    },
+  );
 
   it('dry run never calls the hook', async () => {
     const { ctx } = recorderCtx();

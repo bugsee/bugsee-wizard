@@ -22,7 +22,11 @@ export interface ExecuteOptions {
   signal?: AbortSignal;
 }
 
-function guarded(step: Step<RecipeContext>, opts: ExecuteOptions): Step<RecipeContext> {
+function guarded(
+  step: Step<RecipeContext>,
+  opts: ExecuteOptions,
+  failures: { rollback: boolean },
+): Step<RecipeContext> {
   return {
     ...step,
     async apply(ctx) {
@@ -33,7 +37,9 @@ function guarded(step: Step<RecipeContext>, opts: ExecuteOptions): Step<RecipeCo
           await opts.onStepApplied(step);
         } catch (err) {
           // the step wrote files the manifest does not know about: undo it, it is not in `applied` yet
-          await step.rollback(ctx).catch(() => undefined);
+          await step.rollback(ctx).catch(() => {
+            failures.rollback = true;
+          });
           const why = err instanceof Error ? err.message : String(err);
           throw new Error(`Could not record the change in the wizard manifest: ${why}`);
         }
@@ -44,13 +50,16 @@ function guarded(step: Step<RecipeContext>, opts: ExecuteOptions): Step<RecipeCo
 }
 
 /** Build one step per recipe op and run them through the shared step runner. */
-export function executeRecipe(
+export async function executeRecipe(
   recipe: Recipe,
   ctx: RecipeContext,
   opts: ExecuteOptions = {},
 ): Promise<RunStepsResult> {
-  return runSteps(
-    recipe.ops.map((op) => guarded(opToStep(op), opts)),
+  const failures = { rollback: false };
+  const res = await runSteps(
+    recipe.ops.map((op) => guarded(opToStep(op), opts, failures)),
     ctx,
+    { interrupted: () => opts.signal?.aborted === true },
   );
+  return failures.rollback ? { ...res, rollbackFailed: true } : res;
 }
