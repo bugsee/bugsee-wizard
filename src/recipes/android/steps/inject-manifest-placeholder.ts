@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
 import { findBlock } from '../blocks.js';
-import { lineStartBefore, readOrNull, stripMarkerBlock } from '../io.js';
+import { closingBraceInsertion, readOrNull, stripMarkerBlock } from '../io.js';
 import {
   type AndroidContext,
   MANIFEST_PLACEHOLDER_KEY,
@@ -47,8 +47,10 @@ export const injectManifestPlaceholderStep: Step<AndroidContext> = {
     // Insert at the start of the line that contains the closing brace, so
     // the inserted block sits on its own lines with consistent indentation
     // and rollback can strip it cleanly without mangling the brace's indent.
-    const insertAt = lineStartBefore(original, dc.bodyEnd);
-    const updated = original.slice(0, insertAt) + placeholderInsert() + original.slice(insertAt);
+    // When the braces share a line (`defaultConfig { … }`) the block goes
+    // right before the closing brace instead, so it stays inside defaultConfig.
+    const { at, prefix } = closingBraceInsertion(original, dc.bodyEnd, true);
+    const updated = original.slice(0, at) + prefix + placeholderInsert() + original.slice(at);
     await writeFile(ctx.androidPaths.appBuildGradle, updated);
   },
 

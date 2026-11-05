@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { DetectInput, DetectionResult, Detector } from '../core/detect.js';
 
 const APPLICATION_PLUGIN_RE =
-  /\b(?:id\s*\(\s*["']com\.android\.application["']\s*\)|apply\s+plugin\s*:\s*["']com\.android\.application["'])/;
+  /\b(?:id\s*\(\s*["']com\.android\.application["']\s*\)|id\s+["']com\.android\.application["']|apply\s*\(\s*plugin\s*=\s*["']com\.android\.application["']\s*\)|apply\s+plugin\s*:\s*["']com\.android\.application["'])/;
 
 const APP_GRADLE_CANDIDATES = ['app/build.gradle.kts', 'app/build.gradle'];
 

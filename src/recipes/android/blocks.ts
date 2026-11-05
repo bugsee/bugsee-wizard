@@ -15,8 +15,12 @@ export interface BlockSpan {
  * Copy of `source` with comments and string literals blanked out (same
  * length; newlines kept) so brace/keyword scanning can't be fooled by them.
  * Handles `//`, `/* *\/`, '…', "…", and triple-quoted strings.
+ *
+ * With `keepStrings`, only comments are blanked and string literals stay
+ * intact (still skipped, so `//` inside a string is not a comment) — use it
+ * to match on plugin ids / artifact coordinates, which live in strings.
  */
-export function maskCommentsAndStrings(source: string): string {
+export function maskCommentsAndStrings(source: string, keepStrings = false): string {
   const out = source.split('');
   const blank = (from: number, to: number) => {
     for (let k = from; k < to; k++) if (out[k] !== '\n' && out[k] !== '\r') out[k] = ' ';
@@ -38,7 +42,7 @@ export function maskCommentsAndStrings(source: string): string {
     } else if (three === '"""' || three === "'''") {
       const close = source.indexOf(three, i + 3);
       const end = close === -1 ? source.length : close + 3;
-      blank(i, end);
+      if (!keepStrings) blank(i, end);
       i = end;
     } else if (source[i] === '"' || source[i] === "'") {
       const quote = source[i];
@@ -47,7 +51,7 @@ export function maskCommentsAndStrings(source: string): string {
         j += source[j] === '\\' ? 2 : 1;
       }
       const end = Math.min(source.length, j + 1);
-      blank(i, end);
+      if (!keepStrings) blank(i, end);
       i = end;
     } else {
       i++;

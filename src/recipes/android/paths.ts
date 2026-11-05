@@ -48,12 +48,6 @@ export async function discoverAndroidPaths(cwd: string): Promise<AndroidPaths> {
     'settings.gradle',
     'settings.gradle[.kts]',
   );
-  const projectBuild = await pickDsl(
-    cwd,
-    'build.gradle.kts',
-    'build.gradle',
-    'project-level build.gradle[.kts]',
-  );
   const appBuild = await pickDsl(
     cwd,
     'app/build.gradle.kts',
@@ -63,11 +57,25 @@ export async function discoverAndroidPaths(cwd: string): Promise<AndroidPaths> {
   const appBuildContent = await readFile(appBuild.abs, 'utf8');
   const appBuildScriptStyle = detectBuildScriptStyle(appBuildContent);
 
+  // The project-level script only matters for legacy-apply (the classpath
+  // entry lives there). A plugins-DSL project resolves the plugin through
+  // settings.gradle, so a missing root build file is tolerated there.
+  const projectBuildPick = pickDsl(
+    cwd,
+    'build.gradle.kts',
+    'build.gradle',
+    'project-level build.gradle[.kts]',
+  );
+  const projectBuild =
+    appBuildScriptStyle === 'legacy-apply'
+      ? await projectBuildPick
+      : await projectBuildPick.catch(() => null);
+
   return {
     settingsGradle: settings.abs,
     settingsGradleDsl: settings.dsl,
-    projectBuildGradle: projectBuild.abs,
-    projectBuildGradleDsl: projectBuild.dsl,
+    projectBuildGradle: projectBuild?.abs ?? null,
+    projectBuildGradleDsl: projectBuild?.dsl ?? null,
     appBuildGradle: appBuild.abs,
     appBuildGradleDsl: appBuild.dsl,
     appBuildScriptStyle,
