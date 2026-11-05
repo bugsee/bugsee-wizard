@@ -68,6 +68,23 @@ describe('ensureRnBugseePackageStep', () => {
     expect(written).toContain('    "@bugsee/react-native":');
   });
 
+  it.each([
+    ['CRLF', '\r\n'],
+    ['LF', '\n'],
+  ])('preserves %s line endings and trailing newline on apply and rollback', async (_n, eol) => {
+    const orig = `${JSON.stringify(JSON.parse(SAMPLE_RN_PACKAGE_JSON), null, 2).replace(/\n/g, eol)}${eol}`;
+    fixture = await makeFixture({ 'package.json': orig });
+    const ctx = await makeRnContext({ cwd: fixture });
+    await ensureRnBugseePackageStep.apply(ctx);
+    const written = await readFixture(fixture, 'package.json');
+    expect(written).toContain('@bugsee/react-native');
+    expect(written.replace(/\r\n/g, '\n').includes('\r')).toBe(false);
+    expect(written.split(eol).join('')).not.toMatch(/[\r\n]/);
+    expect(written.endsWith(`}${eol}`)).toBe(true);
+    await ensureRnBugseePackageStep.rollback(ctx);
+    expect(await readFixture(fixture, 'package.json')).toBe(orig);
+  });
+
   it('rolls back by deleting the dependency entry', async () => {
     fixture = await makeFixture({ 'package.json': SAMPLE_RN_PACKAGE_JSON });
     const ctx = await makeRnContext({ cwd: fixture });
