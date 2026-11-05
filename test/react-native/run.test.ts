@@ -132,6 +132,19 @@ describe('runReactNativeRecipe: what it refuses', () => {
 });
 
 describe('runReactNativeRecipe: the JS side', () => {
+  it('says up front that @bugsee/react-native is a beta whose API can still change', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer();
+    await runReactNativeRecipe(opts());
+    expect(logged(clack.log.info)).toMatch(
+      /@bugsee\/react-native[\s\S]*beta[\s\S]*API can still change/,
+    );
+  });
+
   it('adds @bugsee/react-native and the JS launch, with the token per platform', async () => {
     fixture = await makeFixture({
       'package.json': rnPackage(),
