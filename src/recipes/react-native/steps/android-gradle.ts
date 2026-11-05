@@ -479,7 +479,11 @@ function appTransform(source: string, kts: boolean, sdk: string): string {
 
   // --- bugseeDir (+ a react block when the file has none) ---------------
   const head: string[] = [];
-  if (!live(s, /\bbugseeDir\b/)) {
+  // Only when something below still reads it: an unused node call would slow every build.
+  const ndkMissing = !live(s, /bugsee-android-ndk/);
+  const hookMissing = !live(s, /bugsee-sourcemaps\.gradle/);
+  const needsDir = ops.length > 0 || needReactBlock || hookMissing || (ndkMissing && !kts);
+  if (needsDir && !live(s, /\bbugseeDir\b/)) {
     head.push(...block('//', kts ? BUGSEE_DIR_KOTLIN : BUGSEE_DIR_GROOVY));
   }
   if (needReactBlock) {
@@ -497,7 +501,7 @@ function appTransform(source: string, kts: boolean, sdk: string): string {
 
   // --- NDK dependency + sourcemaps hook, at the end ---------------------
   const tail: string[] = [];
-  if (!live(s, /bugsee-android-ndk/)) {
+  if (ndkMissing) {
     if (kts) {
       tail.push('dependencies {', `    implementation("${NDK_ARTIFACT}:${sdk}")`, '}');
     } else {
@@ -510,7 +514,7 @@ function appTransform(source: string, kts: boolean, sdk: string): string {
       );
     }
   }
-  if (!live(s, /bugsee-sourcemaps\.gradle/)) {
+  if (hookMissing) {
     tail.push(kts ? APPLY_FROM_KOTLIN : APPLY_FROM_GROOVY);
   }
   if (tail.length > 0) ops.push(appendOp(s, block('//', tail)));
@@ -714,12 +718,57 @@ const appGradleStep = gradleFileStep({
 // .gitignore + bugsee.properties
 // ---------------------------------------------------------------------------
 
-const IGNORES_PROPERTIES = /^(?:\/?(?:android\/)?|\*\*\/)bugsee\.properties$/;
+/** One gitignore glob as a regex over a `/`-separated path (no `!`, no leading/trailing `/`). */
+function globToRegex(glob: string): string {
+  let out = '';
+  for (let i = 0; i < glob.length; i += 1) {
+    const c = glob[i] as string;
+    if (c === '*' && glob[i + 1] === '*') {
+      if (glob[i + 2] === '/') {
+        out += '(?:.*/)?';
+        i += 2;
+      } else {
+        out += '.*';
+        i += 1;
+      }
+    } else if (c === '*') out += '[^/]*';
+    else if (c === '?') out += '[^/]';
+    else out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return out;
+}
 
-function ignoresProperties(content: string | null): boolean {
-  return (
-    content !== null && content.split(/\r?\n/).some((line) => IGNORES_PROPERTIES.test(line.trim()))
-  );
+/**
+ * Whether the gitignore `content`, located in the directory that `target` is relative to, ignores
+ * `target` (a `/`-separated path; `dirs` of it are parent directories). The last matching line
+ * wins, a `!` line un-ignores, and an ignored parent directory ignores everything below it.
+ * Null when no line speaks about it.
+ */
+function gitignoreVerdict(content: string | null, target: string): boolean | null {
+  if (content === null) return null;
+  const segments = target.split('/');
+  const lines = content.split(/\r?\n/).map((l) => l.replace(/(?<!\\)\s+$/, ''));
+  let verdict: boolean | null = null;
+  for (let depth = 1; depth <= segments.length; depth += 1) {
+    const sub = segments.slice(0, depth).join('/');
+    const isDir = depth < segments.length;
+    let hit: boolean | null = null;
+    for (const line of lines) {
+      if (line === '' || line.startsWith('#')) continue;
+      const negated = line.startsWith('!');
+      let pattern = negated ? line.slice(1) : line;
+      const dirOnly = pattern.endsWith('/');
+      if (dirOnly) pattern = pattern.slice(0, -1);
+      if (pattern === '' || (dirOnly && !isDir)) continue;
+      const anchored = pattern.includes('/');
+      const glob = pattern.startsWith('/') ? pattern.slice(1) : pattern;
+      const re = new RegExp(`^${anchored ? '' : '(?:.*/)?'}${globToRegex(glob)}$`);
+      if (re.test(sub)) hit = !negated;
+    }
+    if (hit === true) return true; // an ignored parent cannot be re-included
+    if (hit !== null) verdict = hit;
+  }
+  return verdict;
 }
 
 async function removeIfBlank(file: string, stripped: string): Promise<void> {
@@ -734,10 +783,14 @@ const gitignoreStep: Step<RnContext> = {
   async precheck(ctx): Promise<StepStatus> {
     if (!enabled(ctx)) return { kind: 'satisfied', note: NOTHING(ctx) };
     const dir = androidDir(ctx) as string;
-    const candidates = [path.join(dir, '.gitignore'), path.join(ctx.cwd, '.gitignore')];
-    for (const file of candidates) {
-      if (ignoresProperties(await readOrNull(file))) return { kind: 'satisfied' };
-    }
+    // The nearer file decides; the project root's only speaks when android/'s is silent.
+    const verdict =
+      gitignoreVerdict(await readOrNull(path.join(dir, '.gitignore')), PROPERTIES_FILE) ??
+      gitignoreVerdict(
+        await readOrNull(path.join(ctx.cwd, '.gitignore')),
+        `android/${PROPERTIES_FILE}`,
+      );
+    if (verdict === true) return { kind: 'satisfied' };
     return { kind: 'pending' };
   },
 

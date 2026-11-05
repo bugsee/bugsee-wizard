@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
 import * as clack from '@clack/prompts';
 import semver from 'semver';
 
@@ -22,6 +25,7 @@ import { rnPnpmBuildsStep } from './steps/pnpm-builds.js';
 import { runPackageInstallStep } from './steps/run-package-install.js';
 import { runRnPodInstallStep } from './steps/run-rn-pod-install.js';
 import {
+  JS_INIT_MARKER_BEGIN,
   LEGACY_RN_PACKAGE_NAME,
   RN_NATIVE_FALLBACK,
   RN_PACKAGE_NAME,
@@ -120,6 +124,34 @@ function makeContext(
   };
 }
 
+/** `@bugsee/react-native` requires the New Architecture: say so when the project turns it off. */
+async function warnIfNewArchitectureIsOff(
+  rnRoot: string,
+  expoConfig: string | null,
+): Promise<void> {
+  let off = false;
+  const gradleProps = await readFile(
+    path.join(rnRoot, 'android', 'gradle.properties'),
+    'utf8',
+  ).catch(() => '');
+  if (/^\s*newArchEnabled\s*=\s*false\s*$/m.test(gradleProps)) off = true;
+  if (expoConfig !== null) {
+    try {
+      const app = JSON.parse(await readFile(expoConfig, 'utf8')) as {
+        expo?: { newArchEnabled?: unknown };
+      };
+      if (app.expo?.newArchEnabled === false) off = true;
+    } catch {
+      // unreadable app.json: the Expo step reports it
+    }
+  }
+  if (off) {
+    clack.log.warn(
+      `The New Architecture is switched off in this project, and ${RN_PACKAGE_NAME} requires it. Turn it back on (newArchEnabled).`,
+    );
+  }
+}
+
 export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promise<RecipeResult> {
   const paths = await discoverRnPaths(input.cwd);
   const info = await readRnProjectInfo(input.cwd);
@@ -148,6 +180,8 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     );
     return 'failed';
   }
+
+  await warnIfNewArchitectureIsOff(input.cwd, paths.expoConfig);
 
   // 1. Platforms (an Expo project builds both).
   const targets =
@@ -216,13 +250,13 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   }
 
   // Before React Native 0.87 the iOS SDK comes through the wrapper's pod.
-  const podsNeeded =
+  const usesPods =
     !expo &&
     !info.hasExpo &&
     targets.includes('ios') &&
     paths.iosPath !== null &&
-    runPackageInstall &&
     usesPodsForWrapper(info.reactNativeVersion);
+  const podsNeeded = usesPods && runPackageInstall;
   let runPodInstall = false;
   if (podsNeeded) {
     const podAvailable = isPodOnPath();
@@ -248,7 +282,9 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   const contextFor = (nativeVersions: RnNativeVersions): RnContext =>
     makeContext(input, {
       tokens,
-      rnPaths: applyNative || expo ? paths : { ...paths, androidPath: null, iosPath: null },
+      // the native steps edit what exists in androidPath / iosPath: an Expo project's native files
+      // are the config plugin's to write, and without consent nothing native is touched
+      rnPaths: applyNative ? paths : { ...paths, androidPath: null, iosPath: null },
       rnOptions: options(nativeVersions),
     });
 
@@ -271,7 +307,18 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   const setupResult = await runSteps(SETUP_STEPS, setupCtx);
   if (setupResult.failed) {
     clack.log.error('Setup failed; rolling back the React Native changes.');
-    const undo = await runRollback(PACKAGE_STEPS, packageCtx);
+    // only what this run applied: a dependency the user already had stays
+    const applied = (id: string) =>
+      packageResult.results.some((r) => r.id === id && r.outcome === 'applied');
+    const undo = await runRollback(
+      PACKAGE_STEPS.filter((step) => applied(step.id)),
+      packageCtx,
+    );
+    if (applied(ensureRnBugseePackageStep.id) && applied(runPackageInstallStep.id)) {
+      clack.log.warn(
+        `\`${manager} install\` already ran: node_modules and the lockfile still contain ${RN_PACKAGE_NAME}. Run \`${manager} remove ${RN_PACKAGE_NAME}\` to clear them.`,
+      );
+    }
     if (undo.failed) {
       clack.log.error(
         'Some changes could not be rolled back — check package.json and your JS entry file.',
@@ -295,9 +342,10 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
       manager,
       runPackageInstall,
       runPodInstall,
-      podsNeeded,
+      usesPods,
       applyNative,
       bare: !expo && !info.hasExpo,
+      expo: expo || info.hasExpo,
       autoInjectJsEntry,
       tokens,
       results: setupResult.results,
@@ -311,9 +359,10 @@ function summaryLines(s: {
   manager: string;
   runPackageInstall: boolean;
   runPodInstall: boolean;
-  podsNeeded: boolean;
+  usesPods: boolean;
   applyNative: boolean;
   bare: boolean;
+  expo: boolean;
   autoInjectJsEntry: boolean;
   tokens: Readonly<Record<string, string>>;
   results: readonly StepResult[];
@@ -321,16 +370,28 @@ function summaryLines(s: {
   const lines: string[] = [];
   if (!s.runPackageInstall) lines.push(`Run \`${s.manager} install\` to fetch ${RN_PACKAGE_NAME}.`);
   if (s.bare) {
-    if (s.runPackageInstall && !s.podsNeeded && s.tokens.ios !== undefined) {
-      lines.push('iOS: React Native 0.87+ resolves the Bugsee SDK through Swift Package Manager.');
-    } else if (!s.runPodInstall && s.tokens.ios !== undefined) {
-      lines.push('Run `pod install` from your `ios/` directory (React Native before 0.87).');
+    if (s.tokens.ios !== undefined) {
+      if (!s.usesPods) {
+        lines.push(
+          'iOS: React Native 0.87+ resolves the Bugsee SDK through Swift Package Manager.',
+        );
+      } else if (!s.runPodInstall) {
+        lines.push('Run `pod install` from your `ios/` directory (React Native before 0.87).');
+      }
     }
     if (!s.applyNative) {
       lines.push(
         `Android network capture and release symbolication need the native edits; see ${README_URL}`,
       );
     }
+  }
+  if (s.manager === 'pnpm') {
+    lines.push('pnpm: React Native needs `nodeLinker: hoisted` in pnpm-workspace.yaml.');
+  }
+  if (s.expo) {
+    lines.push(
+      'Expo: run `expo prebuild` if you commit android/ and ios/ (the plugin writes them). Expo Go is not supported; use a development build.',
+    );
   }
   if (!s.autoInjectJsEntry) {
     lines.push(
@@ -352,6 +413,17 @@ function summaryLines(s: {
   return lines;
 }
 
+/** The old package, or the init/launch block of the old `react-native-bugsee` in the JS entry. */
+async function hasEarlierWizardInstall(
+  rnRoot: string,
+  paths: Awaited<ReturnType<typeof discoverRnPaths>>,
+): Promise<boolean> {
+  if ((await readRnProjectInfo(rnRoot)).legacyPackage) return true;
+  if (paths.jsEntry === null) return false;
+  const entry = await readFile(paths.jsEntry.path, 'utf8').catch(() => '');
+  return entry.includes(JS_INIT_MARKER_BEGIN) || entry.includes(`from '${LEGACY_RN_PACKAGE_NAME}'`);
+}
+
 /**
  * Roll back everything the wizard added to an RN project: the new setup and package steps, and the
  * native recipes of earlier wizards (Android/iOS). Each step's rollback is a no-op when its target
@@ -369,16 +441,22 @@ export async function runReactNativeRollback(input: WizardOptions): Promise<Roll
       nativeVersions: (await readInstalledNativeVersions(input.cwd)) ?? RN_NATIVE_FALLBACK,
     },
   });
-  let failed = (await runRollback([...PACKAGE_STEPS, ...SETUP_STEPS], ctx)).failed;
-
-  // Earlier wizards also configured the native SDKs of the app itself.
-  if (paths.androidPath) {
-    const res = await runAndroidRollback({ ...input, cwd: paths.androidPath });
-    if (res === 'failed') failed = true;
+  // Earlier wizards also configured the native SDKs of the app itself. Their rollbacks act on files
+  // the new steps touch too (an old step removes EVERY `app_token=` line of bugsee.properties,
+  // including a user's own), so they run only where there is evidence of such an install: the old
+  // package, or the launch/init block it injected. They go first, and the new steps' rollback,
+  // which restores the user's own lines from its markers, has the last word.
+  let failed = false;
+  if (await hasEarlierWizardInstall(input.cwd, paths)) {
+    if (paths.androidPath) {
+      const res = await runAndroidRollback({ ...input, cwd: paths.androidPath });
+      if (res === 'failed') failed = true;
+    }
+    if (paths.iosPath) {
+      const res = await runIosRollback({ ...input, cwd: paths.iosPath });
+      if (res === 'failed') failed = true;
+    }
   }
-  if (paths.iosPath) {
-    const res = await runIosRollback({ ...input, cwd: paths.iosPath });
-    if (res === 'failed') failed = true;
-  }
+  if ((await runRollback([...PACKAGE_STEPS, ...SETUP_STEPS], ctx)).failed) failed = true;
   return failed ? 'failed' : 'ok';
 }

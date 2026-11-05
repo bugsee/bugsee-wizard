@@ -241,6 +241,39 @@ describe('runReactNativeRecipe: Expo', () => {
     ]);
   });
 
+  it("an Expo project with prebuilt android/ and ios/ gets the config plugin only: the native files are the plugin's to write", async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage({ expo: '~55.0.0' }),
+      'app.json': appJson,
+      'App.tsx': SAMPLE_APP_TSX,
+      ...BARE_ANDROID_FILES,
+      ...BARE_IOS_FILES,
+    });
+    const original = await tree(fixture);
+    answer({ native: true });
+    expect(await runReactNativeRecipe(opts())).toBe('ok');
+    const after = await tree(fixture);
+    for (const file of Object.keys(original)) {
+      if (file.startsWith('android/') || file.startsWith('ios/'))
+        expect(after[file], file).toBe(original[file]);
+    }
+    expect(Object.keys(after).filter((f) => /bugsee\.properties|xcode\.env/.test(f))).toEqual([]);
+    expect(JSON.parse(after['app.json'] ?? '{}').expo.plugins).toHaveLength(2);
+  });
+
+  it('tells an Expo user what else matters: prebuild for committed native dirs, no Expo Go', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage({ expo: '~55.0.0' }),
+      'app.json': appJson,
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    answer();
+    await runReactNativeRecipe(opts());
+    const done = clack.note.mock.calls.find((c) => c[1] === 'Done')?.[0] as string;
+    expect(done).toContain('expo prebuild');
+    expect(done).toContain('Expo Go');
+  });
+
   it('prints the plugin snippet when the config is app.config.js, which it cannot edit', async () => {
     fixture = await makeFixture({
       'package.json': rnPackage({ expo: '~55.0.0' }),
@@ -358,6 +391,76 @@ describe('runReactNativeRecipe: a bare app with the native edits', () => {
     answer({ native: true, install: true, pod: true });
     expect(await runReactNativeRecipe(opts())).toBe('failed');
     expect(await tree(fixture)).toEqual(original);
+    // the install ran and package.json is back: say how to clear node_modules and the lockfile
+    expect(logged(clack.log.warn)).toMatch(/node_modules[\s\S]*npm remove @bugsee\/react-native/);
+  });
+
+  it('a failure never removes a dependency the user already had (and does not suggest removing it)', async () => {
+    const files = bare();
+    files['package.json'] = rnPackage({ '@bugsee/react-native': '^7.0.0-beta3' });
+    fixture = await makeFixture(files);
+    const original = await tree(fixture);
+    const bin = await mkdtemp(join(tmpdir(), 'rn-fail2-bin-'));
+    await writeFile(join(bin, 'npm'), '#!/bin/sh\nexit 0\n');
+    await chmod(join(bin, 'npm'), 0o755);
+    vi.stubEnv('PATH', bin);
+    answer({ native: true, install: true, pod: true });
+    expect(await runReactNativeRecipe(opts())).toBe('failed');
+    expect(await tree(fixture)).toEqual(original);
+    expect(logged(clack.log.warn)).not.toContain('npm remove');
+  });
+
+  it('under pnpm it reminds that React Native needs nodeLinker: hoisted', async () => {
+    fixture = await makeFixture({ ...bare(), 'pnpm-lock.yaml': 'lockfileVersion: 9\n' });
+    answer({ native: false });
+    await runReactNativeRecipe(opts());
+    const done = clack.note.mock.calls.find((c) => c[1] === 'Done')?.[0] as string;
+    expect(done).toContain('nodeLinker: hoisted');
+  });
+
+  it('warns when the New Architecture is switched off (Android gradle.properties)', async () => {
+    fixture = await makeFixture({
+      ...bare(),
+      'android/gradle.properties': 'org.gradle.jvmargs=-Xmx2g\nnewArchEnabled=false\n',
+    });
+    answer({ native: false });
+    await runReactNativeRecipe(opts());
+    expect(logged(clack.log.warn)).toMatch(/New Architecture/);
+  });
+
+  it('warns when the New Architecture is switched off (app.json)', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage({ expo: '~55.0.0' }),
+      'app.json': JSON.stringify({ expo: { newArchEnabled: false, plugins: [] } }),
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    answer();
+    await runReactNativeRecipe(opts());
+    expect(logged(clack.log.warn)).toMatch(/New Architecture/);
+  });
+
+  it('does not tell a 0.87+ app to pod install just because the package install was declined; an older one is told', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage({}, '0.87.1'),
+      'App.tsx': SAMPLE_APP_TSX,
+      'ios/.keep': '',
+    });
+    answer({ install: false });
+    await runReactNativeRecipe(opts());
+    let done = clack.note.mock.calls.find((c) => c[1] === 'Done')?.[0] as string;
+    expect(done).not.toContain('Run `pod install`');
+    expect(done).toContain('Swift Package Manager');
+    await cleanup(fixture);
+    vi.clearAllMocks();
+    fixture = await makeFixture({
+      'package.json': rnPackage({}, '0.83.0'),
+      'App.tsx': SAMPLE_APP_TSX,
+      'ios/.keep': '',
+    });
+    answer({ install: false });
+    await runReactNativeRecipe(opts());
+    done = clack.note.mock.calls.find((c) => c[1] === 'Done')?.[0] as string;
+    expect(done).toContain('Run `pod install`');
   });
 
   it('without the native edits it leaves the Android and iOS files alone', async () => {

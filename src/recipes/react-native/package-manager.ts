@@ -9,12 +9,16 @@ export type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
 const LOCKFILE_BY_MANAGER: ReadonlyArray<{ file: string; manager: PackageManager }> = [
   // Bun and pnpm checked first — both can also produce a `package-lock.json`
   // alongside their own lockfile in some setups, so the more specific lock
-  // wins. Yarn last because RN's default historically used yarn.
+  // wins. Yarn last because RN's default historically used yarn. Bun 1.2+ writes the text
+  // `bun.lock`; older Bun wrote the binary `bun.lockb`.
   { file: 'bun.lockb', manager: 'bun' },
+  { file: 'bun.lock', manager: 'bun' },
   { file: 'pnpm-lock.yaml', manager: 'pnpm' },
   { file: 'package-lock.json', manager: 'npm' },
   { file: 'yarn.lock', manager: 'yarn' },
 ];
+
+const MAX_PARENTS = 8;
 
 async function fileExists(p: string): Promise<boolean> {
   try {
@@ -26,15 +30,36 @@ async function fileExists(p: string): Promise<boolean> {
 }
 
 /**
- * Detect the package manager in use at `rnRoot` by looking for the
- * lockfile each manager produces. Falls back to `npm` when no lockfile
- * is present (the most universal default).
+ * The nearest directory (the app directory, then its parents: a monorepo keeps one lockfile at its
+ * root) holding a lockfile, with the manager it belongs to; null when there is none.
+ */
+async function findLockfile(
+  rnRoot: string,
+): Promise<{ dir: string; manager: PackageManager } | null> {
+  let dir = path.resolve(rnRoot);
+  for (let i = 0; i <= MAX_PARENTS; i++) {
+    for (const { file, manager } of LOCKFILE_BY_MANAGER) {
+      if (await fileExists(path.join(dir, file))) return { dir, manager };
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/**
+ * Detect the package manager in use for `rnRoot` by looking for the lockfile each manager
+ * produces, in the app directory and its parents. Falls back to `npm` when none is found (the most
+ * universal default).
  */
 export async function detectPackageManager(rnRoot: string): Promise<PackageManager> {
-  for (const { file, manager } of LOCKFILE_BY_MANAGER) {
-    if (await fileExists(path.join(rnRoot, file))) return manager;
-  }
-  return 'npm';
+  return (await findLockfile(rnRoot))?.manager ?? 'npm';
+}
+
+/** Where the lockfile (and a pnpm-workspace.yaml) lives; the app directory when there is none. */
+export async function findLockfileRoot(rnRoot: string): Promise<string> {
+  return (await findLockfile(rnRoot))?.dir ?? path.resolve(rnRoot);
 }
 
 const onPathCache = new Map<PackageManager, boolean>();

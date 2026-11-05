@@ -141,3 +141,24 @@ describe('detector mutual exclusivity at RN root', () => {
     expect(result?.kind).toBe('ios');
   });
 });
+
+describe('reactNativeDetector: a managed Expo project (no android/ or ios/ until prebuild)', () => {
+  it('is detected from its expo + react-native dependencies, so uninstall can reach it', async () => {
+    fixture = await makeFixture({
+      'package.json': JSON.stringify({
+        dependencies: { expo: '~55.0.0', 'react-native': '0.83.0' },
+      }),
+    });
+    expect(await reactNativeDetector.detect({ cwd: fixture })).toMatchObject({
+      kind: 'react-native',
+      confidence: 'high',
+    });
+  });
+
+  it('a react-native app without expo and without native directories is still not detected', async () => {
+    fixture = await makeFixture({
+      'package.json': JSON.stringify({ dependencies: { 'react-native': '0.83.0' } }),
+    });
+    expect(await reactNativeDetector.detect({ cwd: fixture })).toBeNull();
+  });
+});

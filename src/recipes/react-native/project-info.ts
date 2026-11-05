@@ -6,6 +6,7 @@ import semver from 'semver';
 import { LEGACY_RN_PACKAGE_NAME } from './types.js';
 
 /** `@bugsee/react-native` needs React Native 0.81 or later (with the New Architecture and Hermes). */
+const MAX_PARENTS = 8;
 export const MIN_REACT_NATIVE = '0.81.0';
 /** From this React Native version on, the wrapper's iOS SDK is resolved through SPM, not a pod. */
 const SPM_REACT_NATIVE = '0.87.0';
@@ -36,9 +37,14 @@ export async function readRnProjectInfo(rnRoot: string): Promise<RnProjectInfo> 
     ...(pkg?.devDependencies as Record<string, unknown> | undefined),
     ...(pkg?.dependencies as Record<string, unknown> | undefined),
   };
-  const installed = await readJson(
-    path.join(rnRoot, 'node_modules', 'react-native', 'package.json'),
-  );
+  // the installed version, looked up through the parents too (a monorepo hoists node_modules)
+  let installed: Record<string, unknown> | null = null;
+  for (let dir = path.resolve(rnRoot), i = 0; i <= MAX_PARENTS && installed === null; i++) {
+    installed = await readJson(path.join(dir, 'node_modules', 'react-native', 'package.json'));
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
   const installedVersion =
     typeof installed?.version === 'string' ? semver.valid(installed.version) : null;
   const range = deps['react-native'];

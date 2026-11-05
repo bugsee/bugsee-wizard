@@ -1,11 +1,13 @@
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import * as clack from '@clack/prompts';
+
 import * as ask from '../../../core/ask.js';
 import type { Step, StepStatus } from '../../../core/step.js';
-import { decidePnpmBuilds } from '../../../engine/pnpm-builds.js';
+import { decidePnpmBuilds, PNPM_BUILDS_HINT } from '../../../engine/pnpm-builds.js';
 import { readOrNull } from '../../android/io.js';
-import { detectPackageManager } from '../package-manager.js';
+import { detectPackageManager, findLockfileRoot } from '../package-manager.js';
 import type { RnContext } from '../types.js';
 
 /**
@@ -18,7 +20,7 @@ import type { RnContext } from '../types.js';
 const PACKAGES = ['@bugsee/cli'] as const;
 
 /** The file as it was before this run, per run (undefined = this run did not touch it). */
-const before = new WeakMap<object, string | null>();
+const before = new WeakMap<object, { root: string; text: string | null }>();
 
 export const rnPnpmBuildsStep: Step<RnContext> = {
   id: 'react-native.pnpm-builds',
@@ -35,27 +37,29 @@ export const rnPnpmBuildsStep: Step<RnContext> = {
   },
 
   async apply(ctx) {
-    const file = join(ctx.cwd, 'pnpm-workspace.yaml');
-    const prior = await readOrNull(file);
-    before.set(ctx, prior);
-    await decidePnpmBuilds({
+    const root = await findLockfileRoot(ctx.cwd);
+    before.set(ctx, { root, text: await readOrNull(join(root, 'pnpm-workspace.yaml')) });
+    const outcome = await decidePnpmBuilds({
       packages: PACKAGES,
       value: false,
       cwd: ctx.cwd,
-      root: ctx.cwd,
+      root,
       yes: ctx.yes,
       nonInteractive: ctx.nonInteractive,
       confirm: async (message) =>
         (await ask.confirm(false, { message, initialValue: true })) === true,
     });
+    if (outcome === 'declined') {
+      clack.log.warn(`The install may fail with ERR_PNPM_IGNORED_BUILDS. ${PNPM_BUILDS_HINT}`);
+    }
   },
 
   async rollback(ctx) {
-    if (!before.has(ctx)) return; // uninstall: the decision is the project's now
-    const prior = before.get(ctx);
+    const was = before.get(ctx);
+    if (was === undefined) return; // uninstall: the decision is the project's now
     before.delete(ctx);
-    const file = join(ctx.cwd, 'pnpm-workspace.yaml');
-    if (prior === null || prior === undefined) await rm(file, { force: true });
-    else await writeFile(file, prior);
+    const file = join(was.root, 'pnpm-workspace.yaml');
+    if (was.text === null) await rm(file, { force: true });
+    else await writeFile(file, was.text);
   },
 };

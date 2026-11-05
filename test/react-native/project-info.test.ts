@@ -57,6 +57,14 @@ describe('readRnProjectInfo', () => {
     expect((await readRnProjectInfo(dir)).reactNativeVersion).toBe('0.81.2');
   });
 
+  it('finds a hoisted react-native in a parent node_modules (monorepo)', async () => {
+    dir = await makeFixture({
+      'node_modules/react-native/package.json': JSON.stringify({ version: '0.87.1' }),
+      'apps/mobile/package.json': pkg({ 'react-native': '^0.81.0' }),
+    });
+    expect((await readRnProjectInfo(`${dir}/apps/mobile`)).reactNativeVersion).toBe('0.87.1');
+  });
+
   it('leaves the version null when it cannot be known (tag, url, missing)', async () => {
     for (const range of ['latest', 'github:facebook/react-native', 'workspace:*']) {
       dir = await makeFixture({ 'package.json': pkg({ 'react-native': range }) });

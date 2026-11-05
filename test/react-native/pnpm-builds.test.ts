@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const clack = vi.hoisted(() => ({
   confirm: vi.fn(),
   isCancel: (v: unknown) => v === Symbol.for('cancel'),
-  log: { info: vi.fn() },
+  log: { info: vi.fn(), warn: vi.fn() },
 }));
 vi.mock('@clack/prompts', () => clack);
 
@@ -79,6 +79,23 @@ describe('rnPnpmBuildsStep (the wrapper depends on @bugsee/cli, whose install sc
     expect(clack.confirm).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining('@bugsee/cli') }),
     );
+    await expect(readFile(ws())).rejects.toMatchObject({ code: 'ENOENT' });
+    // and says what to do, since the install may now fail
+    expect(String(clack.log.warn.mock.calls[0]?.[0])).toMatch(
+      /ERR_PNPM_IGNORED_BUILDS[\s\S]*--yes/,
+    );
+  });
+
+  it('finds the workspace root above the app (monorepo) for pnpm-workspace.yaml', async () => {
+    fixture = await makeFixture({ 'pnpm-lock.yaml': '', 'apps/mobile/package.json': '{}' });
+    await fakePnpm('11.3.0');
+    const ctx = {
+      ...(await makeRnContext({ cwd: `${fixture}/apps/mobile`, runPackageInstall: true })),
+      yes: true,
+    };
+    await rnPnpmBuildsStep.apply(ctx);
+    expect(await readFile(ws(), 'utf8')).toMatch(/@bugsee\/cli['"]: false/);
+    await rnPnpmBuildsStep.rollback(ctx);
     await expect(readFile(ws())).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

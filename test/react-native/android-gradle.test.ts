@@ -615,6 +615,65 @@ apply from: new File(bugseeDir, "scripts/bugsee-sourcemaps.gradle")
     expect((await byId(APP).precheck(ctx)).kind).toBe('satisfied');
   });
 
+  it('an already wired app (hard-coded paths, as examples/bare) is satisfied and untouched', async () => {
+    const wired = `apply plugin: "com.android.application"
+apply plugin: "com.facebook.react"
+apply plugin: "com.bugsee.android.gradle"
+
+react {
+    hermesCommand = file("../../node_modules/@bugsee/react-native/scripts/hermesc-preserve-js" +
+        (System.getProperty("os.name").startsWith("Windows") ? ".cmd" : ".sh")).absolutePath
+    autolinkLibrariesWithApp()
+}
+
+apply from: file("../../node_modules/@bugsee/react-native/scripts/bugsee-sourcemaps.gradle")
+
+def nativeVersions = new groovy.json.JsonSlurper().parse(rootProject.file("../../../native-versions.json"))
+
+dependencies {
+    implementation "com.bugsee:bugsee-android-ndk:\${nativeVersions.android.sdk}"
+}
+`;
+    const ctx = await setup({ app: wired });
+    expect((await byId(APP).precheck(ctx)).kind).toBe('satisfied');
+    await applyOne(APP, ctx);
+    expect(await readFixture(fixture as string, 'android/app/build.gradle')).toBe(wired);
+  });
+
+  it('adds bugseeDir only when something still needs it', async () => {
+    // only the plugin apply is missing: no node call is added
+    const app = `apply plugin: "com.facebook.react"
+react {
+    hermesCommand = "x/hermesc-preserve-js.sh"
+}
+apply from: file("x/bugsee-sourcemaps.gradle")
+dependencies {
+    implementation "com.bugsee:bugsee-android-ndk:1"
+}
+`;
+    const ctx = await setup({ app });
+    await applyOne(APP, ctx);
+    const out = await readFixture(fixture as string, 'android/app/build.gradle');
+    expect(out).toContain('apply plugin: "com.bugsee.android.gradle"');
+    expect(out).not.toContain('bugseeDir');
+    // a missing sourcemaps hook needs it (the apply line resolves through bugseeDir)
+    await cleanup(fixture as string);
+    const ctx3 = await setup({
+      app: app.replace('apply from: file("x/bugsee-sourcemaps.gradle")\n', ''),
+    });
+    await applyOne(APP, ctx3);
+    expect(await readFixture(fixture as string, 'android/app/build.gradle')).toContain(
+      'def bugseeDir',
+    );
+    // a missing Groovy NDK line needs it (bugseeVersions reads native-versions.json via bugseeDir)
+    await cleanup(fixture as string);
+    const ctx2 = await setup({ app: app.replace(/dependencies \{[\s\S]*\}\n$/, '') });
+    await applyOne(APP, ctx2);
+    expect(await readFixture(fixture as string, 'android/app/build.gradle')).toContain(
+      'def bugseeDir',
+    );
+  });
+
   it('adds only what is missing and strips only that', async () => {
     const app = `apply plugin: "com.facebook.react"
 def bugseeDir = file("x")
@@ -878,6 +937,58 @@ describe('bugsee.properties and .gitignore', () => {
     }
     const ctx = await setup({
       extra: { '.gitignore': '# bugsee.properties\n!android/bugsee.properties\n' },
+    });
+    expect((await byId(IGNORE).precheck(ctx)).kind).toBe('pending');
+  });
+
+  it('gitignore: follows per-file gitignore semantics', async () => {
+    const cases: Array<[string, string, boolean]> = [
+      // android/.gitignore resolves relative to android/
+      ['android/.gitignore', 'bugsee.properties', true],
+      ['android/.gitignore', '/bugsee.properties', true],
+      ['android/.gitignore', '*.properties', true],
+      ['android/.gitignore', '**/bugsee.properties', true],
+      ['android/.gitignore', 'android/bugsee.properties', false],
+      ['android/.gitignore', '/android/bugsee.properties', false],
+      ['android/.gitignore', 'app/bugsee.properties', false],
+      ['android/.gitignore', 'bugsee.properties\n!bugsee.properties', false],
+      ['android/.gitignore', '*.properties\n!bugsee.properties', false],
+      ['android/.gitignore', '!bugsee.properties\nbugsee.properties', true],
+      ['android/.gitignore', 'bugsee.properties/', false],
+      ['android/.gitignore', '# bugsee.properties', false],
+      ['android/.gitignore', 'bugsee.properties  ', true],
+      ['android/.gitignore', 'bugsee.propertie?', true],
+      // the project .gitignore resolves relative to the project root
+      ['.gitignore', 'android/bugsee.properties', true],
+      ['.gitignore', '/android/bugsee.properties', true],
+      ['.gitignore', '**/bugsee.properties', true],
+      ['.gitignore', 'bugsee.properties', true],
+      ['.gitignore', 'android/*.properties', true],
+      ['.gitignore', 'android/', true],
+      ['.gitignore', '/android', true],
+      ['.gitignore', '/bugsee.properties', false],
+      ['.gitignore', '/*.properties', false],
+      ['.gitignore', 'ios/bugsee.properties', false],
+      ['.gitignore', 'android/bugsee.properties\n!android/bugsee.properties', false],
+      ['.gitignore', 'bugsee.properties\n!bugsee.properties', false],
+      ['.gitignore', '!bugsee.properties', false],
+      ['.gitignore', 'android/\n!android/bugsee.properties', true], // ignored parent stays ignored
+    ];
+    for (const [file, content, ignored] of cases) {
+      const ctx = await setup({ extra: { [file]: `${content}\n` } });
+      expect((await byId(IGNORE).precheck(ctx)).kind, `${file}: ${JSON.stringify(content)}`).toBe(
+        ignored ? 'satisfied' : 'pending',
+      );
+      await cleanup(fixture as string);
+    }
+  });
+
+  it('gitignore: android/.gitignore un-ignoring wins over a root ignore', async () => {
+    const ctx = await setup({
+      extra: {
+        '.gitignore': 'android/bugsee.properties\n',
+        'android/.gitignore': '!bugsee.properties\n',
+      },
     });
     expect((await byId(IGNORE).precheck(ctx)).kind).toBe('pending');
   });
