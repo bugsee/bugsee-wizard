@@ -81,6 +81,21 @@ describe('reactNativeDetector', () => {
     expect(result?.kind).toBe('react-native');
   });
 
+  it('does not count an ios/ dir without an .xcodeproj as an iOS platform', async () => {
+    fixture = await makeFixture({
+      'package.json': RN_PACKAGE_JSON,
+      'android/app/build.gradle': '// stub',
+      'ios/Podfile': '# stub',
+    });
+    const result = await reactNativeDetector.detect({ cwd: fixture });
+    expect(result?.evidence.map((e) => e.path)).toEqual(['package.json', 'android/']);
+  });
+
+  it('does not match when the only platform dir is an ios/ without an .xcodeproj', async () => {
+    fixture = await makeFixture({ 'package.json': RN_PACKAGE_JSON, 'ios/Podfile': '# stub' });
+    expect(await reactNativeDetector.detect({ cwd: fixture })).toBeNull();
+  });
+
   it('does not match a Node project without react-native', async () => {
     fixture = await makeFixture({
       'package.json': JSON.stringify({ name: 'X', dependencies: { express: '4.0.0' } }),

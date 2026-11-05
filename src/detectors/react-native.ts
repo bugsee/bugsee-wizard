@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { DetectInput, DetectionResult, Detector } from '../core/detect.js';
@@ -7,6 +7,15 @@ async function fileExists(p: string): Promise<boolean> {
   try {
     await stat(p);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/** An `ios/` directory only counts as a platform when it holds an Xcode project. */
+async function hasXcodeProject(iosDir: string): Promise<boolean> {
+  try {
+    return (await readdir(iosDir)).some((name) => name.endsWith('.xcodeproj'));
   } catch {
     return false;
   }
@@ -50,7 +59,7 @@ export const reactNativeDetector: Detector = {
     if (!('react-native' in deps)) return null;
 
     const hasAndroid = await fileExists(path.join(cwd, 'android'));
-    const hasIos = await fileExists(path.join(cwd, 'ios'));
+    const hasIos = await hasXcodeProject(path.join(cwd, 'ios'));
     if (!hasAndroid && !hasIos) return null;
 
     const evidence: Array<{ path: string; note?: string }> = [
