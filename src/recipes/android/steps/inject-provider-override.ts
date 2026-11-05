@@ -1,19 +1,16 @@
 import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
-import { readOrNull, stripMarkerBlock } from '../io.js';
+import { findOpenTag, readOrNull, stripMarkerBlock } from '../io.js';
 import {
   type AndroidContext,
   PROVIDER_OVERRIDE_MARKER_BEGIN,
   PROVIDER_OVERRIDE_MARKER_END,
 } from '../types.js';
 
-const MANIFEST_OPEN_TAG_RE = /<manifest\b([^>]*)>/;
 // Paired form only — a self-closing `<application … />` is detected
 // separately in precheck so we can block with a clear message rather
 // than splice the override XML *outside* the application element.
-const APPLICATION_PAIRED_OPEN_RE = /<application\b[^>]*[^/]>/;
-const APPLICATION_SELF_CLOSING_RE = /<application\b[^>]*\/>/;
 const TOOLS_NS_ATTR_RE = /xmlns:tools\s*=\s*"http:\/\/schemas\.android\.com\/tools"/;
 
 function escapeXmlAttr(value: string): string {
@@ -68,7 +65,7 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
     if (content.includes(PROVIDER_OVERRIDE_MARKER_BEGIN)) {
       return { kind: 'satisfied' };
     }
-    if (!MANIFEST_OPEN_TAG_RE.test(content)) {
+    if (!findOpenTag(content, 'manifest')) {
       return { kind: 'blocked', reason: 'No <manifest> root in AndroidManifest.xml' };
     }
     // A self-closing `<application/>` has no body to splice into. It's
@@ -76,14 +73,15 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
     // Block with a clear reason rather than silently inserting the
     // <provider> outside the application element, which would produce
     // an invalid manifest.
-    if (APPLICATION_SELF_CLOSING_RE.test(content) && !APPLICATION_PAIRED_OPEN_RE.test(content)) {
+    const app = findOpenTag(content, 'application');
+    if (app?.selfClosing) {
       return {
         kind: 'blocked',
         reason:
           '<application/> is self-closing — convert to <application>…</application> and re-run, or add the override snippet manually.',
       };
     }
-    if (!APPLICATION_PAIRED_OPEN_RE.test(content)) {
+    if (!app) {
       return { kind: 'blocked', reason: 'No <application> element in AndroidManifest.xml' };
     }
     return { kind: 'pending' };
@@ -101,24 +99,23 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
     // Judge only the <manifest> open tag: an `xmlns:tools` declared on some
     // nested element (or in a comment) does not make `tools:` resolve on the
     // `<provider>` we add, so the root still needs its own.
-    const manifestMatch = MANIFEST_OPEN_TAG_RE.exec(updated);
+    const manifestMatch = findOpenTag(updated, 'manifest');
     if (!manifestMatch) throw new Error('No <manifest> root in AndroidManifest.xml');
-    const attrs = manifestMatch[1] ?? '';
+    const attrs = manifestMatch.attrs;
     if (!TOOLS_NS_ATTR_RE.test(attrs)) {
       // Insert the namespace as the last attribute on the <manifest> tag.
       const newOpenTag = `<manifest${attrs}\n    xmlns:tools="http://schemas.android.com/tools">`;
       updated =
-        updated.slice(0, manifestMatch.index) +
-        newOpenTag +
-        updated.slice(manifestMatch.index + manifestMatch[0].length);
+        updated.slice(0, manifestMatch.index) + newOpenTag + updated.slice(manifestMatch.end);
     }
 
     // Step 2: insert <provider> override at the start of the line right
     // after the <application> open tag. Precheck has already guarded
     // against a self-closing `<application/>`.
-    const appMatch = APPLICATION_PAIRED_OPEN_RE.exec(updated);
-    if (!appMatch) throw new Error('No <application> open tag in AndroidManifest.xml');
-    let insertAt = appMatch.index + appMatch[0].length;
+    const appMatch = findOpenTag(updated, 'application');
+    if (!appMatch || appMatch.selfClosing)
+      throw new Error('No <application> open tag in AndroidManifest.xml');
+    let insertAt = appMatch.end;
     if (updated[insertAt] === '\n') insertAt++;
     updated =
       updated.slice(0, insertAt) + providerOverrideXml(processName) + updated.slice(insertAt);

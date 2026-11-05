@@ -1,3 +1,5 @@
+import { findOpenTag, findOpenTags } from './io.js';
+
 /**
  * Result of scanning AndroidManifest.xml for `android:process` attributes.
  *
@@ -21,8 +23,6 @@ export interface AndroidProcessConfig {
 // the `<activity …>` alternative — `\b` would have matched at the
 // `y`-to-`-` boundary, creating false positives on a tag that has its
 // own role and may legitimately declare its own process.
-const APPLICATION_TAG_RE = /<application(?![\w-])([^>]*)>/;
-const COMPONENT_TAG_RE = /<(activity|service|provider|receiver)(?![\w-])([^>]*?)\/?>/g;
 
 // Match `android:process` with either single or double quotes. Both are
 // legal XML; lint and Android Studio default to double, but third-party
@@ -31,6 +31,7 @@ const COMPONENT_TAG_RE = /<(activity|service|provider|receiver)(?![\w-])([^>]*?)
 // namespaced name (`tools:android:process`) is not mistaken for it.
 const PROCESS_ATTR_RE = /(?<=\s)android:process\s*=\s*(?:"([^"]+)"|'([^']+)')/;
 
+const COMPONENT_TAGS = ['activity', 'service', 'provider', 'receiver'] as const;
 const XML_COMMENT_RE = /<!--[\s\S]*?-->/g;
 
 /**
@@ -58,17 +59,16 @@ export function detectProcessConfig(manifestContent: string): AndroidProcessConf
 
   // <application> is unique in a manifest; capture its attributes.
   const applicationProcess = (() => {
-    const m = APPLICATION_TAG_RE.exec(cleaned);
-    if (!m) return null;
-    return pickProcess(m[1] ?? '');
+    const tag = findOpenTag(cleaned, 'application');
+    return tag ? pickProcess(tag.attrs) : null;
   })();
 
   // Collect android:process from individual components, skipping the
   // <application> tag itself (already handled). Use a Set to dedupe —
   // multiple components can share the same custom process name.
   const componentProcesses = new Set<string>();
-  for (const m of cleaned.matchAll(COMPONENT_TAG_RE)) {
-    const proc = pickProcess(m[2] ?? '');
+  for (const tag of findOpenTags(cleaned, COMPONENT_TAGS)) {
+    const proc = pickProcess(tag.attrs);
     if (proc) componentProcesses.add(proc);
   }
 
