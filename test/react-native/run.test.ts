@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,20 +15,16 @@ const clack = vi.hoisted(() => ({
 }));
 vi.mock('@clack/prompts', () => clack);
 
-const platform = vi.hoisted(() => ({
-  runAndroidRecipe: vi.fn(),
-  runIosRecipe: vi.fn(),
-}));
 vi.mock('../../src/recipes/android/run.js', () => ({
-  runAndroidRecipe: platform.runAndroidRecipe,
   runAndroidRollback: vi.fn(async () => 'ok'),
 }));
-vi.mock('../../src/recipes/ios/run.js', () => ({
-  runIosRecipe: platform.runIosRecipe,
-  runIosRollback: vi.fn(async () => 'ok'),
-}));
+vi.mock('../../src/recipes/ios/run.js', () => ({ runIosRollback: vi.fn(async () => 'ok') }));
 
-import { runReactNativeRecipe } from '../../src/recipes/react-native/run.js';
+import { _resetPodOnPathCache } from '../../src/recipes/ios/pod.js';
+import {
+  runReactNativeRecipe,
+  runReactNativeRollback,
+} from '../../src/recipes/react-native/run.js';
 import {
   cleanup,
   makeFixture,
@@ -36,9 +32,10 @@ import {
   SAMPLE_APP_TSX,
   SAMPLE_RN_PACKAGE_JSON,
 } from './helpers.js';
+import { BARE_ANDROID_FILES, BARE_IOS_FILES } from './native-fixtures.js';
 
 let fixture: string;
-const opts = () => ({
+const opts = (over: Record<string, unknown> = {}) => ({
   cwd: fixture,
   debug: false,
   dryRun: false,
@@ -46,83 +43,335 @@ const opts = () => ({
   json: false,
   ignoreGitChanges: false,
   yes: false,
+  ...over,
 });
 
-beforeEach(async () => {
-  vi.clearAllMocks();
-  fixture = await makeFixture({
-    'package.json': SAMPLE_RN_PACKAGE_JSON,
-    'App.tsx': SAMPLE_APP_TSX,
-    'android/.keep': '',
-    'ios/.keep': '',
-  });
-  // Prompts: platforms=both, launch path=native.
-  clack.select.mockResolvedValueOnce('both').mockResolvedValueOnce('native');
+/** The confirmations by what they ask about; anything not listed is answered "no". */
+interface Answers {
+  inject?: boolean;
+  install?: boolean;
+  native?: boolean;
+  pod?: boolean;
+}
+function answer(a: Answers = {}): void {
+  clack.select.mockResolvedValue('both');
   clack.text.mockResolvedValue('TOKEN');
-  // Prompts: auto-inject JS entry=yes, run package install=no.
-  clack.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+  clack.confirm.mockImplementation(async ({ message }: { message: string }) => {
+    if (/Add the Bugsee launch/.test(message)) return a.inject ?? true;
+    if (/install` now to fetch/.test(message) && !/pod/.test(message)) return a.install ?? false;
+    if (/Apply the native edits/.test(message)) return a.native ?? false;
+    if (/pod install/.test(message)) return a.pod ?? false;
+    throw new Error(`unexpected question: ${message}`);
+  });
+}
+const messages = (fn: { mock: { calls: unknown[][] } }): string[] =>
+  fn.mock.calls.map((c) => String((c[0] as { message?: string })?.message ?? c[0]));
+const logged = (fn: { mock: { calls: unknown[][] } }): string =>
+  fn.mock.calls.map((c) => String(c[0])).join('\n');
+
+const rnPackage = (extra: Record<string, string> = {}, rn = '0.83.0') =>
+  JSON.stringify({ name: 'app', dependencies: { 'react-native': rn, ...extra } }, null, 2);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.unstubAllEnvs();
+  _resetPodOnPathCache();
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
   await cleanup(fixture);
 });
 
-describe('runReactNativeRecipe — native platform results', () => {
-  it("returns 'ok' and keeps the RN-level edits when both platforms succeed", async () => {
-    platform.runAndroidRecipe.mockResolvedValue('ok');
-    platform.runIosRecipe.mockResolvedValue('ok');
-    expect(await runReactNativeRecipe(opts())).toBe('ok');
-    expect(await readFixture(fixture, 'package.json')).toContain('react-native-bugsee');
-    expect(await readFixture(fixture, 'App.tsx')).toContain('Bugsee');
-  });
-
-  it('rolls the RN-level edits back and fails when iOS fails', async () => {
-    platform.runAndroidRecipe.mockResolvedValue('ok');
-    platform.runIosRecipe.mockResolvedValue('failed');
+describe('runReactNativeRecipe: what it refuses', () => {
+  it('stops at the old react-native-bugsee, which @bugsee/react-native replaces, and touches nothing', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage({ 'react-native-bugsee': '^6.0.0' }),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer();
     expect(await runReactNativeRecipe(opts())).toBe('failed');
-    expect(await readFixture(fixture, 'package.json')).toBe(SAMPLE_RN_PACKAGE_JSON);
+    const error = logged(clack.log.error);
+    expect(error).toContain('react-native-bugsee');
+    expect(error).toContain('@bugsee/react-native');
+    expect(error).toMatch(/not an upgrade in place/);
+    expect(clack.confirm).not.toHaveBeenCalled();
+    expect(clack.text).not.toHaveBeenCalled();
     expect(await readFixture(fixture, 'App.tsx')).toBe(SAMPLE_APP_TSX);
-    expect(clack.log.error).toHaveBeenCalledWith(expect.stringContaining('iOS setup failed'));
-    // Android was configured before the failure and is reported as kept.
-    expect(clack.log.warn).toHaveBeenCalledWith(expect.stringContaining('Android'));
-    // No success summary.
-    expect(clack.note).not.toHaveBeenCalledWith(expect.anything(), 'Done');
+    expect(JSON.parse(await readFixture(fixture, 'package.json')).dependencies).not.toHaveProperty(
+      '@bugsee/react-native',
+    );
   });
 
-  it('stops at the first failing platform and rolls back', async () => {
-    platform.runAndroidRecipe.mockResolvedValue('failed');
+  it('stops below React Native 0.81, naming the version found', async () => {
+    fixture = await makeFixture({ 'package.json': rnPackage({}, '0.76.7'), 'android/.keep': '' });
+    answer();
     expect(await runReactNativeRecipe(opts())).toBe('failed');
-    expect(platform.runIosRecipe).not.toHaveBeenCalled();
-    expect(await readFixture(fixture, 'package.json')).toBe(SAMPLE_RN_PACKAGE_JSON);
-    expect(clack.log.warn).not.toHaveBeenCalled();
+    expect(logged(clack.log.error)).toMatch(/0\.81.*found 0\.76\.7/);
+    expect(clack.text).not.toHaveBeenCalled();
   });
 
-  it("returns 'cancelled' (and rolls back) when a platform recipe is cancelled", async () => {
-    platform.runAndroidRecipe.mockResolvedValue('cancelled');
-    expect(await runReactNativeRecipe(opts())).toBe('cancelled');
-    expect(await readFixture(fixture, 'package.json')).toBe(SAMPLE_RN_PACKAGE_JSON);
+  it('does not refuse a version it cannot know (a tag): that is checked at install', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage({}, 'latest'),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer();
+    expect(await runReactNativeRecipe(opts())).toBe('ok');
+  });
+
+  it('fails when there is nothing native to set up and it is not an Expo project', async () => {
+    fixture = await makeFixture({ 'package.json': rnPackage() });
+    expect(await runReactNativeRecipe(opts())).toBe('failed');
+    expect(logged(clack.log.warn)).toContain('No `android/` or `ios/`');
+  });
+});
+
+describe('runReactNativeRecipe: the JS side', () => {
+  it('adds @bugsee/react-native and the JS launch, with the token per platform', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+      'ios/.keep': '',
+    });
+    answer();
+    clack.text.mockImplementation(async ({ message }: { message: string }) =>
+      /iOS/.test(message) ? 'IOS_T' : 'AND_T',
+    );
+    expect(await runReactNativeRecipe(opts())).toBe('ok');
+    expect(JSON.parse(await readFixture(fixture, 'package.json')).dependencies).toMatchObject({
+      '@bugsee/react-native': '^7.0.0-beta3',
+    });
+    const app = await readFixture(fixture, 'App.tsx');
+    expect(app).toContain(`import Bugsee from '@bugsee/react-native'`);
+    expect(app).toContain(`BugseePlatform.OS === 'ios' ? 'IOS_T' : 'AND_T'`);
+    expect(app).not.toContain('Bugsee.initialize');
+  });
+
+  it('with only an Android directory it is not asked which platform, and asks one token', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer();
+    await runReactNativeRecipe(opts());
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(messages(clack.text)).toEqual(['Bugsee app token (Android)']);
+  });
+
+  it('prints the snippet instead when the launch is not auto-added', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer({ inject: false });
+    await runReactNativeRecipe(opts());
+    expect(await readFixture(fixture, 'App.tsx')).toBe(SAMPLE_APP_TSX);
+    expect(logged(clack.note)).toContain('Bugsee.launch(Platform.OS');
+  });
+
+  it('summarises what is left: install, pod install, the native edits, the requirements', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+      'ios/.keep': '',
+    });
+    answer({ install: false, native: false });
+    await runReactNativeRecipe(opts());
+    const done = clack.note.mock.calls.find((c) => c[1] === 'Done')?.[0] as string;
+    expect(done).toContain('install` to fetch @bugsee/react-native');
+    expect(done).toContain('pod install');
+    expect(done).toContain('native edits');
+    expect(done).toContain('New Architecture and Hermes');
+    expect(done).toContain('Bugsee.wrap(App)');
+  });
+
+  it('from React Native 0.87 iOS needs no pod install: SPM resolves the SDK', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage({}, '0.87.1'),
+      'App.tsx': SAMPLE_APP_TSX,
+      'ios/.keep': '',
+    });
+    answer({ install: false });
+    await runReactNativeRecipe(opts());
+    expect(messages(clack.confirm).some((m) => /pod install/.test(m))).toBe(false);
+  });
+
+  it('a dry run writes nothing', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer();
+    expect(await runReactNativeRecipe(opts({ dryRun: true }))).toBe('ok');
+    expect(await readFixture(fixture, 'App.tsx')).toBe(SAMPLE_APP_TSX);
+    expect(JSON.parse(await readFixture(fixture, 'package.json')).dependencies).not.toHaveProperty(
+      '@bugsee/react-native',
+    );
+  });
+});
+
+describe('runReactNativeRecipe: Expo', () => {
+  const appJson = JSON.stringify({ expo: { name: 'app', plugins: ['expo-router'] } }, null, 2);
+
+  it('adds the config plugin to app.json: both platforms, no platform question, no native edits asked', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage({ expo: '~55.0.0' }),
+      'app.json': appJson,
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    answer();
+    clack.text.mockImplementation(async ({ message }: { message: string }) =>
+      /iOS/.test(message) ? 'IOS_T' : 'AND_T',
+    );
+    expect(await runReactNativeRecipe(opts())).toBe('ok');
+    expect(clack.select).not.toHaveBeenCalled();
+    expect(messages(clack.confirm).some((m) => /native edits/.test(m))).toBe(false);
+    const plugins = JSON.parse(await readFixture(fixture, 'app.json')).expo.plugins;
+    expect(plugins[0]).toBe('expo-router');
+    expect(plugins[1]).toEqual([
+      '@bugsee/react-native',
+      { appToken: { ios: 'IOS_T', android: 'AND_T' } },
+    ]);
+  });
+
+  it('prints the plugin snippet when the config is app.config.js, which it cannot edit', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage({ expo: '~55.0.0' }),
+      'app.config.js': 'module.exports = {};\n',
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    answer();
+    expect(await runReactNativeRecipe(opts())).toBe('ok');
+    const note = clack.note.mock.calls.find((c) => c[1] === 'Expo config plugin')?.[0] as string;
+    expect(note).toContain('@bugsee/react-native');
+    expect(note).toContain('app.json');
   });
 });
 
 describe('runReactNativeRecipe --yes', () => {
-  it('takes every prompt default (both platforms, native launch, inject, install) and still asks for tokens', async () => {
-    clack.select.mockReset();
-    clack.confirm.mockReset();
-    // the default is to run the install when the manager is on PATH: a fake one, no network
+  it('takes every default without asking, and still asks for the tokens', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      ...BARE_ANDROID_FILES,
+      ...BARE_IOS_FILES,
+    });
+    // the default is to install when the manager is on PATH and to run pod install when pod is:
+    // fakes, no network
     const bin = await mkdtemp(join(tmpdir(), 'rn-yes-bin-'));
-    await writeFile(join(bin, 'npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    for (const name of ['npm', 'pod']) {
+      await writeFile(join(bin, name), '#!/bin/sh\nexit 0\n');
+      await chmod(join(bin, name), 0o755);
+    }
     vi.stubEnv('PATH', `${bin}:${process.env.PATH}`);
-    platform.runAndroidRecipe.mockResolvedValue('ok');
-    platform.runIosRecipe.mockResolvedValue('ok');
-    expect(await runReactNativeRecipe({ ...opts(), yes: true })).toBe('ok');
+    clack.text.mockResolvedValue('TOKEN');
+    await runReactNativeRecipe(opts({ yes: true }));
     expect(clack.select).not.toHaveBeenCalled();
     expect(clack.confirm).not.toHaveBeenCalled();
-    expect(clack.text).toHaveBeenCalledTimes(2); // one token per platform: nothing to assume
-    // the defaults: native launch (initialize), auto-inject because an entry file exists
-    expect(await readFixture(fixture, 'App.tsx')).toContain('Bugsee');
-    expect(platform.runAndroidRecipe).toHaveBeenCalledWith(
-      expect.objectContaining({ yes: true, options: { initMode: 'automatic' } }),
+    expect(clack.text).toHaveBeenCalledTimes(2);
+    expect(await readFixture(fixture, 'App.tsx')).toContain('Bugsee.launch(');
+    // and the native edits it defaults to
+    expect(await readFixture(fixture, 'android/app/build.gradle')).toContain(
+      'com.bugsee.android.gradle',
     );
-    expect(platform.runIosRecipe).toHaveBeenCalledWith(expect.objectContaining({ yes: true }));
+    expect(await readFixture(fixture, 'ios/.xcode.env.local')).toContain('BUGSEE_TOKEN_IOS');
   });
 });
+
+/** Every file under a directory, by relative path. */
+async function tree(dir: string, rel = ''): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const e of await readdir(join(dir, rel), { withFileTypes: true })) {
+    const r = join(rel, e.name);
+    if (e.isDirectory()) Object.assign(out, await tree(dir, r));
+    else out[r] = await readFile(join(dir, r), 'utf8');
+  }
+  return out;
+}
+
+describe('runReactNativeRecipe: a bare app with the native edits', () => {
+  const bare = () => ({
+    'package.json': rnPackage(),
+    'App.tsx': SAMPLE_APP_TSX,
+    ...BARE_ANDROID_FILES,
+    ...BARE_IOS_FILES,
+  });
+
+  it('edits Android and iOS, changes nothing the second time, and uninstall restores every byte', async () => {
+    fixture = await makeFixture(bare());
+    const original = await tree(fixture);
+    answer({ native: true });
+    clack.text.mockImplementation(async ({ message }: { message: string }) =>
+      /iOS/.test(message) ? 'IOS_TOKEN_1' : 'AND_TOKEN_1',
+    );
+
+    expect(await runReactNativeRecipe(opts())).toBe('ok');
+    const installed = await tree(fixture);
+    expect(installed['android/build.gradle']).toContain(
+      "id 'com.bugsee.android.gradle' version '4.0.8'",
+    );
+    expect(installed['android/app/build.gradle']).toContain('bugsee-sourcemaps.gradle');
+    expect(installed['android/bugsee.properties']).toContain('app_token=AND_TOKEN_1');
+    expect(installed['ios/MyApp.xcodeproj/project.pbxproj']).toContain('bugsee-xcode.sh');
+    expect(installed['ios/.xcode.env.local']).toContain('BUGSEE_TOKEN_IOS=IOS_TOKEN_1');
+    // each token only where it belongs: the Android token never reaches iOS files, nor the reverse
+    for (const [file, text] of Object.entries(installed)) {
+      if (file.startsWith('ios/') && file !== 'ios/.xcode.env.local')
+        expect(text, file).not.toContain('IOS_TOKEN_1');
+      if (file.startsWith('android/') && file !== 'android/bugsee.properties')
+        expect(text, file).not.toContain('AND_TOKEN_1');
+    }
+
+    expect(await runReactNativeRecipe(opts())).toBe('ok');
+    expect(await tree(fixture)).toEqual(installed);
+
+    expect(await runReactNativeRollback(opts())).toBe('ok');
+    expect(await tree(fixture)).toEqual(original);
+  });
+
+  it('a file it cannot edit becomes a manual snippet; the rest still applies', async () => {
+    const files: Record<string, string> = bare();
+    delete files['android/app/build.gradle'];
+    fixture = await makeFixture(files);
+    answer({ native: true });
+    expect(await runReactNativeRecipe(opts())).toBe('ok');
+    const note = clack.note.mock.calls.find((c) => /app\/build\.gradle/.test(String(c[0])));
+    expect(note).toBeDefined();
+    expect(await readFixture(fixture, 'ios/.xcode.env.local')).toContain('BUGSEE_TOKEN_IOS');
+  });
+
+  it('a step that fails rolls everything back, the package edit included', async () => {
+    fixture = await makeFixture(bare());
+    const original = await tree(fixture);
+    // npm exists (a fake), pod does not: the pod install the user asked for is blocked
+    const bin = await mkdtemp(join(tmpdir(), 'rn-fail-bin-'));
+    await writeFile(join(bin, 'npm'), '#!/bin/sh\nexit 0\n');
+    await chmod(join(bin, 'npm'), 0o755);
+    vi.stubEnv('PATH', bin);
+    answer({ native: true, install: true, pod: true });
+    expect(await runReactNativeRecipe(opts())).toBe('failed');
+    expect(await tree(fixture)).toEqual(original);
+  });
+
+  it('without the native edits it leaves the Android and iOS files alone', async () => {
+    fixture = await makeFixture(bare());
+    const original = await tree(fixture);
+    answer({ native: false });
+    expect(await runReactNativeRecipe(opts())).toBe('ok');
+    const after = await tree(fixture);
+    for (const file of Object.keys(original)) {
+      if (file.startsWith('android/') || file.startsWith('ios/'))
+        expect(after[file], file).toBe(original[file]);
+    }
+    expect(Object.keys(after).filter((f) => /bugsee|xcode\.env/.test(f))).toEqual([]);
+  });
+});
+
+void SAMPLE_RN_PACKAGE_JSON;

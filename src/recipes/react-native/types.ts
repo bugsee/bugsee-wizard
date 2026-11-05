@@ -1,18 +1,5 @@
 import type { WizardContext } from '../../core/context.js';
 
-/**
- * Native: SDK is launched in iOS AppDelegate / Android Application class.
- * The `react-native-bugsee` JS layer wires to the already-running SDK
- * via `await Bugsee.initialize()`. Captures crashes, console output,
- * and network events from the first ms of process lifetime; filters set
- * in JS only apply once the bridge comes up.
- *
- * JavaScript: SDK is launched from JS via `await Bugsee.launch(token)`.
- * Filters apply to every event, but events from before the JS bridge is
- * up are missed.
- */
-export type RnLaunchPath = 'native' | 'javascript';
-
 export type JsEntryLanguage = 'tsx' | 'ts' | 'jsx' | 'js';
 
 /** Result of scanning the RN root for the JS launch entry point. */
@@ -47,11 +34,12 @@ export interface RnNativeVersions {
 }
 
 export interface RnOptions {
-  readonly launchPath: RnLaunchPath;
   /** Auto-inject Bugsee.launch / Bugsee.initialize into the JS entry. */
   readonly autoInjectJsEntry: boolean;
   /** Run `npm install` / `yarn install` after editing package.json. */
   readonly runPackageInstall: boolean;
+  /** Run `pod install` in ios/ (bare iOS app on React Native < 0.87, install opted into). */
+  readonly runPodInstall: boolean;
   /** Versions the Android/iOS snippets must name (from the installed package, else the fallback). */
   readonly nativeVersions: RnNativeVersions;
 }
@@ -62,16 +50,17 @@ export interface RnContext extends WizardContext {
   readonly rnOptions: RnOptions;
 }
 
-export const RN_PACKAGE_NAME = 'react-native-bugsee';
-// Pin a min version that matches what we've validated. Bugsee will
-// publish updates and consumers can bump manually; the wizard only
-// guarantees a known-good baseline.
-export const RN_PACKAGE_VERSION = '^4.0.0';
+export const RN_PACKAGE_NAME = '@bugsee/react-native';
+// The baseline the wizard has validated: the caret range follows later betas and the stable 7.x.
+export const RN_PACKAGE_VERSION = '^7.0.0-beta3';
+/** The old wrapper (6.x), a different package: only rolled back, never installed. */
+export const LEGACY_RN_PACKAGE_NAME = 'react-native-bugsee';
 
-export const PACKAGE_JSON_MARKER = '"react-native-bugsee"';
+export const PACKAGE_JSON_MARKER = '"@bugsee/react-native"';
 
 export const JS_LAUNCH_MARKER_BEGIN = '// bugsee:wizard:rn-launch:begin';
 export const JS_LAUNCH_MARKER_END = '// bugsee:wizard:rn-launch:end';
+// Written by wizards before the move to @bugsee/react-native (native launch path); still stripped.
 export const JS_INIT_MARKER_BEGIN = '// bugsee:wizard:rn-init:begin';
 export const JS_INIT_MARKER_END = '// bugsee:wizard:rn-init:end';
 

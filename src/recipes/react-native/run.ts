@@ -1,26 +1,38 @@
 import * as clack from '@clack/prompts';
-import * as ask from '../../core/ask.js';
+import semver from 'semver';
 
+import * as ask from '../../core/ask.js';
 import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
 import type { RecipeResult, RollbackResult } from '../../core/result.js';
-import { runRollback, runSteps, type Step } from '../../core/step.js';
-import { runAndroidRecipe, runAndroidRollback } from '../android/run.js';
-import { runIosRecipe, runIosRollback } from '../ios/run.js';
+import { runRollback, runSteps, type Step, type StepResult } from '../../core/step.js';
+import { runAndroidRollback } from '../android/run.js';
+import { isPodOnPath } from '../ios/pod.js';
+import { runIosRollback } from '../ios/run.js';
+import { readInstalledNativeVersions } from './native-versions.js';
 import { detectPackageManager, isManagerOnPath } from './package-manager.js';
 import { discoverRnPaths } from './paths.js';
+import { MIN_REACT_NATIVE, readRnProjectInfo, usesPodsForWrapper } from './project-info.js';
+import { androidGradleSteps } from './steps/android-gradle.js';
 import { ensureRnBugseePackageStep } from './steps/ensure-rn-bugsee-package.js';
+import { expoPluginSnippet, expoPluginStep } from './steps/expo-plugin.js';
 import { injectJsEntryStep } from './steps/inject-js-entry.js';
+import { iosXcodeSteps } from './steps/ios-xcode.js';
+import { rnPnpmBuildsStep } from './steps/pnpm-builds.js';
 import { runPackageInstallStep } from './steps/run-package-install.js';
+import { runRnPodInstallStep } from './steps/run-rn-pod-install.js';
 import {
+  LEGACY_RN_PACKAGE_NAME,
   RN_NATIVE_FALLBACK,
   RN_PACKAGE_NAME,
   type RnContext,
-  type RnLaunchPath,
+  type RnNativeVersions,
   type RnOptions,
 } from './types.js';
 
 export interface ReactNativeRecipeInput extends WizardOptions {}
+
+const README_URL = 'https://github.com/bugsee/bugsee-react-native/tree/main/packages/react-native';
 
 const TOKEN_VALIDATE = (v: string | undefined): string | undefined => {
   const trimmed = (v ?? '').trim();
@@ -30,36 +42,6 @@ const TOKEN_VALIDATE = (v: string | undefined): string | undefined => {
   }
   return undefined;
 };
-
-async function pickLaunchPath(yes: boolean): Promise<RnLaunchPath | null> {
-  clack.note(
-    [
-      'Native (recommended): SDK launches before the JS bridge comes up.',
-      "  Android: auto-init via the SDK's `BugseeInitProvider` ContentProvider",
-      '           — no code change, just `<meta-data>` wiring in AndroidManifest.',
-      '           Manual init in `Application.onCreate()` is also possible but',
-      '           slightly less early; the wizard picks the ContentProvider path.',
-      '  iOS:     `Bugsee.launch()` in your AppDelegate.',
-      'Either way, crashes / console / network from the first ms of process',
-      'lifetime are captured. Filters configured in JS only apply once the',
-      "bridge is ready; events arriving before that don't see them.",
-      '',
-      'JavaScript: launch happens after the bridge is ready, via your',
-      'JS code calling `Bugsee.launch(token)` in App.tsx. Filters apply to',
-      'every event, but you lose early-process visibility.',
-    ].join('\n'),
-    'Native vs JS launch',
-  );
-  const choice = await ask.select<RnLaunchPath>(yes, {
-    message: 'Where should Bugsee launch?',
-    options: [
-      { value: 'native', label: 'Native (recommended)' },
-      { value: 'javascript', label: 'JavaScript' },
-    ],
-    initialValue: 'native',
-  });
-  return clack.isCancel(choice) ? null : choice;
-}
 
 async function pickPlatforms(
   yes: boolean,
@@ -86,17 +68,92 @@ async function pickPlatforms(
   return [choice];
 }
 
-export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promise<RecipeResult> {
-  const log = createLogger({ debug: input.debug });
-  const paths = await discoverRnPaths(input.cwd);
+async function askToken(label: string): Promise<string | null> {
+  const ans = await clack.text({
+    message: `Bugsee app token (${label})`,
+    placeholder: 'paste from your Bugsee dashboard',
+    validate: TOKEN_VALIDATE,
+  });
+  return clack.isCancel(ans) ? null : ans.trim();
+}
 
-  if (!paths.androidPath && !paths.iosPath) {
+/** Every step the wizard can apply, in install order (rollback walks it backwards). */
+const PACKAGE_STEPS: Step<RnContext>[] = [
+  ensureRnBugseePackageStep,
+  rnPnpmBuildsStep,
+  runPackageInstallStep,
+];
+const SETUP_STEPS: Step<RnContext>[] = [
+  injectJsEntryStep,
+  expoPluginStep,
+  ...androidGradleSteps,
+  ...iosXcodeSteps,
+  runRnPodInstallStep,
+];
+
+function makeContext(
+  input: WizardOptions,
+  base: Omit<
+    RnContext,
+    | 'cwd'
+    | 'debug'
+    | 'dryRun'
+    | 'nonInteractive'
+    | 'json'
+    | 'ignoreGitChanges'
+    | 'yes'
+    | 'kind'
+    | 'log'
+  >,
+): RnContext {
+  return {
+    cwd: input.cwd,
+    debug: input.debug,
+    dryRun: input.dryRun,
+    nonInteractive: false,
+    json: false,
+    ignoreGitChanges: false,
+    yes: input.yes,
+    kind: 'react-native',
+    log: createLogger({ debug: input.debug }),
+    ...base,
+  };
+}
+
+export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promise<RecipeResult> {
+  const paths = await discoverRnPaths(input.cwd);
+  const info = await readRnProjectInfo(input.cwd);
+  const expo = paths.expoConfig !== null;
+
+  if (!paths.androidPath && !paths.iosPath && !info.hasExpo) {
     clack.log.warn('No `android/` or `ios/` subdirectory found at the project root.');
     return 'failed';
   }
 
-  // 1. Pick platforms.
-  const targets = await pickPlatforms(input.yes, !!paths.androidPath, !!paths.iosPath);
+  // The old wrapper is a different package with a different API: not an in-place upgrade.
+  if (info.legacyPackage) {
+    clack.log.error(
+      [
+        `This project uses ${LEGACY_RN_PACKAGE_NAME} (6.x). ${RN_PACKAGE_NAME} replaces it, but they are different`,
+        'packages with different APIs, not an upgrade in place.',
+        `Remove ${LEGACY_RN_PACKAGE_NAME} and its Bugsee code first (\`bugsee-wizard uninstall\` does that for what`,
+        `the wizard added), then run the wizard again. Migration notes: ${README_URL}`,
+      ].join('\n'),
+    );
+    return 'failed';
+  }
+  if (info.reactNativeVersion !== null && semver.lt(info.reactNativeVersion, MIN_REACT_NATIVE)) {
+    clack.log.error(
+      `${RN_PACKAGE_NAME} needs React Native ${MIN_REACT_NATIVE} or later (found ${info.reactNativeVersion}), with the New Architecture and Hermes.`,
+    );
+    return 'failed';
+  }
+
+  // 1. Platforms (an Expo project builds both).
+  const targets =
+    expo || info.hasExpo
+      ? (['android', 'ios'] as const)
+      : await pickPlatforms(input.yes, !!paths.androidPath, !!paths.iosPath);
   if (targets === null) {
     clack.cancel('Cancelled.');
     return 'cancelled';
@@ -106,47 +163,23 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     return 'cancelled';
   }
 
-  // 2. Pick launch path.
-  const launchPath = await pickLaunchPath(input.yes);
-  if (launchPath === null) {
-    clack.cancel('Cancelled.');
-    return 'cancelled';
-  }
-
-  // 3. Per-platform tokens (Bugsee's RN dashboard issues separate ones).
-  let androidToken: string | null = null;
-  let iosToken: string | null = null;
-  if (targets.includes('android')) {
-    const ans = await clack.text({
-      message: 'Bugsee app token (Android)',
-      placeholder: 'paste from your Bugsee dashboard',
-      validate: TOKEN_VALIDATE,
-    });
-    if (clack.isCancel(ans)) {
+  // 2. Per-platform tokens (Bugsee issues a separate one per platform).
+  const tokens: Record<string, string> = {};
+  for (const platform of targets) {
+    const token = await askToken(platform === 'android' ? 'Android' : 'iOS');
+    if (token === null) {
       clack.cancel('Cancelled.');
       return 'cancelled';
     }
-    androidToken = ans.trim();
-  }
-  if (targets.includes('ios')) {
-    const ans = await clack.text({
-      message: 'Bugsee app token (iOS)',
-      placeholder: 'paste from your Bugsee dashboard',
-      validate: TOKEN_VALIDATE,
-    });
-    if (clack.isCancel(ans)) {
-      clack.cancel('Cancelled.');
-      return 'cancelled';
-    }
-    iosToken = ans.trim();
+    tokens[platform] = token;
   }
 
-  // 4. Auto-inject JS entry?
+  // 3. JS entry, package install, native edits, pod install.
   const jsEntryLabel = paths.jsEntry ? paths.jsEntry.path.split('/').slice(-2).join('/') : null;
   const autoInjectJsEntry = await ask.confirm(input.yes, {
     message: jsEntryLabel
-      ? `Auto-inject Bugsee ${launchPath === 'javascript' ? 'launch' : 'initialize'} into ${jsEntryLabel}?`
-      : `Auto-inject Bugsee ${launchPath === 'javascript' ? 'launch' : 'initialize'}? (no entry file found — will print a snippet instead)`,
+      ? `Add the Bugsee launch to ${jsEntryLabel}?`
+      : 'Add the Bugsee launch? (no entry file found — will print a snippet instead)',
     initialValue: paths.jsEntry !== null,
   });
   if (clack.isCancel(autoInjectJsEntry)) {
@@ -154,13 +187,12 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     return 'cancelled';
   }
 
-  // 5. Package install opt-in.
-  const detectedManager = await detectPackageManager(input.cwd);
-  const managerAvailable = isManagerOnPath(detectedManager);
+  const manager = await detectPackageManager(input.cwd);
+  const managerAvailable = isManagerOnPath(manager);
   const runPackageInstall = await ask.confirm(input.yes, {
     message: managerAvailable
-      ? `Run \`${detectedManager} install\` now to fetch ${RN_PACKAGE_NAME}?`
-      : `Run \`${detectedManager} install\` now? (${detectedManager} is not on PATH — this will fail unless installed first)`,
+      ? `Run \`${manager} install\` now to fetch ${RN_PACKAGE_NAME}?`
+      : `Run \`${manager} install\` now? (${manager} is not on PATH — this will fail unless installed first)`,
     initialValue: managerAvailable,
   });
   if (clack.isCancel(runPackageInstall)) {
@@ -168,183 +200,178 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     return 'cancelled';
   }
 
-  const rnOptions: RnOptions = {
-    launchPath,
+  // A bare app needs native edits for Android network capture and release symbolication.
+  let applyNative = false;
+  if (!expo && !info.hasExpo) {
+    const answer = await ask.confirm(input.yes, {
+      message:
+        'Apply the native edits (Android: Bugsee Gradle plugin + source-map hook; iOS: Xcode bundle phase + dSYM upload)? Without them Android records no network events and release crashes are not symbolicated.',
+      initialValue: true,
+    });
+    if (clack.isCancel(answer)) {
+      clack.cancel('Cancelled.');
+      return 'cancelled';
+    }
+    applyNative = answer;
+  }
+
+  // Before React Native 0.87 the iOS SDK comes through the wrapper's pod.
+  const podsNeeded =
+    !expo &&
+    !info.hasExpo &&
+    targets.includes('ios') &&
+    paths.iosPath !== null &&
+    runPackageInstall &&
+    usesPodsForWrapper(info.reactNativeVersion);
+  let runPodInstall = false;
+  if (podsNeeded) {
+    const podAvailable = isPodOnPath();
+    const answer = await ask.confirm(input.yes, {
+      message: podAvailable
+        ? 'Run `pod install` now to fetch the Bugsee iOS SDK?'
+        : 'Run `pod install` now? (CocoaPods is not on PATH — this will fail unless installed first)',
+      initialValue: podAvailable,
+    });
+    if (clack.isCancel(answer)) {
+      clack.cancel('Cancelled.');
+      return 'cancelled';
+    }
+    runPodInstall = answer;
+  }
+
+  const options = (nativeVersions: RnNativeVersions): RnOptions => ({
     autoInjectJsEntry,
     runPackageInstall,
-    nativeVersions: RN_NATIVE_FALLBACK,
-  };
+    runPodInstall,
+    nativeVersions,
+  });
+  const contextFor = (nativeVersions: RnNativeVersions): RnContext =>
+    makeContext(input, {
+      tokens,
+      rnPaths: applyNative || expo ? paths : { ...paths, androidPath: null, iosPath: null },
+      rnOptions: options(nativeVersions),
+    });
 
-  // 6. RN-level steps (package.json + JS injection + install).
-  const tokens: Record<string, string> = {};
-  if (androidToken) tokens.android = androidToken;
-  if (iosToken) tokens.ios = iosToken;
+  // 4. Phase one: the package. The native steps need the versions it pins.
+  const packageCtx = contextFor(RN_NATIVE_FALLBACK);
+  const packageResult = await runSteps(PACKAGE_STEPS, packageCtx);
+  if (packageResult.failed) {
+    clack.log.error('Adding the package failed; previous changes were rolled back.');
+    return 'failed';
+  }
+  const installed = await readInstalledNativeVersions(input.cwd);
+  if (installed === null && runPackageInstall && !input.dryRun) {
+    clack.log.warn(
+      `Could not read native-versions.json from the installed ${RN_PACKAGE_NAME}; using the versions this wizard was written against.`,
+    );
+  }
 
-  const rnCtx: RnContext = {
-    cwd: input.cwd,
-    debug: input.debug,
-    dryRun: input.dryRun,
-    nonInteractive: false,
-    json: false,
-    ignoreGitChanges: false,
-    yes: input.yes,
-    kind: 'react-native',
-    tokens,
-    log,
-    rnPaths: paths,
-    rnOptions,
-  };
-
-  const rnSteps: Step<RnContext>[] = [
-    ensureRnBugseePackageStep,
-    injectJsEntryStep,
-    runPackageInstallStep,
-  ];
-  const rnResult = await runSteps(rnSteps, rnCtx);
-  if (rnResult.failed) {
-    clack.log.error('One or more RN-level steps failed; previous changes were rolled back.');
+  // 5. Phase two: the JS launch, the native setup, pod install.
+  const setupCtx = contextFor(installed ?? RN_NATIVE_FALLBACK);
+  const setupResult = await runSteps(SETUP_STEPS, setupCtx);
+  if (setupResult.failed) {
+    clack.log.error('Setup failed; rolling back the React Native changes.');
+    const undo = await runRollback(PACKAGE_STEPS, packageCtx);
+    if (undo.failed) {
+      clack.log.error(
+        'Some changes could not be rolled back — check package.json and your JS entry file.',
+      );
+    }
     return 'failed';
   }
 
-  // 7. Delegate to platform recipes with launch-path-aware overrides. Stop
-  // at the first failure: the RN-level edits are rolled back below, so
-  // configuring further platforms would only leave more half-applied state.
-  const configured: string[] = [];
-  let failedPlatform: string | null = null;
-  let platformOutcome: RecipeResult = 'failed';
-  if (targets.includes('android') && paths.androidPath && androidToken) {
-    clack.log.step('Configuring Android…');
-    const res = await runAndroidRecipe({
-      ...input,
-      cwd: paths.androidPath,
-      token: androidToken,
-      options: {
-        // Native launch → keep the manifest meta-data wiring so the
-        // SDK auto-init ContentProvider fires. JS launch → flip to
-        // manual; the JS layer's `Bugsee.launch(token)` call drives
-        // initialization through the bridge.
-        initMode: launchPath === 'native' ? 'automatic' : 'manual',
-      },
-      silent: true,
-    });
-    if (res === 'ok') configured.push('Android');
-    else {
-      failedPlatform = 'Android';
-      platformOutcome = res;
-    }
+  // 6. What is left for the user.
+  for (const r of [...packageResult.results, ...setupResult.results]) {
+    if (r.snippet) clack.note(`${r.snippet.file}\n\n${r.snippet.code}`, r.snippet.title);
   }
-  if (failedPlatform === null && targets.includes('ios') && paths.iosPath && iosToken) {
-    clack.log.step('Configuring iOS…');
-    const res = await runIosRecipe({
-      ...input,
-      cwd: paths.iosPath,
-      token: iosToken,
-      options: {
-        // RN's iOS native deps go through CocoaPods (the wrapper's
-        // podspec); SPM isn't a meaningful choice here.
-        distribution: 'cocoapods',
-        // Native launch → inject Bugsee.launch into AppDelegate. JS
-        // launch → leave AppDelegate alone; JS owns init.
-        autoInjectAppDelegate: launchPath === 'native',
-      },
-      silent: true,
-    });
-    if (res === 'ok') configured.push('iOS');
-    else {
-      failedPlatform = 'iOS';
-      platformOutcome = res;
-    }
-  }
-
-  if (failedPlatform !== null) {
-    // The JS side must not call into a native module that was never wired
-    // up, so undo the RN-level edits (package.json, JS entry, install step).
-    clack.log.error(
-      `${failedPlatform} setup ${platformOutcome === 'cancelled' ? 'was cancelled' : 'failed'}; rolling back the React Native changes.`,
+  if (!expo && info.hasExpo) {
+    clack.note(
+      `Your Expo config is not app.json, which the wizard cannot edit. Add the plugin to it:\n\n${expoPluginSnippet(tokens)}`,
+      'Expo config plugin',
     );
-    const undo = await runRollback(rnSteps, rnCtx);
-    if (undo.failed) {
-      clack.log.error(
-        'Some React Native changes could not be rolled back — check package.json and your JS entry file.',
-      );
-    }
-    if (configured.length > 0) {
-      clack.log.warn(
-        `${configured.join(' + ')} native changes were kept; run \`bugsee-wizard uninstall\` to remove them.`,
-      );
-    }
-    return platformOutcome;
   }
-
-  // 8. Final unified summary.
-  const summary: string[] = [];
-  summary.push(`Launch path: ${launchPath === 'native' ? 'Native' : 'JavaScript'}.`);
-  if (!runPackageInstall) {
-    summary.push(`Run \`${detectedManager} install\` to fetch ${RN_PACKAGE_NAME}.`);
-  }
-  if (targets.includes('ios')) {
-    summary.push("Run `pod install` from your `ios/` directory if you didn't opt in.");
-  }
-  if (!autoInjectJsEntry) {
-    summary.push('');
-    summary.push('Add to your App.tsx / index.js:');
-    summary.push('');
-    summary.push(`  import Bugsee from '${RN_PACKAGE_NAME}';`);
-    if (launchPath === 'javascript') {
-      summary.push(`  import { Platform } from 'react-native';`);
-      summary.push('');
-      summary.push(
-        `  Bugsee.launch(Platform.OS === 'ios' ? '${iosToken ?? '<IOS_TOKEN>'}' : '${androidToken ?? '<ANDROID_TOKEN>'}');`,
-      );
-    } else {
-      summary.push('');
-      summary.push('  Bugsee.initialize();');
-    }
-  }
-  clack.note(summary.join('\n'), 'Done');
+  clack.note(
+    summaryLines({
+      manager,
+      runPackageInstall,
+      runPodInstall,
+      podsNeeded,
+      applyNative,
+      bare: !expo && !info.hasExpo,
+      autoInjectJsEntry,
+      tokens,
+      results: setupResult.results,
+    }).join('\n'),
+    'Done',
+  );
   return 'ok';
 }
 
+function summaryLines(s: {
+  manager: string;
+  runPackageInstall: boolean;
+  runPodInstall: boolean;
+  podsNeeded: boolean;
+  applyNative: boolean;
+  bare: boolean;
+  autoInjectJsEntry: boolean;
+  tokens: Readonly<Record<string, string>>;
+  results: readonly StepResult[];
+}): string[] {
+  const lines: string[] = [];
+  if (!s.runPackageInstall) lines.push(`Run \`${s.manager} install\` to fetch ${RN_PACKAGE_NAME}.`);
+  if (s.bare) {
+    if (s.runPackageInstall && !s.podsNeeded && s.tokens.ios !== undefined) {
+      lines.push('iOS: React Native 0.87+ resolves the Bugsee SDK through Swift Package Manager.');
+    } else if (!s.runPodInstall && s.tokens.ios !== undefined) {
+      lines.push('Run `pod install` from your `ios/` directory (React Native before 0.87).');
+    }
+    if (!s.applyNative) {
+      lines.push(
+        `Android network capture and release symbolication need the native edits; see ${README_URL}`,
+      );
+    }
+  }
+  if (!s.autoInjectJsEntry) {
+    lines.push(
+      '',
+      'Add to your App.tsx / index.js:',
+      '',
+      `  import Bugsee from '${RN_PACKAGE_NAME}';`,
+      `  import { Platform } from 'react-native';`,
+      '',
+      `  Bugsee.launch(Platform.OS === 'ios' ? '${s.tokens.ios ?? '<IOS_TOKEN>'}' : '${s.tokens.android ?? '<ANDROID_TOKEN>'}');`,
+    );
+  }
+  lines.push(
+    '',
+    'Requires the New Architecture and Hermes (React Native defaults).',
+    'To report render errors, wrap the root: AppRegistry.registerComponent(name, () => Bugsee.wrap(App)).',
+    'React Native frames in iOS crashes need `RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1 pod install` (see the README).',
+  );
+  return lines;
+}
+
 /**
- * Roll back both platform recipes against an RN root, plus the
- * RN-level steps (package.json edit, JS-entry injection). Each step's
- * rollback is a no-op when its target state isn't present, so attempting
- * everything is safe even when only one launch path was originally set
- * up.
+ * Roll back everything the wizard added to an RN project: the new setup and package steps, and the
+ * native recipes of earlier wizards (Android/iOS). Each step's rollback is a no-op when its target
+ * state isn't present, so attempting everything is safe.
  */
 export async function runReactNativeRollback(input: WizardOptions): Promise<RollbackResult> {
-  const log = createLogger({ debug: input.debug });
   const paths = await discoverRnPaths(input.cwd);
-
-  // RN-level rollback first — JS injection depends on tokens for the
-  // marker but the strip itself doesn't need them, so we pass empties.
-  const rnCtx: RnContext = {
-    cwd: input.cwd,
-    debug: input.debug,
-    dryRun: input.dryRun,
-    nonInteractive: false,
-    json: false,
-    ignoreGitChanges: false,
-    yes: input.yes,
-    kind: 'react-native',
+  const ctx = makeContext(input, {
     tokens: {},
-    log,
     rnPaths: paths,
     rnOptions: {
-      launchPath: 'native',
       autoInjectJsEntry: false,
       runPackageInstall: false,
-      nativeVersions: RN_NATIVE_FALLBACK,
+      runPodInstall: false,
+      nativeVersions: (await readInstalledNativeVersions(input.cwd)) ?? RN_NATIVE_FALLBACK,
     },
-  };
-  const rnSteps: Step<RnContext>[] = [
-    ensureRnBugseePackageStep,
-    injectJsEntryStep,
-    runPackageInstallStep,
-  ];
-  let failed = (await runRollback(rnSteps, rnCtx)).failed;
+  });
+  let failed = (await runRollback([...PACKAGE_STEPS, ...SETUP_STEPS], ctx)).failed;
 
-  // Then platform rollbacks.
+  // Earlier wizards also configured the native SDKs of the app itself.
   if (paths.androidPath) {
     const res = await runAndroidRollback({ ...input, cwd: paths.androidPath });
     if (res === 'failed') failed = true;

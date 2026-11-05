@@ -7,7 +7,6 @@ import { createLogger } from '../../src/core/logger.js';
 import { discoverRnPaths } from '../../src/recipes/react-native/paths.js';
 import type {
   RnContext,
-  RnLaunchPath,
   RnNativeVersions,
   RnOptions,
 } from '../../src/recipes/react-native/types.js';
@@ -32,9 +31,9 @@ export async function cleanup(dir: string): Promise<void> {
 
 interface MakeRnContextOpts {
   cwd: string;
-  launchPath?: RnLaunchPath;
   autoInjectJsEntry?: boolean;
   runPackageInstall?: boolean;
+  runPodInstall?: boolean;
   tokens?: Record<string, string>;
   nativeVersions?: RnNativeVersions;
 }
@@ -49,9 +48,9 @@ export const FAKE_NATIVE_VERSIONS: RnNativeVersions = {
 export async function makeRnContext(opts: MakeRnContextOpts): Promise<RnContext> {
   const paths = await discoverRnPaths(opts.cwd);
   const rnOptions: RnOptions = {
-    launchPath: opts.launchPath ?? 'native',
     autoInjectJsEntry: opts.autoInjectJsEntry ?? true,
     runPackageInstall: opts.runPackageInstall ?? false,
+    runPodInstall: opts.runPodInstall ?? false,
     nativeVersions: opts.nativeVersions ?? FAKE_NATIVE_VERSIONS,
   };
   const base: WizardContext = {

@@ -18,19 +18,10 @@ const IMPORT_LINE_RE =
 function jsLaunchBlock(androidToken: string, iosToken: string): string {
   return `${JS_LAUNCH_MARKER_BEGIN}
 import Bugsee from '${RN_PACKAGE_NAME}';
-import { Platform } from 'react-native';
+import { Platform as BugseePlatform } from 'react-native';
 
-Bugsee.launch(Platform.OS === 'ios' ? '${iosToken}' : '${androidToken}');
+Bugsee.launch(BugseePlatform.OS === 'ios' ? '${iosToken}' : '${androidToken}');
 ${JS_LAUNCH_MARKER_END}
-`;
-}
-
-function jsInitBlock(): string {
-  return `${JS_INIT_MARKER_BEGIN}
-import Bugsee from '${RN_PACKAGE_NAME}';
-
-Bugsee.initialize();
-${JS_INIT_MARKER_END}
 `;
 }
 
@@ -54,7 +45,7 @@ function findInsertPosition(source: string): number {
 
 export const injectJsEntryStep: Step<RnContext> = {
   id: 'react-native.inject-js-entry',
-  title: 'Inject Bugsee launch / init into JS entry',
+  title: 'Launch Bugsee from the JS entry',
 
   async precheck(ctx): Promise<StepStatus> {
     if (!ctx.rnOptions.autoInjectJsEntry) {
@@ -82,14 +73,10 @@ export const injectJsEntryStep: Step<RnContext> = {
   async apply(ctx) {
     if (!ctx.rnPaths.jsEntry) throw new Error('JS entry path not resolved');
     const original = (await readOrNull(ctx.rnPaths.jsEntry.path)) ?? '';
-    let block: string;
-    if (ctx.rnOptions.launchPath === 'javascript') {
-      const androidToken = ctx.tokens.android ?? '<ANDROID_TOKEN>';
-      const iosToken = ctx.tokens.ios ?? '<IOS_TOKEN>';
-      block = jsLaunchBlock(androidToken, iosToken);
-    } else {
-      block = jsInitBlock();
-    }
+    const block = jsLaunchBlock(
+      ctx.tokens.android ?? '<ANDROID_TOKEN>',
+      ctx.tokens.ios ?? '<IOS_TOKEN>',
+    );
     const insertAt = findInsertPosition(original);
     const updated = original.slice(0, insertAt) + block + original.slice(insertAt);
     await writeFile(ctx.rnPaths.jsEntry.path, updated);
@@ -99,9 +86,7 @@ export const injectJsEntryStep: Step<RnContext> = {
     if (!ctx.rnPaths.jsEntry) return;
     const content = await readOrNull(ctx.rnPaths.jsEntry.path);
     if (content === null) return;
-    // Strip whichever marker block is present — at most one is at any
-    // given time (launch and init are mutually exclusive), but the user
-    // may have re-run the wizard with a different launch path.
+    // The launch block, and the init block an earlier wizard wrote for the native launch path.
     let stripped = stripMarkerBlock(content, JS_LAUNCH_MARKER_BEGIN, JS_LAUNCH_MARKER_END);
     stripped = stripMarkerBlock(stripped, JS_INIT_MARKER_BEGIN, JS_INIT_MARKER_END);
     if (stripped !== content) {

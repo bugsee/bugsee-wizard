@@ -4,7 +4,12 @@ import detectIndent from 'detect-indent';
 
 import type { Step, StepStatus } from '../../../core/step.js';
 import { readOrNull } from '../../android/io.js';
-import { RN_PACKAGE_NAME, RN_PACKAGE_VERSION, type RnContext } from '../types.js';
+import {
+  LEGACY_RN_PACKAGE_NAME,
+  RN_PACKAGE_NAME,
+  RN_PACKAGE_VERSION,
+  type RnContext,
+} from '../types.js';
 
 interface PackageJsonShape {
   dependencies?: Record<string, unknown>;
@@ -13,7 +18,7 @@ interface PackageJsonShape {
 }
 
 /**
- * Ensure the RN wrapper (`react-native-bugsee`) is in `package.json`'s
+ * Ensure the RN wrapper (`@bugsee/react-native`) is in `package.json`'s
  * `dependencies`. Doesn't run the install — that's the next step's job
  * (and is opt-in). Preserves the user's indent style via `detect-indent`
  * so the diff is minimal.
@@ -65,13 +70,16 @@ export const ensureRnBugseePackageStep: Step<RnContext> = {
       return;
     }
     let changed = false;
-    if (parsed.dependencies && RN_PACKAGE_NAME in parsed.dependencies) {
-      delete parsed.dependencies[RN_PACKAGE_NAME];
-      changed = true;
-    }
-    if (parsed.devDependencies && RN_PACKAGE_NAME in parsed.devDependencies) {
-      delete parsed.devDependencies[RN_PACKAGE_NAME];
-      changed = true;
+    // the old wrapper too: wizards before the move to @bugsee/react-native installed it
+    for (const name of [RN_PACKAGE_NAME, LEGACY_RN_PACKAGE_NAME]) {
+      if (parsed.dependencies && name in parsed.dependencies) {
+        delete parsed.dependencies[name];
+        changed = true;
+      }
+      if (parsed.devDependencies && name in parsed.devDependencies) {
+        delete parsed.devDependencies[name];
+        changed = true;
+      }
     }
     if (!changed) return;
     const indentInfo = detectIndent(original);
