@@ -239,6 +239,32 @@ describe('injectJsEntryStep', () => {
     expect(await readFixture(fixture, 'App.tsx')).toBe(original);
   });
 
+  it('rollback puts back the block the run replaced (a customised or stale one), not just strips', async () => {
+    const custom = `// bugsee:wizard:rn-launch:begin\nimport Bugsee from '@bugsee/react-native';\n\nBugsee.launch('OLD', { captureLogs: false });\n// bugsee:wizard:rn-launch:end\n`;
+    fixture = await makeFixture({
+      'package.json': SAMPLE_RN_PACKAGE_JSON,
+      'App.tsx': `${custom}${SAMPLE_APP_TSX}`,
+    });
+    const ctx = await makeRnContext({ cwd: fixture, tokens: { android: 'NEW', ios: 'NEW' } });
+    expect(await injectJsEntryStep.precheck(ctx)).toEqual({ kind: 'pending' });
+    await injectJsEntryStep.apply(ctx);
+    expect(await readFixture(fixture, 'App.tsx')).not.toContain('captureLogs');
+    await injectJsEntryStep.rollback(ctx);
+    expect(await readFixture(fixture, 'App.tsx')).toBe(`${custom}${SAMPLE_APP_TSX}`);
+  });
+
+  it("rollback in a fresh run (uninstall) strips the launch block and keeps the user's code", async () => {
+    fixture = await makeFixture({
+      'package.json': SAMPLE_RN_PACKAGE_JSON,
+      'App.tsx': SAMPLE_APP_TSX,
+    });
+    const ctx = await makeRnContext({ cwd: fixture });
+    await injectJsEntryStep.apply(ctx);
+    const fresh = await makeRnContext({ cwd: fixture });
+    await injectJsEntryStep.rollback(fresh);
+    expect(await readFixture(fixture, 'App.tsx')).toBe(SAMPLE_APP_TSX);
+  });
+
   it('falls back to satisfied (snippet-printed) when JS entry is absent', async () => {
     fixture = await makeFixture({ 'package.json': SAMPLE_RN_PACKAGE_JSON });
     const ctx = await makeRnContext({ cwd: fixture });

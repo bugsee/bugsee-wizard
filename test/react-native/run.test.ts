@@ -198,6 +198,34 @@ describe('runReactNativeRecipe: the JS side', () => {
     expect(out).not.toMatch(/<(IOS|ANDROID)_TOKEN>/);
   });
 
+  it('prints the snippet when the entry file cannot be read, as the step promised', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx/keep': '', // App.tsx exists but is a directory: not readable as a file
+      'android/.keep': '',
+    });
+    answer({ inject: true });
+    expect(await runReactNativeRecipe(opts())).toBe('ok');
+    expect(logged(clack.note)).toContain('Bugsee.launch(');
+  });
+
+  it('does not print the snippet when the launch is already in the entry file', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer({ inject: true });
+    clack.text.mockResolvedValue('TOK');
+    await runReactNativeRecipe(opts());
+    vi.clearAllMocks();
+    answer({ inject: true });
+    clack.text.mockResolvedValue('TOK');
+    await runReactNativeRecipe(opts()); // second run: the exact block is there, nothing to hand over
+    const done = clack.note.mock.calls.find((c) => c[1] === 'Done')?.[0] as string;
+    expect(done).not.toContain('Add to your App.tsx');
+  });
+
   it('summarises what is left: install, pod install, the native edits, the requirements', async () => {
     fixture = await makeFixture({
       'package.json': rnPackage(),

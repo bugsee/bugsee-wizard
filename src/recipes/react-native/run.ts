@@ -19,7 +19,7 @@ import { MIN_REACT_NATIVE, readRnProjectInfo, usesPodsForWrapper } from './proje
 import { androidGradleSteps } from './steps/android-gradle.js';
 import { ensureRnBugseePackageStep } from './steps/ensure-rn-bugsee-package.js';
 import { expoPluginSnippet, expoPluginStep } from './steps/expo-plugin.js';
-import { injectJsEntryStep, launchStatement } from './steps/inject-js-entry.js';
+import { injectJsEntryStep, launchStatement, SNIPPET_NOTE_MARK } from './steps/inject-js-entry.js';
 import { iosXcodeSteps } from './steps/ios-xcode.js';
 import { rnPnpmBuildsStep } from './steps/pnpm-builds.js';
 import { runPackageInstallStep } from './steps/run-package-install.js';
@@ -353,7 +353,9 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
       bare: !expo && !info.hasExpo,
       expo: expo || info.hasExpo,
       autoInjectJsEntry,
-      hasJsEntry: paths.jsEntry !== null,
+      entryNeedsSnippet: setupResult.results.some(
+        (r) => r.id === injectJsEntryStep.id && r.note?.includes(SNIPPET_NOTE_MARK) === true,
+      ),
       tokens,
       results: setupResult.results,
     }).join('\n'),
@@ -371,7 +373,8 @@ function summaryLines(s: {
   bare: boolean;
   expo: boolean;
   autoInjectJsEntry: boolean;
-  hasJsEntry: boolean;
+  /** The inject step skipped itself because there is no (readable) entry file. */
+  entryNeedsSnippet: boolean;
   tokens: Readonly<Record<string, string>>;
   results: readonly StepResult[];
 }): string[] {
@@ -402,7 +405,7 @@ function summaryLines(s: {
     );
   }
   const launch = launchStatement(s.tokens, 'Platform');
-  if ((!s.autoInjectJsEntry || !s.hasJsEntry) && launch !== null) {
+  if ((!s.autoInjectJsEntry || s.entryNeedsSnippet) && launch !== null) {
     lines.push(
       '',
       'Add to your App.tsx / index.js:',

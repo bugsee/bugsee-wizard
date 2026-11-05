@@ -66,6 +66,12 @@ function findInsertPosition(source: string): number {
   return source[lastEnd] === '\n' ? lastEnd + 1 : lastEnd;
 }
 
+/** The note a skipped step carries when the user still has to add the launch by hand. */
+export const SNIPPET_NOTE_MARK = 'snippet will be printed at the end';
+
+/** The entry file as it was before this run replaced its launch block (per run). */
+const replaced = new WeakMap<object, string>();
+
 export const injectJsEntryStep: Step<RnContext> = {
   id: 'react-native.inject-js-entry',
   title: 'Launch Bugsee from the JS entry',
@@ -77,14 +83,14 @@ export const injectJsEntryStep: Step<RnContext> = {
     if (!ctx.rnPaths.jsEntry) {
       return {
         kind: 'satisfied',
-        note: 'no App.tsx / index.js found — snippet will be printed at the end',
+        note: `no App.tsx / index.js found — ${SNIPPET_NOTE_MARK}`,
       };
     }
     const content = await readOrNull(ctx.rnPaths.jsEntry.path);
     if (content === null) {
       return {
         kind: 'satisfied',
-        note: 'JS entry not readable — snippet will be printed at the end',
+        note: `JS entry not readable — ${SNIPPET_NOTE_MARK}`,
       };
     }
     // only the exact block for these tokens counts: a stale or foreign one is replaced on apply
@@ -104,6 +110,7 @@ export const injectJsEntryStep: Step<RnContext> = {
     const block = jsLaunchBlock(ctx.tokens);
     if (block === null) throw new Error('No Bugsee token to launch with');
     const read = (await readOrNull(ctx.rnPaths.jsEntry.path)) ?? '';
+    replaced.set(ctx, read);
     let original = stripMarkerBlock(read, JS_LAUNCH_MARKER_BEGIN, JS_LAUNCH_MARKER_END);
     original = stripMarkerBlock(original, JS_INIT_MARKER_BEGIN, JS_INIT_MARKER_END);
     const insertAt = findInsertPosition(original);
@@ -113,9 +120,16 @@ export const injectJsEntryStep: Step<RnContext> = {
 
   async rollback(ctx) {
     if (!ctx.rnPaths.jsEntry) return;
+    // this run replaced the entry: put back exactly what was there (a customised or stale block)
+    const before = replaced.get(ctx);
+    if (before !== undefined) {
+      replaced.delete(ctx);
+      await writeFile(ctx.rnPaths.jsEntry.path, before);
+      return;
+    }
+    // uninstall: strip the launch block, and the init block an earlier wizard wrote
     const content = await readOrNull(ctx.rnPaths.jsEntry.path);
     if (content === null) return;
-    // The launch block, and the init block an earlier wizard wrote for the native launch path.
     let stripped = stripMarkerBlock(content, JS_LAUNCH_MARKER_BEGIN, JS_LAUNCH_MARKER_END);
     stripped = stripMarkerBlock(stripped, JS_INIT_MARKER_BEGIN, JS_INIT_MARKER_END);
     if (stripped !== content) {
