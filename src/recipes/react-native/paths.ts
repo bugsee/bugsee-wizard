@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { JsEntry, JsEntryLanguage, RnPlatformPaths } from './types.js';
@@ -61,6 +61,22 @@ export async function discoverJsEntry(rnRoot: string): Promise<JsEntry | null> {
   return null;
 }
 
+/** `app.json` with an `expo` key, in a project that depends on `expo`; null otherwise. */
+async function discoverExpoConfig(rnRoot: string, packageJson: string): Promise<string | null> {
+  try {
+    const pkg = JSON.parse(await readFile(packageJson, 'utf8')) as {
+      dependencies?: Record<string, unknown>;
+      devDependencies?: Record<string, unknown>;
+    };
+    if (!('expo' in { ...pkg.devDependencies, ...pkg.dependencies })) return null;
+    const appJson = path.join(rnRoot, 'app.json');
+    const app = JSON.parse(await readFile(appJson, 'utf8')) as Record<string, unknown>;
+    return typeof app.expo === 'object' && app.expo !== null ? appJson : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function discoverRnPaths(rnRoot: string): Promise<RnPlatformPaths> {
   const androidDir = path.join(rnRoot, 'android');
   const iosDir = path.join(rnRoot, 'ios');
@@ -71,5 +87,6 @@ export async function discoverRnPaths(rnRoot: string): Promise<RnPlatformPaths> 
     iosPath: (await dirExists(iosDir)) ? iosDir : null,
     packageJson,
     jsEntry,
+    expoConfig: await discoverExpoConfig(rnRoot, packageJson),
   };
 }

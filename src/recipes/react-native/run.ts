@@ -12,7 +12,13 @@ import { discoverRnPaths } from './paths.js';
 import { ensureRnBugseePackageStep } from './steps/ensure-rn-bugsee-package.js';
 import { injectJsEntryStep } from './steps/inject-js-entry.js';
 import { runPackageInstallStep } from './steps/run-package-install.js';
-import { RN_PACKAGE_NAME, type RnContext, type RnLaunchPath, type RnOptions } from './types.js';
+import {
+  RN_NATIVE_FALLBACK,
+  RN_PACKAGE_NAME,
+  type RnContext,
+  type RnLaunchPath,
+  type RnOptions,
+} from './types.js';
 
 export interface ReactNativeRecipeInput extends WizardOptions {}
 
@@ -166,6 +172,7 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
     launchPath,
     autoInjectJsEntry,
     runPackageInstall,
+    nativeVersions: RN_NATIVE_FALLBACK,
   };
 
   // 6. RN-level steps (package.json + JS injection + install).
@@ -327,6 +334,7 @@ export async function runReactNativeRollback(input: WizardOptions): Promise<Roll
       launchPath: 'native',
       autoInjectJsEntry: false,
       runPackageInstall: false,
+      nativeVersions: RN_NATIVE_FALLBACK,
     },
   };
   const rnSteps: Step<RnContext>[] = [
