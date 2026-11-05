@@ -4,6 +4,7 @@ import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
 import type { RecipeResult, RollbackResult } from '../../core/result.js';
 import { runRollback, runSteps, type Step } from '../../core/step.js';
+import { validateAppToken } from '../../core/token.js';
 
 import { discoverAndroidPaths } from './paths.js';
 import { detectProcessConfig } from './process-config.js';
@@ -79,12 +80,18 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
 
   let tokenValue: string;
   if (input.token !== undefined) {
+    const problem = validateAppToken(input.token);
+    if (problem) {
+      clack.log.error(`Invalid Bugsee app token: ${problem}`);
+      clack.cancel('Cancelled.');
+      return 'failed';
+    }
     tokenValue = input.token;
   } else {
     const tokenAnswer = await clack.text({
       message: 'Bugsee app token (Android)',
       placeholder: 'paste from your Bugsee dashboard',
-      validate: (v) => ((v ?? '').trim().length === 0 ? 'Token is required' : undefined),
+      validate: validateAppToken,
     });
     if (clack.isCancel(tokenAnswer)) {
       clack.cancel('Cancelled.');
@@ -174,7 +181,12 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
   const processConfig = manifestText ? detectProcessConfig(manifestText) : null;
 
   let providerProcessOverride: string | null = null;
-  if (processConfig?.applicationProcess) {
+  // The provider override only matters for automatic init: manual mode sets
+  // auto-init=false, so BugseeInitProvider never launches the SDK and a
+  // re-declared provider would be dead config (see the Android multi-process
+  // docs: the extra provider exists "so the SDK auto-inits there"). Manual
+  // mode keeps its own "gate Bugsee.launch on the process name" note below.
+  if (initMode === 'automatic' && processConfig?.applicationProcess) {
     const proc = processConfig.applicationProcess;
     clack.note(
       [
@@ -213,7 +225,7 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
   const componentOnly = (processConfig?.componentProcesses ?? []).filter(
     (p) => p !== processConfig?.applicationProcess,
   );
-  if (componentOnly.length > 0) {
+  if (initMode === 'automatic' && componentOnly.length > 0) {
     const procList = componentOnly.map((p) => `"${p}"`).join(', ');
     clack.note(
       [
