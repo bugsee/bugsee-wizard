@@ -22,13 +22,16 @@ describe('isManagerOnPath', () => {
   it('on Windows the package managers are .cmd shims: the probe goes through a shell', () => {
     setPlatform('win32');
     expect(isManagerOnPath('npm')).toBe(true);
-    expect(spawnSync.mock.calls[0]?.[2]).toMatchObject({ shell: true });
+    // one command string, no args array (DEP0190)
+    expect(spawnSync.mock.calls[0]?.[0]).toBe('npm --version');
+    expect(spawnSync.mock.calls[0]?.[1]).toMatchObject({ shell: true });
   });
 
   it('elsewhere it spawns directly, without a shell', () => {
     setPlatform('linux');
     isManagerOnPath('pnpm');
-    expect(spawnSync.mock.calls[0]?.[2]).toMatchObject({ shell: false });
+    expect(spawnSync.mock.calls[0]?.slice(0, 2)).toEqual(['pnpm', ['--version']]);
+    expect(spawnSync.mock.calls[0]?.[2]).not.toHaveProperty('shell');
   });
 
   it('a non-zero or failed probe reads as not on PATH, and is cached', () => {

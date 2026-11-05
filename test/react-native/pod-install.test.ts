@@ -35,7 +35,11 @@ async function fakePod(exit = 0): Promise<string> {
   return log;
 }
 
-const files = { 'package.json': '{}', 'ios/Podfile': "platform :ios, '15.1'\n" };
+const files = {
+  'package.json': '{}',
+  'ios/App.xcodeproj/project.pbxproj': '',
+  'ios/Podfile': "platform :ios, '15.1'\n",
+};
 
 describe('runRnPodInstallStep', () => {
   it('is satisfied when pod install was not asked for', async () => {

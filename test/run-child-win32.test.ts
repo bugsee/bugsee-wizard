@@ -27,7 +27,10 @@ describe('runChild platform handling', () => {
       platform: 'win32',
     });
     expect(spawnMock.mock.calls[0]?.[2]).toMatchObject({ shell: true, cwd: '/x' });
-    expect(spawnMock.mock.calls[0]?.[0]).toBe('npm');
+    // one command string and no args array: with shell: true an args array raises Node 24's
+    // DEP0190 warning (the arguments are validated against the safe set first)
+    expect(spawnMock.mock.calls[0]?.[0]).toBe('npm install -D @bugsee/browser@beta');
+    expect(spawnMock.mock.calls[0]?.[1]).toEqual([]);
   });
 
   it('accepts every closed-set manager and deno npm: specifiers on win32', async () => {
@@ -37,9 +40,12 @@ describe('runChild platform handling', () => {
         platform: 'win32',
       });
     }
-    expect(spawnMock.mock.calls.map((c) => [c[0], (c[2] as { shell: boolean }).shell])).toEqual(
-      ['npm', 'yarn', 'pnpm', 'bun', 'deno'].map((c) => [c, true]),
-    );
+    expect(
+      spawnMock.mock.calls.map((c) => [
+        String(c[0]).split(' ')[0],
+        (c[2] as { shell: boolean }).shell,
+      ]),
+    ).toEqual(['npm', 'yarn', 'pnpm', 'bun', 'deno'].map((c) => [c, true]));
   });
 
   it('win32: any argument with a shell metacharacter is refused BEFORE spawning', async () => {

@@ -162,7 +162,7 @@ describe('runReactNativeRecipe: the JS side', () => {
       'package.json': rnPackage(),
       'App.tsx': SAMPLE_APP_TSX,
       'android/.keep': '',
-      'ios/.keep': '',
+      'ios/App.xcodeproj/project.pbxproj': '',
     });
     answer();
     clack.text.mockImplementation(async ({ message }: { message: string }) =>
@@ -256,7 +256,7 @@ describe('runReactNativeRecipe: the JS side', () => {
       'package.json': rnPackage(),
       'App.tsx': SAMPLE_APP_TSX,
       'android/.keep': '',
-      'ios/.keep': '',
+      'ios/App.xcodeproj/project.pbxproj': '',
     });
     answer({ install: false, native: false });
     await runReactNativeRecipe(opts());
@@ -272,7 +272,7 @@ describe('runReactNativeRecipe: the JS side', () => {
     fixture = await makeFixture({
       'package.json': rnPackage({}, '0.87.1'),
       'App.tsx': SAMPLE_APP_TSX,
-      'ios/.keep': '',
+      'ios/App.xcodeproj/project.pbxproj': '',
     });
     answer({ install: false });
     await runReactNativeRecipe(opts());
@@ -544,7 +544,7 @@ describe('runReactNativeRecipe: a bare app with the native edits', () => {
     fixture = await makeFixture({
       'package.json': rnPackage({}, '0.87.1'),
       'App.tsx': SAMPLE_APP_TSX,
-      'ios/.keep': '',
+      'ios/App.xcodeproj/project.pbxproj': '',
     });
     answer({ install: false });
     await runReactNativeRecipe(opts());
@@ -556,7 +556,7 @@ describe('runReactNativeRecipe: a bare app with the native edits', () => {
     fixture = await makeFixture({
       'package.json': rnPackage({}, '0.83.0'),
       'App.tsx': SAMPLE_APP_TSX,
-      'ios/.keep': '',
+      'ios/App.xcodeproj/project.pbxproj': '',
     });
     answer({ install: false });
     await runReactNativeRecipe(opts());

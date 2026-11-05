@@ -77,11 +77,19 @@ function spawnChild(
     }
   }
   return new Promise<string>((resolve, reject) => {
-    const child = spawn(cmd, [...args], {
-      cwd: options.cwd,
-      shell,
-      stdio: ['ignore', stdout === 'ignore' ? 'ignore' : 'pipe', 'pipe'],
-    });
+    // With a shell, hand over ONE command string (the arguments were checked against the safe set
+    // above): passing an args array together with shell: true raises Node's DEP0190 warning.
+    const child = shell
+      ? spawn([cmd, ...args].join(' '), [], {
+          cwd: options.cwd,
+          shell: true,
+          stdio: ['ignore', stdout === 'ignore' ? 'ignore' : 'pipe', 'pipe'],
+        })
+      : spawn(cmd, [...args], {
+          cwd: options.cwd,
+          shell,
+          stdio: ['ignore', stdout === 'ignore' ? 'ignore' : 'pipe', 'pipe'],
+        });
     // Rolling tail: only the last few lines are ever reported, so never hold
     // more than STDERR_TAIL_BYTES however much the child writes.
     let stderr = '';
