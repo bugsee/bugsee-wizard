@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { runChild } from '../../core/run-child.js';
+import { runChild, runChildOutput } from '../../core/run-child.js';
 import type { Step } from '../../core/step.js';
 import { readPackageJson } from '../package-json.js';
 import type { PackageManagerName } from '../package-manager.js';
@@ -19,6 +19,21 @@ const LOCKFILES: Record<PackageManagerName, readonly string[]> = {
   bun: ['bun.lock', 'bun.lockb'],
   deno: ['deno.lock'],
 };
+
+/**
+ * pnpm >= 10 does not run dependency install scripts unless the package is approved, and pnpm 11
+ * fails the install with ERR_PNPM_IGNORED_BUILDS (leaving a placeholder in pnpm-workspace.yaml).
+ * The wizard approves exactly the packages it installs, with pnpm's own `--allow-build` flag. The
+ * flag is probed rather than version-gated, so older pnpm never sees an unknown option.
+ */
+async function pnpmAllowBuildArgs(packages: readonly string[], cwd: string): Promise<string[]> {
+  try {
+    const help = await runChildOutput('pnpm', ['add', '--help'], { cwd });
+    return /--allow-build\b/.test(help) ? packages.map((p) => `--allow-build=${p}`) : [];
+  } catch {
+    return [];
+  }
+}
 
 type Snapshot = ReadonlyMap<string, Buffer | null>;
 
@@ -57,7 +72,16 @@ export function installPackageStep(spec: Spec): Step<RecipeContext> {
       for (const p of paths) snap.set(p, await readBytes(p));
       const pkgs = spec.packages.map((p) => (spec.tag ? `${p}@${spec.tag}` : p));
       try {
-        await runChild(pm.name, pm.installArgs(pkgs, spec.dev === true), {
+        const args = pm.installArgs(pkgs, spec.dev === true);
+        if (pm.name === 'pnpm') {
+          // flags go before the package names, which installArgs places last
+          args.splice(
+            args.length - pkgs.length,
+            0,
+            ...(await pnpmAllowBuildArgs(spec.packages, ctx.packageDir)),
+          );
+        }
+        await runChild(pm.name, args, {
           cwd: ctx.packageDir,
           forwardStdout: ctx.debug,
           // JavaScript runs may print a JSON result on stdout: the package manager talks on stderr

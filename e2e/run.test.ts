@@ -492,8 +492,8 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
   });
 }
 
-// the known bug is pnpm 11's: pnpm 10 only warns about unapproved install scripts, so there the
-// install succeeds and the pair below would check nothing
+// pnpm 11 fails an install whose scripts are unapproved; pnpm 10 only warns, so there the pair
+// below would not exercise the wizard's approval
 const pnpmMajor = Number(
   spawnSync('pnpm', ['--version'], { encoding: 'utf8' }).stdout.split('.')[0],
 );
@@ -504,21 +504,26 @@ describe.runIf(selected.includes(UNAPPROVED) && pnpmMajor >= 11)(UNAPPROVED, () 
     dir = prepareFixture('node-service', fresh(UNAPPROVED), { approveBuilds: false });
   });
 
-  // KNOWN BUG (it.fails: green while the bug is there, red once it is fixed — then make it `it`).
   // pnpm 11 fails `pnpm add` with ERR_PNPM_IGNORED_BUILDS for any dependency whose install script
   // is not approved; @bugsee/cli (and the plugins' @bugsee/bugsee-cli) have one. The wizard passes
-  // nothing for it, so on a stock pnpm 11 project every recipe fails at its first step.
-  it.fails('installs on a pnpm project that has not approved the Bugsee install scripts', async () => {
+  // `--allow-build` for exactly the packages it installs, so a stock project works, the approval
+  // lands in pnpm-workspace.yaml, and uninstall takes it out again.
+  it('installs on a pnpm project that has not approved the Bugsee install scripts', async () => {
     const r = await wizard(dir, ['--non-interactive', '--json', '--token', TOKEN]);
     expect(parseResult(r).ok, show(r)).toBe(true);
+    const yaml = readFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'utf8');
+    expect(yaml).toMatch(/['"]?@bugsee\/cli['"]?:\s*true/);
+    // the install script really ran: the CLI binary resolves
+    const cli = spawnSync('npx', ['--no-install', 'bugsee-cli', '--version'], {
+      cwd: dir,
+      encoding: 'utf8',
+    });
+    expect(cli.status, cli.stderr).toBe(0);
   });
 
-  it('a failed install leaves the tree exactly as it was', async () => {
-    const r = await wizard(dir, ['--non-interactive', '--json', '--token', TOKEN]);
-    const res = parseResult(r);
-    if (res.ok) return; // the known bug above is fixed: nothing to check here (the it.fails above is then red)
-    expect(res.steps).toEqual([{ id: 'install-package:@bugsee/cli', outcome: 'failed' }]);
+  it('uninstall removes the approval it added', async () => {
+    const r = await wizard(dir, ['uninstall', '--non-interactive', '--json', '--yes']);
+    expect(parseResult(r).ok, show(r)).toBe(true);
     expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
-    expect(await git(dir, ['diff', 'HEAD'])).toBe('');
   });
 });

@@ -275,3 +275,108 @@ describe.skipIf(process.platform === 'win32')('install-package op', () => {
     expect(await readFile(join(project, 'package.json'), 'utf8')).toBe('{"name":"x"}\n');
   });
 });
+
+// pnpm >= 10 skips dependency install scripts unless approved; pnpm 11 fails the install
+// (ERR_PNPM_IGNORED_BUILDS). The wizard approves exactly the packages it installs, via the
+// supported `--allow-build` flag, and only when the installed pnpm advertises it.
+describe.skipIf(process.platform === 'win32')('install-package op with pnpm', () => {
+  let dir: string;
+  let proj: string;
+  let log: string;
+  const saved = process.env.PATH;
+  const pnpmAt = (root: string) => ({
+    name: 'pnpm' as const,
+    root,
+    installArgs: (pkgs: string[], dev: boolean) => ['add', ...(dev ? ['-D'] : []), ...pkgs],
+  });
+  const fakePnpm = async (supportsAllowBuild: boolean) => {
+    const bin = join(dir, 'pbin');
+    await mkdir(bin, { recursive: true });
+    const help = supportsAllowBuild
+      ? '      --allow-build  A list of package names'
+      : '  --save-dev';
+    await writeFile(
+      join(bin, 'pnpm'),
+      [
+        '#!/bin/sh',
+        'if [ "$2" = "--help" ]; then',
+        `  echo "${help}"; echo help >> "${log}"; exit 0`,
+        'fi',
+        `printf '%s\\n' "$@" > "${log}.args"`,
+        'echo "lock v2" > pnpm-lock.yaml',
+      ].join('\n'),
+    );
+    await chmod(join(bin, 'pnpm'), 0o755);
+    process.env.PATH = `${bin}:${saved}`;
+  };
+  beforeEach(async () => {
+    const t = await makeTmp();
+    dir = t.dir;
+    proj = join(dir, 'p');
+    log = join(dir, 'log');
+    await mkdir(proj);
+    await writeFile(join(proj, 'package.json'), '{"name":"x"}\n');
+    await writeFile(join(proj, 'pnpm-lock.yaml'), 'lock v1\n');
+    tmp = t;
+  });
+  afterEach(async () => {
+    process.env.PATH = saved;
+    await tmp.cleanup();
+  });
+  const run = (pkgs: string[], tag?: string) =>
+    opToStep({ op: 'install-package', packages: pkgs, dev: true, ...(tag ? { tag } : {}) }).apply(
+      makeCtx(dir, { packageDir: proj, packageManager: pnpmAt(proj) }),
+    );
+
+  it('adds --allow-build for each installed package (bare names) when pnpm supports it', async () => {
+    await fakePnpm(true);
+    await run(['@bugsee/cli', 'left-pad'], 'beta');
+    expect((await readFile(`${log}.args`, 'utf8')).trim().split('\n')).toEqual([
+      'add',
+      '-D',
+      '--allow-build=@bugsee/cli',
+      '--allow-build=left-pad',
+      '@bugsee/cli@beta',
+      'left-pad@beta',
+    ]);
+  });
+
+  it('leaves the arguments alone when pnpm does not advertise the flag', async () => {
+    await fakePnpm(false);
+    await run(['@bugsee/cli']);
+    expect((await readFile(`${log}.args`, 'utf8')).trim().split('\n')).toEqual([
+      'add',
+      '-D',
+      '@bugsee/cli',
+    ]);
+  });
+
+  it('does not probe or add the flag for other package managers', async () => {
+    const bin = join(dir, 'nbin');
+    await mkdir(bin);
+    await writeFile(join(bin, 'npm'), `#!/bin/sh\nprintf '%s\\n' "$@" > "${log}.args"\n`);
+    await chmod(join(bin, 'npm'), 0o755);
+    process.env.PATH = `${bin}:${saved}`;
+    await opToStep({ op: 'install-package', packages: ['left-pad'] }).apply(
+      makeCtx(dir, { packageDir: proj, packageManager: npmAt(proj) }),
+    );
+    expect((await readFile(`${log}.args`, 'utf8')).trim().split('\n')).toEqual([
+      'install',
+      'left-pad',
+    ]);
+  });
+
+  it('a failing help probe is ignored: the install still runs without the flag', async () => {
+    await fakePnpm(true);
+    await writeFile(
+      join(dir, 'pbin', 'pnpm'),
+      `#!/bin/sh\nif [ "$2" = "--help" ]; then exit 3; fi\nprintf '%s\\n' "$@" > "${log}.args"\n`,
+    );
+    await run(['@bugsee/cli']);
+    expect((await readFile(`${log}.args`, 'utf8')).trim().split('\n')).toEqual([
+      'add',
+      '-D',
+      '@bugsee/cli',
+    ]);
+  });
+});
