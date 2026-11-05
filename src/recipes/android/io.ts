@@ -74,3 +74,60 @@ export function stripMarkerBlock(source: string, beginMarker: string, endMarker:
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+export interface XmlOpenTag {
+  /** Index of the `<`. */
+  readonly index: number;
+  /** Index just past the closing `>`. */
+  readonly end: number;
+  /** The complete opening tag text, `<name … >` or `<name … />`. */
+  readonly text: string;
+  readonly name: string;
+  /** Everything between the tag name and the closing `>` (or `/>`). */
+  readonly attrs: string;
+  readonly selfClosing: boolean;
+}
+
+/**
+ * Every opening tag whose name is in `names`, in document order. The end of
+ * a tag is found with a quote-aware scan, so a `>` inside an attribute value
+ * (`android:label="A > B"`) does not end it. `<activity-alias>` is not
+ * `<activity>`. A tag that is never terminated ends the scan.
+ */
+export function* findOpenTags(content: string, names: readonly string[]): Generator<XmlOpenTag> {
+  const startRe = new RegExp(`<(${names.join('|')})(?![\\w-])`, 'g');
+  let m = startRe.exec(content);
+  while (m) {
+    let quote: string | null = null;
+    let close = -1;
+    for (let i = m.index + m[0].length; i < content.length; i++) {
+      const ch = content[i] as string;
+      if (quote) {
+        if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === '>') {
+        close = i;
+        break;
+      }
+    }
+    if (close < 0) return;
+    const selfClosing = content[close - 1] === '/';
+    yield {
+      index: m.index,
+      end: close + 1,
+      text: content.slice(m.index, close + 1),
+      name: m[1] as string,
+      attrs: content.slice(m.index + m[0].length, selfClosing ? close - 1 : close),
+      selfClosing,
+    };
+    startRe.lastIndex = close + 1;
+    m = startRe.exec(content);
+  }
+}
+
+/** The first opening tag named `name` (see {@link findOpenTags}), or null. */
+export function findOpenTag(content: string, name: string): XmlOpenTag | null {
+  for (const tag of findOpenTags(content, [name])) return tag;
+  return null;
+}

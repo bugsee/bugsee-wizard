@@ -224,7 +224,9 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   }
 
   // 3. JS entry, package install, native edits, pod install.
-  const jsEntryLabel = paths.jsEntry ? paths.jsEntry.path.split('/').slice(-2).join('/') : null;
+  const jsEntryLabel = paths.jsEntry
+    ? path.relative(input.cwd, paths.jsEntry.path).replaceAll(path.sep, '/')
+    : null;
   const autoInjectJsEntry = await ask.confirm(input.yes, {
     message: jsEntryLabel
       ? `Add the Bugsee launch to ${jsEntryLabel}?`

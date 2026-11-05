@@ -93,7 +93,12 @@ export function isManagerOnPath(manager: PackageManager): boolean {
   const cached = onPathCache.get(manager);
   if (cached !== undefined) return cached;
   try {
-    const result = spawnSync(manager, ['--version'], { stdio: 'ignore' });
+    // on Windows npm/yarn/pnpm/bun are .cmd shims that cannot be spawned without a shell; the
+    // manager comes from a closed set and the arguments are fixed: no injection path
+    const result = spawnSync(manager, ['--version'], {
+      stdio: 'ignore',
+      shell: process.platform === 'win32',
+    });
     const ok = result.status === 0;
     onPathCache.set(manager, ok);
     return ok;
