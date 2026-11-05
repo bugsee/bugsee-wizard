@@ -34,6 +34,23 @@ describe('runScriptCommand', () => {
 });
 
 describe('add-package-script op', () => {
+  it.each([
+    ['CRLF', '\r\n'],
+    ['LF', '\n'],
+  ])('keeps %s line endings and trailing newline; rollback restores bytes', async (_n, eol) => {
+    const orig = PKG.replace(/\n/g, eol);
+    await write(orig);
+    const ctx = makeCtx(tmp.dir);
+    const step = opToStep(spec);
+    await step.apply(ctx);
+    const out = await read();
+    expect(out).toContain('bugsee:upload');
+    expect(out.split(eol).join('')).not.toMatch(/[\r\n]/);
+    expect(out.endsWith(`}${eol}`)).toBe(true);
+    await step.rollback(ctx);
+    expect(await read()).toBe(orig);
+  });
+
   it('id and title', () => {
     const step = opToStep(spec);
     expect(step.id).toBe('add-package-script:bugsee:upload');

@@ -41,6 +41,18 @@ describe('expoPluginStep', () => {
     await expoPluginStep.rollback(ctx);
   });
 
+  it.each([
+    ['CRLF', '\r\n'],
+    ['LF', '\n'],
+  ])('keeps %s line endings in app.json', async (_n, eol) => {
+    const { dir, ctx } = await setup(base({}, 2).replace(/\n/g, eol));
+    await expoPluginStep.apply(ctx);
+    const out = await readFixture(dir, 'app.json');
+    expect(out.split(eol).join('')).not.toMatch(/[\r\n]/);
+    expect(out.endsWith(`}${eol}`)).toBe(true);
+    expect(out).toContain('@bugsee/react-native');
+  });
+
   it('creates expo.plugins with a per-platform token object and keeps indent + newline', async () => {
     const { dir, ctx } = await setup(base({}, 4));
     expect(await expoPluginStep.precheck(ctx)).toEqual({ kind: 'pending' });

@@ -1,7 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 
-import detectIndent from 'detect-indent';
-
+import { stringifyLike } from '../../../core/json-text.js';
 import type { Step, StepStatus } from '../../../core/step.js';
 import { readOrNull } from '../../android/io.js';
 import type { RnContext } from '../types.js';
@@ -56,9 +55,7 @@ function nameOf(entry: unknown): string | undefined {
 }
 
 function serialize(parsed: unknown, original: string): string {
-  const indent = detectIndent(original).indent || '  ';
-  const out = JSON.stringify(parsed, null, indent);
-  return original.endsWith('\n') ? `${out}\n` : out;
+  return stringifyLike(parsed, original);
 }
 
 function parse(content: string): ExpoConfigShape | undefined {
