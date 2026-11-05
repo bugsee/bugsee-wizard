@@ -1,3 +1,4 @@
+import path from 'node:path';
 import * as clack from '@clack/prompts';
 
 import type { WizardOptions } from '../../core/context.js';
@@ -134,7 +135,9 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
   }
 
   // 4. Auto-inject JS entry?
-  const jsEntryLabel = paths.jsEntry ? paths.jsEntry.path.split('/').slice(-2).join('/') : null;
+  const jsEntryLabel = paths.jsEntry
+    ? path.relative(input.cwd, paths.jsEntry.path).replaceAll(path.sep, '/')
+    : null;
   const autoInjectJsEntry = await clack.confirm({
     message: jsEntryLabel
       ? `Auto-inject Bugsee ${launchPath === 'javascript' ? 'launch' : 'initialize'} into ${jsEntryLabel}?`
