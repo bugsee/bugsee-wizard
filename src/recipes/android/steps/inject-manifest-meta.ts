@@ -1,7 +1,13 @@
 import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
-import { findOpenTag, readOrNull, stripMarkerBlock } from '../io.js';
+import {
+  findMarkerBlock,
+  findOpenTag,
+  readOrNull,
+  replaceMarkerBlock,
+  stripMarkerBlock,
+} from '../io.js';
 import {
   type AndroidContext,
   MANIFEST_META_MARKER_BEGIN,
@@ -26,6 +32,13 @@ function metaForManual(): string {
 `;
 }
 
+/** Pre-apply manifest content per run context, so rollback restores the original exactly. */
+const originals = new WeakMap<object, Map<string, string>>();
+
+function metaFor(ctx: AndroidContext): string {
+  return ctx.androidOptions.initMode === 'automatic' ? metaForAutomatic() : metaForManual();
+}
+
 export const injectManifestMetaStep: Step<AndroidContext> = {
   id: 'android.inject-manifest-meta',
   title: 'Inject Bugsee meta-data into AndroidManifest.xml',
@@ -36,7 +49,13 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
       return { kind: 'blocked', reason: `${ctx.androidPaths.appManifest} not found` };
     }
     if (content.includes(MANIFEST_META_MARKER_BEGIN)) {
-      return { kind: 'satisfied' };
+      const existing = findMarkerBlock(
+        content,
+        MANIFEST_META_MARKER_BEGIN,
+        MANIFEST_META_MARKER_END,
+      );
+      // Marker-owned block with different answers: update in place on re-run.
+      return existing === metaFor(ctx) ? { kind: 'satisfied' } : { kind: 'pending' };
     }
     const open = findOpenTag(content, 'application');
     if (!open) {
@@ -57,6 +76,21 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
 
   async apply(ctx) {
     const original = (await readOrNull(ctx.androidPaths.appManifest)) ?? '';
+    if (original.includes(MANIFEST_META_MARKER_BEGIN)) {
+      const m = originals.get(ctx) ?? new Map<string, string>();
+      originals.set(ctx, m);
+      if (!m.has(ctx.androidPaths.appManifest)) m.set(ctx.androidPaths.appManifest, original);
+      await writeFile(
+        ctx.androidPaths.appManifest,
+        replaceMarkerBlock(
+          original,
+          MANIFEST_META_MARKER_BEGIN,
+          MANIFEST_META_MARKER_END,
+          metaFor(ctx),
+        ),
+      );
+      return;
+    }
     const match = findOpenTag(original, 'application');
     if (!match) {
       throw new Error('No <application> element found in AndroidManifest.xml');
@@ -68,12 +102,18 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
     // the meta-data block sits at column 0 with its own indentation.
     let insertAt = match.end;
     if (original[insertAt] === '\n') insertAt++;
-    const meta = ctx.androidOptions.initMode === 'automatic' ? metaForAutomatic() : metaForManual();
+    const meta = metaFor(ctx);
     const updated = original.slice(0, insertAt) + meta + original.slice(insertAt);
     await writeFile(ctx.androidPaths.appManifest, updated);
   },
 
   async rollback(ctx) {
+    const saved = originals.get(ctx)?.get(ctx.androidPaths.appManifest);
+    if (saved !== undefined) {
+      originals.get(ctx)?.delete(ctx.androidPaths.appManifest);
+      await writeFile(ctx.androidPaths.appManifest, saved);
+      return;
+    }
     const content = await readOrNull(ctx.androidPaths.appManifest);
     if (content === null) return;
     const stripped = stripMarkerBlock(
