@@ -79,11 +79,13 @@ export async function runInstall(opts: WizardOptions): Promise<void> {
     case 'unknown':
       clack.note(`Recipe for ${PROJECT_KIND_LABELS[chosen]} is not implemented yet.`, 'Next');
       clack.outro('Nothing was installed.');
+      // non-zero so a script can tell that nothing was installed
+      process.exitCode = 1;
       return;
   }
 
   if (result === 'ok') {
-    clack.outro('Done.');
+    clack.outro(opts.dryRun ? 'Dry run complete — no changes were made.' : 'Done.');
   } else if (result === 'failed') {
     // Non-zero so scripted/CI callers can tell Bugsee was not installed.
     clack.outro('Bugsee was not installed — see the errors above.');

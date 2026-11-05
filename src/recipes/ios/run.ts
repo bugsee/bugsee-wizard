@@ -215,7 +215,8 @@ export async function runIosRecipe(input: IosRecipeInput): Promise<RecipeResult>
 
   // Parent recipe (e.g. React Native) has indicated it will print the
   // final summary itself.
-  if (input.silent) return 'ok';
+  // a dry run wrote nothing: no "next steps" to follow
+  if (input.silent || input.dryRun) return 'ok';
 
   // Was the AppDelegate step actually applied, or did it self-skip (no
   // AppDelegate / no didFinishLaunching / SwiftUI App)? If it skipped, fall
