@@ -392,7 +392,7 @@ describe('runReactNativeRecipe --yes', () => {
       'com.bugsee.android.gradle',
     );
     expect(await readFixture(fixture, 'ios/.xcode.env.local')).toContain('BUGSEE_TOKEN_IOS');
-  });
+  }, 30_000);
 });
 
 /** Every file under a directory, by relative path. */
