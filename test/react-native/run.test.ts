@@ -145,6 +145,18 @@ describe('runReactNativeRecipe: the JS side', () => {
     );
   });
 
+  it('shows the plain version in the beta notice (no range caret)', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer();
+    await runReactNativeRecipe(opts());
+    expect(logged(clack.log.info)).toContain('(7.0.0-beta3)');
+    expect(logged(clack.log.info)).not.toContain('^7.0.0-beta3');
+  });
+
   it('adds @bugsee/react-native and the JS launch, with the token per platform', async () => {
     fixture = await makeFixture({
       'package.json': rnPackage(),

@@ -190,9 +190,13 @@ export async function runReactNativeRecipe(input: ReactNativeRecipeInput): Promi
 
   await warnIfNewArchitectureIsOff(input.cwd, paths.expoConfig);
 
-  clack.log.info(
-    `${RN_PACKAGE_NAME} is a beta (${RN_PACKAGE_VERSION}): its API can still change between betas.`,
-  );
+  // only while the baseline is a prerelease: the notice goes away with the beta
+  const baseline = RN_PACKAGE_VERSION.replace(/^\^/, '');
+  if (semver.prerelease(baseline) !== null) {
+    clack.log.info(
+      `${RN_PACKAGE_NAME} is a beta (${baseline}): its API can still change between betas.`,
+    );
+  }
 
   // 1. Platforms (an Expo project builds both).
   const targets =
