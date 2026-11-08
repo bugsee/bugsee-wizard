@@ -1,7 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 
-import detectIndent from 'detect-indent';
-
+import { stringifyLike } from '../../../core/json-text.js';
 import type { Step, StepStatus } from '../../../core/step.js';
 import { readOrNull } from '../../android/io.js';
 import {
@@ -50,14 +49,10 @@ export const ensureRnBugseePackageStep: Step<RnContext> = {
 
   async apply(ctx) {
     const original = (await readOrNull(ctx.rnPaths.packageJson)) ?? '{}';
-    const indentInfo = detectIndent(original);
-    const indent = indentInfo.indent || '  ';
     const parsed = JSON.parse(original) as PackageJsonShape;
     parsed.dependencies = parsed.dependencies ?? {};
     parsed.dependencies[RN_PACKAGE_NAME] = RN_PACKAGE_VERSION;
-    let serialized = JSON.stringify(parsed, null, indent);
-    if (original.endsWith('\n')) serialized += '\n';
-    await writeFile(ctx.rnPaths.packageJson, serialized);
+    await writeFile(ctx.rnPaths.packageJson, stringifyLike(parsed, original));
   },
 
   async rollback(ctx) {
@@ -82,10 +77,6 @@ export const ensureRnBugseePackageStep: Step<RnContext> = {
       }
     }
     if (!changed) return;
-    const indentInfo = detectIndent(original);
-    const indent = indentInfo.indent || '  ';
-    let serialized = JSON.stringify(parsed, null, indent);
-    if (original.endsWith('\n')) serialized += '\n';
-    await writeFile(ctx.rnPaths.packageJson, serialized);
+    await writeFile(ctx.rnPaths.packageJson, stringifyLike(parsed, original));
   },
 };
