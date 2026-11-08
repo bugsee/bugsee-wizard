@@ -205,6 +205,27 @@ describe('re-run: user edits and damaged markers (bugsee {} block)', () => {
     expect(out).toContain('ndk(true)');
   });
 
+  it('multi-line block comments with braces do not break the block (no duplicate)', async () => {
+    await setup();
+    await editBlock((t) =>
+      t.replace('bugsee {', 'bugsee {\n    /* old config {\n       foo\n    */'),
+    );
+    await configureBugseeBlockStep.apply(withNdk());
+    const out = await readFixture(fixture as string, GRADLE);
+    expect(out.match(/bugsee \{/g)?.length).toBe(1);
+    expect(out).toContain('/* old config {');
+    expect(out).toContain('ndk(true)');
+  });
+
+  it('a one-line bugsee { ndk(true) } is satisfied when answers match, blocked (not rewritten) when they differ', async () => {
+    const a = await setup();
+    await editBlock((t) => t.replace(/bugsee \{[\s\S]*?\n\}/, 'bugsee { ndk(true) }'));
+    expect(await configureBugseeBlockStep.precheck(withNdk())).toEqual({ kind: 'satisfied' });
+    const before = await readFixture(fixture as string, GRADLE);
+    expect((await configureBugseeBlockStep.precheck(a)).kind).toBe('blocked');
+    expect(await readFixture(fixture as string, GRADLE)).toBe(before);
+  });
+
   it('a user ndk(false) is replaced by the generated ndk(true), not kept beside it', async () => {
     await setup();
     await editBlock((t) => t.replace('bugsee {', 'bugsee {\n    ndk(false)'));

@@ -57,88 +57,125 @@ ${EXT_BLOCK_MARKER_END}
  */
 const originals = new WeakMap<object, Map<string, string>>();
 
+/** A line of the block: the text as written, and its code with comments and string literals blanked out. */
+interface Line {
+  readonly raw: string;
+  readonly code: string;
+}
+
 interface ParsedBlock {
   /** Lines before the `bugsee {` line (inside the markers). */
   readonly before: string[];
   /** Lines between `bugsee {` and its own closing `}` (depth-matched). */
-  readonly inner: string[];
+  readonly inner: Line[];
   /** Lines after the closing `}` (inside the markers). */
   readonly after: string[];
 }
 
-/** Net `{` minus `}` on a line, ignoring braces inside string literals and comments. */
-const braceDelta = (raw: string): number => {
-  const line = raw
-    .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '')
-    .replace(/\/\*.*?\*\//g, '')
-    .replace(/\/\/.*$/, '');
-  return (line.match(/\{/g)?.length ?? 0) - (line.match(/\}/g)?.length ?? 0);
-};
-
-/** Split a marker block into the user's text around `bugsee { … }` and its contents, by brace depth. */
-function parseBlock(block: string): ParsedBlock {
-  const lines = block
+/** Blank out comments (block comments may span lines) and string literals, keeping the line structure. */
+function codeLines(text: string): string[] {
+  const noBlock = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\r\n]/g, ' '));
+  return noBlock
     .split(/\r?\n/)
-    .filter((l) => !l.includes(EXT_BLOCK_MARKER_BEGIN) && !l.includes(EXT_BLOCK_MARKER_END))
-    .map((l) => l.replace(/\s+$/, ''))
-    .filter((l) => l.trim() !== '');
-  const open = lines.findIndex((l) => /^\s*bugsee\s*\{/.test(l));
-  if (open === -1) return { before: [], inner: [], after: lines };
+    .map((l) =>
+      l
+        .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, (m) => ' '.repeat(m.length))
+        .replace(/\/\/.*$/, ''),
+    );
+}
+
+const braceDelta = (code: string): number =>
+  (code.match(/\{/g)?.length ?? 0) - (code.match(/\}/g)?.length ?? 0);
+
+/**
+ * Split a marker block into the user's text around `bugsee { … }` and its contents, by
+ * brace depth. Null when that cannot be done safely (no `bugsee {`, unbalanced, or the
+ * whole block on one line): the caller must then not rewrite the block.
+ */
+function parseBlock(block: string): ParsedBlock | null {
+  const raws = block.split(/\r?\n/);
+  const codes = codeLines(block);
+  const lines: Line[] = [];
+  raws.forEach((raw, i) => {
+    if (raw.includes(EXT_BLOCK_MARKER_BEGIN) || raw.includes(EXT_BLOCK_MARKER_END)) return;
+    if (raw.trim() === '') return;
+    lines.push({ raw: raw.replace(/\s+$/, ''), code: codes[i] ?? '' });
+  });
+  const open = lines.findIndex((l) => /^\s*bugsee\s*\{/.test(l.code));
+  if (open === -1) return null;
   let depth = 0;
   let close = -1;
   for (let i = open; i < lines.length; i++) {
-    depth += braceDelta(lines[i] ?? '');
+    depth += braceDelta(lines[i]?.code ?? '');
     if (depth <= 0) {
       close = i;
       break;
     }
   }
-  if (close === -1) return { before: [], inner: [], after: lines };
+  if (close <= open) return null;
   return {
-    before: lines.slice(0, open),
+    before: lines.slice(0, open).map((l) => l.raw),
     inner: lines.slice(open + 1, close),
-    after: lines.slice(close + 1),
+    after: lines.slice(close + 1).map((l) => l.raw),
   };
 }
 
-const headOf = (line: string): string => /^\s*([A-Za-z_]\w*)/.exec(line)?.[1] ?? '';
+const headOf = (code: string): string => /^\s*([A-Za-z_]\w*)/.exec(code)?.[1] ?? '';
 
 /** Toggles by leading token (`ndk true`, `ndk(false)`, `ndk = true` are all the ndk toggle). */
 const TOGGLES = ['ndk', 'feedback', 'sizeAnalysis'] as const;
 
 /** Inner lines grouped by toggle (a toggle's lines include its depth-matched `{ … }` body); the rest are the user's. */
-function splitInner(inner: string[]): { toggles: Map<string, string>; other: string[] } {
+function splitInner(inner: Line[]): { toggles: Map<string, string>; other: string[] } {
   const toggles = new Map<string, string>();
   const other: string[] = [];
   for (let i = 0; i < inner.length; i++) {
-    const line = inner[i] ?? '';
-    const head = headOf(line);
+    const line = inner[i] as Line;
+    const head = headOf(line.code);
     if (!(TOGGLES as readonly string[]).includes(head)) {
-      other.push(line);
+      other.push(line.raw);
       continue;
     }
-    let text = line;
-    let depth = braceDelta(line);
+    let text = line.raw;
+    let depth = braceDelta(line.code);
     while (depth > 0 && i + 1 < inner.length) {
       i++;
-      text += `\n${inner[i] ?? ''}`;
-      depth += braceDelta(inner[i] ?? '');
+      const next = inner[i] as Line;
+      text += `\n${next.raw}`;
+      depth += braceDelta(next.code);
     }
     toggles.set(head, `${toggles.get(head) ?? ''}${text}\n`);
   }
   return { toggles, other };
 }
 
+interface Answers {
+  ndk: boolean;
+  feedback: boolean;
+  sizeAnalysis: boolean;
+}
+
+const ENABLED_RE = /enabled(?:\.set\(\s*true\s*\)|\s*=\s*true)/;
+
 /** The answers an existing marker block encodes (whitespace, CRLF and extra user lines are irrelevant). */
-function answersIn(block: string): { ndk: boolean; feedback: boolean; sizeAnalysis: boolean } {
-  const { toggles } = splitInner(parseBlock(block).inner);
-  const on = (t: string | undefined): boolean =>
-    t !== undefined && /\btrue\b|\.set\(true\)/.test(t);
-  const enabled = toggles.get('sizeAnalysis');
+function answersIn(block: string): Answers {
+  const parsed = parseBlock(block);
+  if (parsed === null) {
+    // Unparseable shape (e.g. everything on one line): read the toggles from the code text.
+    const code = codeLines(block).join('\n');
+    return {
+      ndk: /\bndk\s*(?:\(\s*true\s*\)|=?\s*true\b)/.test(code),
+      feedback: /\bfeedback\s*(?:\(\s*true\s*\)|=?\s*true\b)/.test(code),
+      sizeAnalysis: /\bsizeAnalysis\b[\s\S]*?enabled(?:\.set\(\s*true\s*\)|\s*=\s*true)/.test(code),
+    };
+  }
+  const { toggles } = splitInner(parsed.inner);
+  const flag = (t: string | undefined): boolean =>
+    t !== undefined && /\btrue\b/.test(t) && !/\bfalse\b/.test(t);
   return {
-    ndk: on(toggles.get('ndk')) && !/\bfalse\b/.test(toggles.get('ndk') ?? ''),
-    feedback: on(toggles.get('feedback')) && !/\bfalse\b/.test(toggles.get('feedback') ?? ''),
-    sizeAnalysis: enabled !== undefined && /enabled(\.set\(true\)|\s*=\s*true)/.test(enabled),
+    ndk: flag(toggles.get('ndk')),
+    feedback: flag(toggles.get('feedback')),
+    sizeAnalysis: ENABLED_RE.test(toggles.get('sizeAnalysis') ?? ''),
   };
 }
 
@@ -149,9 +186,11 @@ function answersIn(block: string): { ndk: boolean; feedback: boolean; sizeAnalys
  * a toggle whose answer changed is regenerated or dropped. Uses the file's line-ending style.
  */
 function mergedBlock(existing: string, generated: string): string {
-  const { before, inner, after } = parseBlock(existing);
+  const parsed = parseBlock(existing);
+  if (parsed === null) throw new Error('the bugsee {} block has a shape the wizard cannot update');
+  const { before, inner, after } = parsed;
   const { toggles: have, other } = splitInner(inner);
-  const want = splitInner(parseBlock(generated).inner).toggles;
+  const want = splitInner(parseBlock(generated)?.inner ?? []).toggles;
   const haveAnswers = answersIn(existing);
   const wantAnswers = answersIn(generated);
   const toggleLines: string[] = [];
@@ -190,11 +229,20 @@ export const configureBugseeBlockStep: Step<AndroidContext> = {
     // CRLF must not make a re-run with identical answers rewrite the block.
     const want = answersIn(bugseeBlock(ctx.androidPaths.appBuildGradleDsl, ctx.androidOptions));
     const have = answersIn(existing);
-    return want.ndk === have.ndk &&
+    if (
+      want.ndk === have.ndk &&
       want.feedback === have.feedback &&
       want.sizeAnalysis === have.sizeAnalysis
-      ? { kind: 'satisfied' }
-      : { kind: 'pending' };
+    ) {
+      return { kind: 'satisfied' };
+    }
+    if (parseBlock(existing) === null) {
+      return {
+        kind: 'blocked',
+        reason: `the bugsee {} block in ${ctx.androidPaths.appBuildGradle} has a shape the wizard cannot safely update (unbalanced braces or all on one line); change the toggles by hand`,
+      };
+    }
+    return { kind: 'pending' };
   },
 
   async apply(ctx) {
