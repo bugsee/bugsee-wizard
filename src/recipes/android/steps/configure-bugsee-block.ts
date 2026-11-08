@@ -186,7 +186,16 @@ interface Answers {
   sizeAnalysis: boolean;
 }
 
-const ENABLED_RE = /enabled(?:\.set\(\s*true\s*\)|\s*=\s*true)/;
+const ENABLED_ANY_RE = /\benabled(?:\.set\(\s*(?:true|false)\s*\)|\s*=\s*(?:true|false)\b)/;
+const ENABLED_RE = /\benabled(?:\.set\(\s*true\s*\)|\s*=\s*true)/;
+
+/** Whether the top-level `enabled` flag of a `sizeAnalysis` text is true. */
+function sizeAnalysisOn(code: string | undefined): boolean {
+  const hit = code === undefined ? null : topLevelEnabled(code);
+  if (code === undefined || hit === null) return false;
+  const line = code.split('\n')[hit.line] ?? '';
+  return ENABLED_RE.test(line.slice(hit.index, hit.index + hit.length));
+}
 
 /** The answers an existing marker block encodes (whitespace, CRLF and extra user lines are irrelevant). */
 function answersIn(block: string): Answers {
@@ -206,25 +215,53 @@ function answersIn(block: string): Answers {
   return {
     ndk: flag(toggles.get('ndk')),
     feedback: flag(toggles.get('feedback')),
-    sizeAnalysis: ENABLED_RE.test(toggles.get('sizeAnalysis')?.code ?? ''),
+    sizeAnalysis: sizeAnalysisOn(toggles.get('sizeAnalysis')?.code),
   };
 }
 
 /**
- * Turning `sizeAnalysis` off keeps the user's own settings inside it: only its
- * `enabled` flag is flipped. Null when that cannot be done (use the generated text).
+ * The top-level `enabled` flag of a `sizeAnalysis { … }` text: the first match sitting directly
+ * inside its braces (not inside a nested user block). Positions are in `code` (comments blanked).
  */
-function disabledSizeAnalysis(
+function topLevelEnabled(code: string): { line: number; index: number; length: number } | null {
+  let depth = 0;
+  const lines = code.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    const re = new RegExp(ENABLED_ANY_RE.source, 'g');
+    for (const m of line.matchAll(re)) {
+      const before = line.slice(0, m.index);
+      const dotted = depth === 0 && /\bsizeAnalysis\s*\.\s*$/.test(before);
+      if (dotted || depth + groupDelta(before) === 1)
+        return { line: i, index: m.index, length: m[0].length };
+    }
+    depth += groupDelta(line);
+  }
+  return null;
+}
+
+/**
+ * Switching `sizeAnalysis` on or off keeps the user's own settings inside it: only the
+ * `enabled` flag is flipped (the line is found in the code, so a comment naming `enabled`
+ * is never edited). Undefined when there is no such line (use the generated text).
+ */
+function flippedSizeAnalysis(
   toggle: string,
   have: Map<string, ToggleText>,
   want: Answers,
 ): string | undefined {
   const text = have.get(toggle);
-  if (toggle !== 'sizeAnalysis' || want.sizeAnalysis || text === undefined) return undefined;
-  const raw = text.raw
-    .replace(/enabled\.set\(\s*true\s*\)/, 'enabled.set(false)')
-    .replace(/enabled(\s*=\s*)true\b/, 'enabled$1false');
-  return ENABLED_RE.test(raw) ? undefined : raw;
+  if (toggle !== 'sizeAnalysis' || text === undefined) return undefined;
+  const hit = topLevelEnabled(text.code);
+  if (hit === null) return undefined;
+  const raws = text.raw.split('\n');
+  const raw = raws[hit.line] ?? '';
+  const old = raw.slice(hit.index, hit.index + hit.length);
+  raws[hit.line] =
+    raw.slice(0, hit.index) +
+    old.replace(/\b(?:true|false)\b/, String(want.sizeAnalysis)) +
+    raw.slice(hit.index + hit.length);
+  return raws.join('\n');
 }
 
 /**
@@ -246,7 +283,7 @@ function mergedBlock(existing: string, generated: string): string {
     const keep = haveAnswers[t] === wantAnswers[t] && have.has(t);
     const text = keep
       ? have.get(t)?.raw
-      : (disabledSizeAnalysis(t, have, wantAnswers) ?? want.get(t)?.raw);
+      : (flippedSizeAnalysis(t, have, wantAnswers) ?? want.get(t)?.raw);
     if (text !== undefined) toggleLines.push(...text.split('\n').filter((l) => l !== ''));
   }
   const gen = generated.split(/\r?\n/).filter((l) => l !== '');

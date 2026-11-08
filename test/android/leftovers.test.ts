@@ -153,3 +153,151 @@ describe('manifest meta-data in paired form', () => {
     expect(out).not.toContain('</meta-data>');
   });
 });
+
+describe('provider override: user lines, CRLF and removal', () => {
+  const ctxFor = (processName: string | null) =>
+    makeAndroidContext({
+      cwd: fixture as string,
+      dsl: 'kotlin',
+      androidOptions: opts({ providerProcessOverride: processName }),
+    });
+
+  it('keeps a user line inside the markers and CRLF on a process change', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    await injectProviderOverrideStep.apply(ctxFor(':one'));
+    await rewrite(MANIFEST, (t) =>
+      t
+        .replace(
+          '<!-- bugsee:wizard:provider-override:end -->',
+          '<!-- mine -->\n    <!-- bugsee:wizard:provider-override:end -->',
+        )
+        .replace(/\n/g, '\r\n'),
+    );
+    await injectProviderOverrideStep.apply(ctxFor(':two'));
+    const out = await readFixture(fixture, MANIFEST);
+    expect(out).toContain('<!-- mine -->');
+    expect(out).toContain('android:process=":two"');
+    expect(out).not.toMatch(/[^\r]\n/);
+  });
+
+  it('removes an earlier override when none is wanted any more; rollback restores it', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    await injectProviderOverrideStep.apply(ctxFor(':one'));
+    const withOverride = await readFixture(fixture, MANIFEST);
+    const off = ctxFor(null);
+    expect((await injectProviderOverrideStep.precheck(off)).kind).toBe('pending');
+    await injectProviderOverrideStep.apply(off);
+    const out = await readFixture(fixture, MANIFEST);
+    expect(out).not.toContain('BugseeInitProvider');
+    expect(await injectProviderOverrideStep.precheck(off)).toMatchObject({ kind: 'satisfied' });
+    await injectProviderOverrideStep.rollback(off);
+    expect(await readFixture(fixture, MANIFEST)).toBe(withOverride);
+  });
+
+  it('is satisfied with no override and no earlier block', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    expect(await injectProviderOverrideStep.precheck(ctxFor(null))).toMatchObject({
+      kind: 'satisfied',
+    });
+  });
+});
+
+describe('sizeAnalysis flip is symmetric and ignores comments', () => {
+  it('a comment naming enabled.set(true) is not edited; on again keeps the user settings', async () => {
+    fixture = await makeFixture({ [GRADLE]: SAMPLE_KOTLIN_APP_BUILD });
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: true }));
+    await rewrite(GRADLE, (t) =>
+      t.replace(
+        /sizeAnalysis \{/,
+        'sizeAnalysis {\n        // enabled.set(true) to turn on\n        uploadMapping.set(true)',
+      ),
+    );
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: false }));
+    let out = await readFixture(fixture, GRADLE);
+    expect(out).toContain('// enabled.set(true) to turn on');
+    expect(out).toContain('uploadMapping.set(true)');
+    expect(out).toMatch(/^\s*enabled\.set\(false\)/m);
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: true }));
+    out = await readFixture(fixture, GRADLE);
+    expect(out).toContain('uploadMapping.set(true)');
+    expect(out).toMatch(/^\s*enabled\.set\(true\)/m);
+    expect(out.match(/sizeAnalysis/g)?.length).toBe(1);
+  });
+});
+
+describe('review follow-ups', () => {
+  const pctx = (processName: string | null) =>
+    makeAndroidContext({
+      cwd: fixture as string,
+      dsl: 'kotlin',
+      androidOptions: opts({ providerProcessOverride: processName }),
+    });
+
+  it('replaces the wizard provider even when the user gave it children', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    await injectProviderOverrideStep.apply(pctx(':one'));
+    await rewrite(MANIFEST, (t) =>
+      t.replace(
+        /<provider([\s\S]*?)\/>/,
+        '<provider$1>\n        <meta-data android:name="x" android:value="1" />\n    </provider>',
+      ),
+    );
+    await injectProviderOverrideStep.apply(pctx(':two'));
+    const out = await readFixture(fixture, MANIFEST);
+    expect(out.match(/BugseeInitProvider/g)?.length).toBe(1);
+    expect(out).toContain(':two');
+    expect(out).not.toContain(':one');
+  });
+
+  it('removal keeps the user lines inside the markers', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    await injectProviderOverrideStep.apply(pctx(':one'));
+    await rewrite(MANIFEST, (t) =>
+      t.replace(
+        '<!-- bugsee:wizard:provider-override:end -->',
+        '<!-- mine -->\n    <!-- bugsee:wizard:provider-override:end -->',
+      ),
+    );
+    await injectProviderOverrideStep.apply(pctx(null));
+    const out = await readFixture(fixture, MANIFEST);
+    expect(out).toContain('<!-- mine -->');
+    expect(out).not.toContain('BugseeInitProvider');
+    expect(out).not.toContain('provider-override');
+  });
+
+  it('flips the top-level enabled, not one nested in a user block', async () => {
+    fixture = await makeFixture({ [GRADLE]: SAMPLE_KOTLIN_APP_BUILD });
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: true }));
+    await rewrite(GRADLE, (t) =>
+      t.replace(
+        /sizeAnalysis \{/,
+        'sizeAnalysis {\n        somePlugin {\n            enabled = true\n        }',
+      ),
+    );
+    expect(await configureBugseeBlockStep.precheck(gradleCtx({ sizeAnalysis: true }))).toEqual({
+      kind: 'satisfied',
+    });
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: false }));
+    const out = await readFixture(fixture, GRADLE);
+    expect(out).toMatch(/enabled = true/);
+    expect(out).toMatch(/^\s*enabled\.set\(false\)/m);
+    expect(await configureBugseeBlockStep.precheck(gradleCtx({ sizeAnalysis: false }))).toEqual({
+      kind: 'satisfied',
+    });
+  });
+});
+
+describe('dotted sizeAnalysis form', () => {
+  it('sizeAnalysis.enabled.set(true) counts as on, and turning it off flips it in place', async () => {
+    fixture = await makeFixture({ [GRADLE]: SAMPLE_KOTLIN_APP_BUILD });
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: true }));
+    await rewrite(GRADLE, (t) =>
+      t.replace(/sizeAnalysis \{\s*enabled\.set\(true\)\s*\}/, 'sizeAnalysis.enabled.set(true)'),
+    );
+    expect(await configureBugseeBlockStep.precheck(gradleCtx({ sizeAnalysis: true }))).toEqual({
+      kind: 'satisfied',
+    });
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: false }));
+    expect(await readFixture(fixture, GRADLE)).toContain('sizeAnalysis.enabled.set(false)');
+  });
+});

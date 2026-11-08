@@ -49,6 +49,50 @@ function processIn(block: string): string | null {
   return null;
 }
 
+/** The lines inside an existing marker block that are the user's: everything but the markers and the wizard's own provider element (with any children). */
+function userLines(existing: string): string[] {
+  const own =
+    /[ \t]*<provider\b(?=[^>]*BugseeInitProvider)[^>]*?(?:\/>|>[\s\S]*?<\/provider\s*>)[ \t]*\r?\n?/g;
+  return existing
+    .split(/\r?\n/)
+    .join('\n')
+    .replace(own, '')
+    .split('\n')
+    .filter(
+      (l) =>
+        l.trim() !== '' &&
+        !l.includes(PROVIDER_OVERRIDE_MARKER_BEGIN) &&
+        !l.includes(PROVIDER_OVERRIDE_MARKER_END),
+    );
+}
+
+const inFileEndings = (existing: string, text: string): string =>
+  /\r\n/.test(existing) ? text.replace(/\n/g, '\r\n') : text;
+
+/** The generated block plus any lines the user added inside the markers, in the file's line endings. */
+function mergedProvider(existing: string, generated: string): string {
+  const lines = generated.split('\n').filter((l) => l !== '');
+  const end = lines.pop() ?? '';
+  return inFileEndings(existing, `${[...lines, ...userLines(existing), end].join('\n')}\n`);
+}
+
+/** The manifest without the wizard's provider; the user's own lines inside the markers stay. */
+function removedProvider(source: string): string {
+  const block = findMarkerBlock(
+    source,
+    PROVIDER_OVERRIDE_MARKER_BEGIN,
+    PROVIDER_OVERRIDE_MARKER_END,
+  );
+  if (block === null) return source;
+  const kept = userLines(block);
+  return replaceMarkerBlock(
+    source,
+    PROVIDER_OVERRIDE_MARKER_BEGIN,
+    PROVIDER_OVERRIDE_MARKER_END,
+    kept.length === 0 ? '' : inFileEndings(block, `${kept.join('\n')}\n`),
+  );
+}
+
 function providerOverrideXml(processName: string): string {
   const escaped = escapeXmlAttr(processName);
   return `    ${PROVIDER_OVERRIDE_MARKER_BEGIN}
@@ -84,7 +128,15 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
 
   async precheck(ctx): Promise<StepStatus> {
     if (!ctx.androidOptions.providerProcessOverride) {
-      return { kind: 'satisfied', note: 'no application process override needed' };
+      // An override from an earlier run that is no longer wanted must go.
+      const old = await readOrNull(ctx.androidPaths.appManifest);
+      const block =
+        old === null || old === undefined
+          ? null
+          : findMarkerBlock(old, PROVIDER_OVERRIDE_MARKER_BEGIN, PROVIDER_OVERRIDE_MARKER_END);
+      return block !== null
+        ? { kind: 'pending' }
+        : { kind: 'satisfied', note: 'no application process override needed' };
     }
     const content = await readOrNull(ctx.androidPaths.appManifest);
     if (content === null) {
@@ -131,9 +183,13 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
 
   async apply(ctx) {
     const processName = ctx.androidOptions.providerProcessOverride;
-    if (!processName) throw new Error('providerProcessOverride is null in apply()');
-
     const original = (await readOrNull(ctx.androidPaths.appManifest)) ?? '';
+    if (!processName) {
+      // No override wanted any more: strip the block this wizard added earlier.
+      rememberOriginal(originals, ctx, ctx.androidPaths.appManifest, original);
+      await writeFile(ctx.androidPaths.appManifest, removedProvider(original));
+      return;
+    }
 
     let updated = original;
 
@@ -152,7 +208,14 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
           original,
           PROVIDER_OVERRIDE_MARKER_BEGIN,
           PROVIDER_OVERRIDE_MARKER_END,
-          providerOverrideXml(processName),
+          mergedProvider(
+            findMarkerBlock(
+              original,
+              PROVIDER_OVERRIDE_MARKER_BEGIN,
+              PROVIDER_OVERRIDE_MARKER_END,
+            ) ?? '',
+            providerOverrideXml(processName),
+          ),
         ),
       );
       return;
