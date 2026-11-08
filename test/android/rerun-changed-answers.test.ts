@@ -121,6 +121,73 @@ describe('re-run: user edits and damaged markers (bugsee {} block)', () => {
     expect(a).toBeDefined();
   });
 
+  const editBlock = async (fn: (t: string) => string) => {
+    const file = join(fixture as string, GRADLE);
+    await writeFile(file, fn(await readFixture(fixture as string, GRADLE)));
+  };
+  const withNdk = () =>
+    makeAndroidContext({
+      cwd: fixture as string,
+      dsl: 'kotlin',
+      androidOptions: opts({ ndk: true }),
+    });
+
+  it('keeps a note after the closing brace and writes a well-formed block', async () => {
+    await setup();
+    await editBlock((t) =>
+      t.replace('// bugsee:wizard:bugsee-block:end', '// note\n// bugsee:wizard:bugsee-block:end'),
+    );
+    const b = withNdk();
+    await configureBugseeBlockStep.apply(b);
+    const out = await readFixture(fixture as string, GRADLE);
+    expect(out).toContain('// note');
+    expect(out).toContain('ndk(true)');
+    const block = out.slice(out.indexOf('bugsee:wizard:bugsee-block:begin'));
+    expect((block.match(/\{/g) ?? []).length).toBe((block.match(/\}/g) ?? []).length);
+    expect(await configureBugseeBlockStep.precheck(b)).toEqual({ kind: 'satisfied' });
+  });
+
+  it('replaces a user-extended sizeAnalysis block instead of duplicating it', async () => {
+    await setup();
+    await editBlock((t) =>
+      t.replace(
+        'bugsee {',
+        'bugsee {\n    sizeAnalysis {\n        enabled.set(true)\n        uploadMapping.set(true)\n    }',
+      ),
+    );
+    const b = makeAndroidContext({
+      cwd: fixture as string,
+      dsl: 'kotlin',
+      androidOptions: opts({ sizeAnalysis: true }),
+    });
+    expect(await configureBugseeBlockStep.precheck(b)).toEqual({ kind: 'satisfied' });
+    const c = makeAndroidContext({
+      cwd: fixture as string,
+      dsl: 'kotlin',
+      androidOptions: opts({ sizeAnalysis: true, ndk: true }),
+    });
+    await configureBugseeBlockStep.apply(c);
+    const out = await readFixture(fixture as string, GRADLE);
+    expect(out.match(/sizeAnalysis/g)?.length).toBe(1);
+  });
+
+  it('a user ndk(false) is replaced by the generated ndk(true), not kept beside it', async () => {
+    await setup();
+    await editBlock((t) => t.replace('bugsee {', 'bugsee {\n    ndk(false)'));
+    const b = withNdk();
+    expect((await configureBugseeBlockStep.precheck(b)).kind).toBe('pending');
+    await configureBugseeBlockStep.apply(b);
+    const out = await readFixture(fixture as string, GRADLE);
+    expect(out).toContain('ndk(true)');
+    expect(out).not.toContain('ndk(false)');
+  });
+
+  it('a user ndk(false) with ndk answered no is satisfied and untouched', async () => {
+    const a = await setup();
+    await editBlock((t) => t.replace('bugsee {', 'bugsee {\n    ndk(false)'));
+    expect(await configureBugseeBlockStep.precheck(a)).toEqual({ kind: 'satisfied' });
+  });
+
   it('is satisfied on a CRLF file and re-indented block', async () => {
     const a = await setup();
     const file = join(fixture as string, GRADLE);

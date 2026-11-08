@@ -57,50 +57,102 @@ ${EXT_BLOCK_MARKER_END}
  */
 const originals = new WeakMap<object, Map<string, string>>();
 
-const SIZE_ANALYSIS_RE = /^[ \t]*sizeAnalysis[ \t]*\{\s*enabled\.set\(true\)\s*\}[ \t]*\r?\n?/m;
-const NDK_RE = /^[ \t]*ndk(?:\(true\)|[ \t]+true)[ \t]*\r?\n?/m;
-const FEEDBACK_RE = /^[ \t]*feedback(?:\(true\)|[ \t]+true)[ \t]*\r?\n?/m;
-
-/** The answers an existing marker block encodes (whitespace, CRLF and extra user lines are irrelevant). */
-function answersIn(block: string): { ndk: boolean; feedback: boolean; sizeAnalysis: boolean } {
-  return {
-    ndk: NDK_RE.test(block),
-    feedback: FEEDBACK_RE.test(block),
-    sizeAnalysis: SIZE_ANALYSIS_RE.test(block),
-  };
+interface ParsedBlock {
+  /** Lines before the `bugsee {` line (inside the markers). */
+  readonly before: string[];
+  /** Lines between `bugsee {` and its own closing `}` (depth-matched). */
+  readonly inner: string[];
+  /** Lines after the closing `}` (inside the markers). */
+  readonly after: string[];
 }
 
-/** Lines the user added inside the block (everything the wizard does not generate). */
-function userLinesIn(block: string): string[] {
-  const inner = block
-    .replace(EXT_BLOCK_MARKER_BEGIN, '')
-    .replace(EXT_BLOCK_MARKER_END, '')
-    .replace(SIZE_ANALYSIS_RE, '')
-    .replace(NDK_RE, '')
-    .replace(FEEDBACK_RE, '');
-  const lines = inner.split(/\r?\n/).map((l) => l.replace(/\s+$/, ''));
-  // Drop the wrapper `bugsee {` first line and its closing `}` (last non-blank line).
-  const first = lines.findIndex((l) => /^\s*bugsee\s*\{\s*$/.test(l));
-  let last = -1;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if ((lines[i] ?? '').trim() !== '') {
-      last = i;
+const braceDelta = (line: string): number =>
+  (line.match(/\{/g)?.length ?? 0) - (line.match(/\}/g)?.length ?? 0);
+
+/** Split a marker block into the user's text around `bugsee { … }` and its contents, by brace depth. */
+function parseBlock(block: string): ParsedBlock {
+  const lines = block
+    .split(/\r?\n/)
+    .filter((l) => !l.includes(EXT_BLOCK_MARKER_BEGIN) && !l.includes(EXT_BLOCK_MARKER_END))
+    .map((l) => l.replace(/\s+$/, ''))
+    .filter((l) => l.trim() !== '');
+  const open = lines.findIndex((l) => /^\s*bugsee\s*\{/.test(l));
+  if (open === -1) return { before: [], inner: [], after: lines };
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < lines.length; i++) {
+    depth += braceDelta(lines[i] ?? '');
+    if (depth <= 0) {
+      close = i;
       break;
     }
   }
-  if (first === -1 || last <= first) return [];
-  return lines.slice(first + 1, last).filter((l) => l.trim() !== '');
+  if (close === -1) return { before: [], inner: [], after: lines };
+  return {
+    before: lines.slice(0, open),
+    inner: lines.slice(open + 1, close),
+    after: lines.slice(close + 1),
+  };
 }
 
-/** The generated block with the user's own lines kept, in the file's line-ending style. */
-function mergedBlock(existing: string, generated: string): string {
-  const extra = userLinesIn(existing);
-  let out = generated;
-  if (extra.length > 0) {
-    const close = out.lastIndexOf('\n}\n');
-    out = `${out.slice(0, close + 1)}${extra.join('\n')}\n${out.slice(close + 1)}`;
+const headOf = (line: string): string => /^\s*([A-Za-z_]\w*)/.exec(line)?.[1] ?? '';
+
+/** Toggles by leading token (`ndk true`, `ndk(false)`, `ndk = true` are all the ndk toggle). */
+const TOGGLES = ['ndk', 'feedback', 'sizeAnalysis'] as const;
+
+/** Inner lines grouped by toggle (a toggle's lines include its depth-matched `{ … }` body); the rest are the user's. */
+function splitInner(inner: string[]): { toggles: Map<string, string>; other: string[] } {
+  const toggles = new Map<string, string>();
+  const other: string[] = [];
+  for (let i = 0; i < inner.length; i++) {
+    const line = inner[i] ?? '';
+    const head = headOf(line);
+    if (!(TOGGLES as readonly string[]).includes(head)) {
+      other.push(line);
+      continue;
+    }
+    let text = line;
+    let depth = braceDelta(line);
+    while (depth > 0 && i + 1 < inner.length) {
+      i++;
+      text += `\n${inner[i] ?? ''}`;
+      depth += braceDelta(inner[i] ?? '');
+    }
+    toggles.set(head, `${toggles.get(head) ?? ''}${text}\n`);
   }
-  return /\r\n/.test(existing) ? out.replace(/\r?\n/g, '\r\n') : out;
+  return { toggles, other };
+}
+
+/** The answers an existing marker block encodes (whitespace, CRLF and extra user lines are irrelevant). */
+function answersIn(block: string): { ndk: boolean; feedback: boolean; sizeAnalysis: boolean } {
+  const { toggles } = splitInner(parseBlock(block).inner);
+  const on = (t: string | undefined): boolean =>
+    t !== undefined && /\btrue\b|\.set\(true\)/.test(t);
+  const enabled = toggles.get('sizeAnalysis');
+  return {
+    ndk: on(toggles.get('ndk')) && !/\bfalse\b/.test(toggles.get('ndk') ?? ''),
+    feedback: on(toggles.get('feedback')) && !/\bfalse\b/.test(toggles.get('feedback') ?? ''),
+    sizeAnalysis: enabled !== undefined && /enabled(\.set\(true\)|\s*=\s*true)/.test(enabled),
+  };
+}
+
+/**
+ * The generated block with everything of the user's kept: text before and after
+ * `bugsee { … }`, and non-toggle lines inside it. Toggle lines (ndk, feedback,
+ * sizeAnalysis) are wizard-owned and are replaced by the generated ones. Uses the
+ * file's line-ending style.
+ */
+function mergedBlock(existing: string, generated: string): string {
+  const { before, inner, after } = parseBlock(existing);
+  const { other } = splitInner(inner);
+  const gen = generated.split(/\r?\n/).filter((l) => l !== '');
+  const begin = gen[0] ?? '';
+  const end = gen[gen.length - 1] ?? '';
+  const body = gen.slice(1, -1); // `bugsee {` … `}`
+  const closing = body.pop() ?? '}';
+  const out = [begin, ...before, ...body, ...other, closing, ...after, end].join('\n');
+  const text = `${out}\n`;
+  return /\r\n/.test(existing) ? text.replace(/\r?\n/g, '\r\n') : text;
 }
 
 export const configureBugseeBlockStep: Step<AndroidContext> = {
@@ -134,10 +186,8 @@ export const configureBugseeBlockStep: Step<AndroidContext> = {
   async apply(ctx) {
     const original = (await readOrNull(ctx.androidPaths.appBuildGradle)) ?? '';
     const block = bugseeBlock(ctx.androidPaths.appBuildGradleDsl, ctx.androidOptions);
-    // Append the block at column 0 of a new line. If the original lacks a
-    // trailing newline, add exactly one so the BEGIN marker starts a line —
-    // any more would leave a stray blank line behind on rollback.
     if (original.includes(EXT_BLOCK_MARKER_BEGIN)) {
+      // Re-run: update the marker-owned block in place, keeping the user's own text.
       const existing = findMarkerBlock(original, EXT_BLOCK_MARKER_BEGIN, EXT_BLOCK_MARKER_END);
       if (existing === null) {
         throw new Error(
@@ -154,6 +204,9 @@ export const configureBugseeBlockStep: Step<AndroidContext> = {
       await writeFile(ctx.androidPaths.appBuildGradle, replaced);
       return;
     }
+    // Append the block at column 0 of a new line. If the original lacks a
+    // trailing newline, add exactly one so the BEGIN marker starts a line —
+    // any more would leave a stray blank line behind on rollback.
     const sep = original.length > 0 && !original.endsWith('\n') ? '\n' : '';
     const updated = `${original}${sep}${block}`;
     await writeFile(ctx.androidPaths.appBuildGradle, updated);
