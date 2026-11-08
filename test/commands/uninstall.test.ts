@@ -299,6 +299,20 @@ describe('runUninstall (nothing detected)', () => {
     expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['ios/App.xcodeproj/project.pbxproj', 'shellScript = "x # bugsee:wizard:rn-bundle:QQ==";'],
+    [
+      'ios/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme',
+      '<Action>run_cli xcode post-action</Action>',
+    ],
+  ])('offers the RN rollback for the current recipe iOS edit in %s', async (file, text) => {
+    const cwd = tmp();
+    mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true });
+    writeFileSync(path.join(cwd, file), text);
+    await runUninstall({ ...opts, cwd });
+    expect(rollbacks.runReactNativeRollback).toHaveBeenCalled();
+  });
+
   it('native files without a wizard marker are not a Bugsee install', async () => {
     const cwd = tmp();
     mkdirSync(path.join(cwd, 'android'), { recursive: true });
