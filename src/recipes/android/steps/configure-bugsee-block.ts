@@ -231,7 +231,9 @@ function topLevelEnabled(code: string): { line: number; index: number; length: n
     const re = new RegExp(ENABLED_ANY_RE.source, 'g');
     for (const m of line.matchAll(re)) {
       const before = line.slice(0, m.index);
-      if (depth + groupDelta(before) === 1) return { line: i, index: m.index, length: m[0].length };
+      const dotted = depth === 0 && /\bsizeAnalysis\s*\.\s*$/.test(before);
+      if (dotted || depth + groupDelta(before) === 1)
+        return { line: i, index: m.index, length: m[0].length };
     }
     depth += groupDelta(line);
   }

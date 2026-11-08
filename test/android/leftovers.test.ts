@@ -286,3 +286,18 @@ describe('review follow-ups', () => {
     });
   });
 });
+
+describe('dotted sizeAnalysis form', () => {
+  it('sizeAnalysis.enabled.set(true) counts as on, and turning it off flips it in place', async () => {
+    fixture = await makeFixture({ [GRADLE]: SAMPLE_KOTLIN_APP_BUILD });
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: true }));
+    await rewrite(GRADLE, (t) =>
+      t.replace(/sizeAnalysis \{\s*enabled\.set\(true\)\s*\}/, 'sizeAnalysis.enabled.set(true)'),
+    );
+    expect(await configureBugseeBlockStep.precheck(gradleCtx({ sizeAnalysis: true }))).toEqual({
+      kind: 'satisfied',
+    });
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: false }));
+    expect(await readFixture(fixture, GRADLE)).toContain('sizeAnalysis.enabled.set(false)');
+  });
+});
