@@ -39,6 +39,28 @@ const originals = new WeakMap<object, Map<string, string>>();
 const APP_TOKEN_META = 'com.bugsee.app-token';
 const AUTO_INIT_META = 'com.bugsee.auto-init';
 
+const OWN_META_RE =
+  /[ \t]*<meta-data\b[^>]*android:name\s*=\s*"com\.bugsee\.(?:app-token|auto-init)"[^>]*\/>[ \t]*\r?\n?/g;
+
+/** The replacement block: the generated one plus any lines the user added inside the markers, in the file's line endings. */
+function mergedMeta(existing: string, generated: string): string {
+  const kept = existing
+    .split(/\r?\n/)
+    .join('\n')
+    .replace(OWN_META_RE, '')
+    .split('\n')
+    .filter(
+      (l) =>
+        l.trim() !== '' &&
+        !l.includes(MANIFEST_META_MARKER_BEGIN) &&
+        !l.includes(MANIFEST_META_MARKER_END),
+    );
+  const lines = generated.split('\n').filter((l) => l !== '');
+  const end = lines.pop() ?? '';
+  const text = `${[...lines, ...kept, end].join('\n')}\n`;
+  return /\r\n/.test(existing) ? text.replace(/\n/g, '\r\n') : text;
+}
+
 function metaFor(ctx: AndroidContext): string {
   return ctx.androidOptions.initMode === 'automatic' ? metaForAutomatic() : metaForManual();
 }
@@ -106,7 +128,10 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
           original,
           MANIFEST_META_MARKER_BEGIN,
           MANIFEST_META_MARKER_END,
-          metaFor(ctx),
+          mergedMeta(
+            findMarkerBlock(original, MANIFEST_META_MARKER_BEGIN, MANIFEST_META_MARKER_END) ?? '',
+            metaFor(ctx),
+          ),
         ),
       );
       return;

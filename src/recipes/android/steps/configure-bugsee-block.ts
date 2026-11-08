@@ -66,8 +66,14 @@ interface ParsedBlock {
   readonly after: string[];
 }
 
-const braceDelta = (line: string): number =>
-  (line.match(/\{/g)?.length ?? 0) - (line.match(/\}/g)?.length ?? 0);
+/** Net `{` minus `}` on a line, ignoring braces inside string literals and comments. */
+const braceDelta = (raw: string): number => {
+  const line = raw
+    .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '')
+    .replace(/\/\*.*?\*\//g, '')
+    .replace(/\/\/.*$/, '');
+  return (line.match(/\{/g)?.length ?? 0) - (line.match(/\}/g)?.length ?? 0);
+};
 
 /** Split a marker block into the user's text around `bugsee { … }` and its contents, by brace depth. */
 function parseBlock(block: string): ParsedBlock {
@@ -138,19 +144,27 @@ function answersIn(block: string): { ndk: boolean; feedback: boolean; sizeAnalys
 
 /**
  * The generated block with everything of the user's kept: text before and after
- * `bugsee { … }`, and non-toggle lines inside it. Toggle lines (ndk, feedback,
- * sizeAnalysis) are wizard-owned and are replaced by the generated ones. Uses the
- * file's line-ending style.
+ * `bugsee { … }`, non-toggle lines inside it, and every toggle whose answer did not
+ * change (so a user-extended `sizeAnalysis { … }` survives an unrelated change). Only
+ * a toggle whose answer changed is regenerated or dropped. Uses the file's line-ending style.
  */
 function mergedBlock(existing: string, generated: string): string {
   const { before, inner, after } = parseBlock(existing);
-  const { other } = splitInner(inner);
+  const { toggles: have, other } = splitInner(inner);
+  const want = splitInner(parseBlock(generated).inner).toggles;
+  const haveAnswers = answersIn(existing);
+  const wantAnswers = answersIn(generated);
+  const toggleLines: string[] = [];
+  for (const t of TOGGLES) {
+    const keep = haveAnswers[t] === wantAnswers[t] && have.has(t);
+    const text = keep ? have.get(t) : want.get(t);
+    if (text !== undefined) toggleLines.push(...text.split('\n').filter((l) => l !== ''));
+  }
   const gen = generated.split(/\r?\n/).filter((l) => l !== '');
   const begin = gen[0] ?? '';
   const end = gen[gen.length - 1] ?? '';
-  const body = gen.slice(1, -1); // `bugsee {` … `}`
-  const closing = body.pop() ?? '}';
-  const out = [begin, ...before, ...body, ...other, closing, ...after, end].join('\n');
+  const open = (gen[1] ?? 'bugsee {').replace(/\s+$/, '');
+  const out = [begin, ...before, open, ...toggleLines, ...other, '}', ...after, end].join('\n');
   const text = `${out}\n`;
   return /\r\n/.test(existing) ? text.replace(/\r?\n/g, '\r\n') : text;
 }

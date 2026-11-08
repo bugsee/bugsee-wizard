@@ -171,6 +171,40 @@ describe('re-run: user edits and damaged markers (bugsee {} block)', () => {
     expect(out.match(/sizeAnalysis/g)?.length).toBe(1);
   });
 
+  it('keeps a user-extended sizeAnalysis when only ndk changes', async () => {
+    await setup();
+    await editBlock((t) =>
+      t.replace(
+        'bugsee {',
+        'bugsee {\n    sizeAnalysis {\n        enabled.set(true)\n        uploadMapping.set(true)\n    }',
+      ),
+    );
+    const c = makeAndroidContext({
+      cwd: fixture as string,
+      dsl: 'kotlin',
+      androidOptions: opts({ sizeAnalysis: true, ndk: true }),
+    });
+    await configureBugseeBlockStep.apply(c);
+    const out = await readFixture(fixture as string, GRADLE);
+    expect(out).toContain('uploadMapping.set(true)');
+    expect(out).toContain('ndk(true)');
+    expect(out.match(/sizeAnalysis/g)?.length).toBe(1);
+    expect(out.match(/bugsee \{/g)?.length).toBe(1);
+  });
+
+  it('braces inside comments and strings do not confuse the block, no duplicate bugsee {}', async () => {
+    await setup();
+    await editBlock((t) =>
+      t.replace('bugsee {', 'bugsee {\n    // TODO: wrap in { when flavor set\n    note("}")'),
+    );
+    await configureBugseeBlockStep.apply(withNdk());
+    const out = await readFixture(fixture as string, GRADLE);
+    expect(out.match(/bugsee \{/g)?.length).toBe(1);
+    expect(out).toContain('// TODO: wrap in { when flavor set');
+    expect(out).toContain('note("}")');
+    expect(out).toContain('ndk(true)');
+  });
+
   it('a user ndk(false) is replaced by the generated ndk(true), not kept beside it', async () => {
     await setup();
     await editBlock((t) => t.replace('bugsee {', 'bugsee {\n    ndk(false)'));
@@ -273,6 +307,30 @@ describe('re-run with changed answers: manifest meta-data', () => {
 
     await injectManifestMetaStep.rollback(b);
     expect(await readFixture(fixture, MANIFEST)).toBe(afterFirst);
+  });
+
+  it('keeps user content inside the markers and CRLF line endings on a mode change', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    await injectManifestMetaStep.apply(makeAndroidContext({ cwd: fixture, dsl: 'kotlin' }));
+    const file = join(fixture, MANIFEST);
+    const edited = (await readFixture(fixture, MANIFEST))
+      .replace(
+        '<!-- bugsee:wizard:meta:end -->',
+        '<meta-data android:name="my.key" android:value="1" />\n    <!-- bugsee:wizard:meta:end -->',
+      )
+      .replace(/\n/g, '\r\n');
+    await writeFile(file, edited);
+    const b = makeAndroidContext({
+      cwd: fixture,
+      dsl: 'kotlin',
+      androidOptions: opts({ initMode: 'manual' }),
+    });
+    await injectManifestMetaStep.apply(b);
+    const out = await readFixture(fixture, MANIFEST);
+    expect(out).toContain('my.key');
+    expect(out).toContain('com.bugsee.auto-init');
+    expect(out).not.toContain('com.bugsee.app-token');
+    expect(out).not.toMatch(/[^\r]\n/);
   });
 
   it('uninstall rollback strips the block back to the original manifest', async () => {
