@@ -127,6 +127,10 @@ function parseBlock(block: string): ParsedBlock | null {
   };
 }
 
+/** Open minus close of braces and parentheses, so `ndk(` / `false` / `)` groups as one toggle. */
+const groupDelta = (code: string): number =>
+  braceDelta(code) + (code.match(/\(/g)?.length ?? 0) - (code.match(/\)/g)?.length ?? 0);
+
 const headOf = (code: string): string => /^\s*([A-Za-z_]\w*)/.exec(code)?.[1] ?? '';
 
 /** Toggles by leading token (`ndk true`, `ndk(false)`, `ndk = true` are all the ndk toggle). */
@@ -152,14 +156,14 @@ function splitInner(inner: Line[]): { toggles: Map<string, ToggleText>; other: s
     const isToggle = (TOGGLES as readonly string[]).includes(headOf(line.code));
     let raw = line.raw;
     let code = line.code;
-    let depth = braceDelta(line.code);
+    let depth = groupDelta(line.code);
     const rawLines = [raw];
     while (depth > 0 && i + 1 < inner.length) {
       i++;
       const next = inner[i] as Line;
       rawLines.push(next.raw);
       code += `\n${next.code}`;
-      depth += braceDelta(next.code);
+      depth += groupDelta(next.code);
     }
     raw = rawLines.join('\n');
     if (!isToggle) {
@@ -207,6 +211,23 @@ function answersIn(block: string): Answers {
 }
 
 /**
+ * Turning `sizeAnalysis` off keeps the user's own settings inside it: only its
+ * `enabled` flag is flipped. Null when that cannot be done (use the generated text).
+ */
+function disabledSizeAnalysis(
+  toggle: string,
+  have: Map<string, ToggleText>,
+  want: Answers,
+): string | undefined {
+  const text = have.get(toggle);
+  if (toggle !== 'sizeAnalysis' || want.sizeAnalysis || text === undefined) return undefined;
+  const raw = text.raw
+    .replace(/enabled\.set\(\s*true\s*\)/, 'enabled.set(false)')
+    .replace(/enabled(\s*=\s*)true\b/, 'enabled$1false');
+  return ENABLED_RE.test(raw) ? undefined : raw;
+}
+
+/**
  * The generated block with everything of the user's kept: text before and after
  * `bugsee { … }`, non-toggle lines inside it, and every toggle whose answer did not
  * change (so a user-extended `sizeAnalysis { … }` survives an unrelated change). Only
@@ -223,8 +244,10 @@ function mergedBlock(existing: string, generated: string): string {
   const toggleLines: string[] = [];
   for (const t of TOGGLES) {
     const keep = haveAnswers[t] === wantAnswers[t] && have.has(t);
-    const text = keep ? have.get(t) : want.get(t);
-    if (text !== undefined) toggleLines.push(...text.raw.split('\n').filter((l) => l !== ''));
+    const text = keep
+      ? have.get(t)?.raw
+      : (disabledSizeAnalysis(t, have, wantAnswers) ?? want.get(t)?.raw);
+    if (text !== undefined) toggleLines.push(...text.split('\n').filter((l) => l !== ''));
   }
   const gen = generated.split(/\r?\n/).filter((l) => l !== '');
   const begin = gen[0] ?? '';

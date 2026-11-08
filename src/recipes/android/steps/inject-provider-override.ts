@@ -1,7 +1,14 @@
 import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
-import { findOpenTag, readOrNull, stripMarkerBlock } from '../io.js';
+import {
+  findMarkerBlock,
+  findOpenTag,
+  readOrNull,
+  rememberOriginal,
+  replaceMarkerBlock,
+  stripMarkerBlock,
+} from '../io.js';
 import {
   type AndroidContext,
   PROVIDER_OVERRIDE_MARKER_BEGIN,
@@ -19,6 +26,27 @@ function escapeXmlAttr(value: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/** Pre-apply manifest content per run context, so rollback restores the original exactly. */
+const originals = new WeakMap<object, Map<string, string>>();
+
+function unescapeXmlAttr(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&');
+}
+
+/** The `android:process` of the provider an existing marker block declares, or null. */
+function processIn(block: string): string | null {
+  for (const m of block.matchAll(/<!--[\s\S]*?-->|<provider\b[^>]*>/g)) {
+    if (!m[0].startsWith('<provider')) continue;
+    const v = /android:process\s*=\s*"([^"]*)"/.exec(m[0])?.[1];
+    if (v !== undefined) return unescapeXmlAttr(v);
+  }
+  return null;
 }
 
 function providerOverrideXml(processName: string): string {
@@ -63,7 +91,21 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
       return { kind: 'blocked', reason: `${ctx.androidPaths.appManifest} not found` };
     }
     if (content.includes(PROVIDER_OVERRIDE_MARKER_BEGIN)) {
-      return { kind: 'satisfied' };
+      const existing = findMarkerBlock(
+        content,
+        PROVIDER_OVERRIDE_MARKER_BEGIN,
+        PROVIDER_OVERRIDE_MARKER_END,
+      );
+      if (existing === null) {
+        return {
+          kind: 'blocked',
+          reason: `${ctx.androidPaths.appManifest} has a "${PROVIDER_OVERRIDE_MARKER_BEGIN}" marker without its end marker; fix or remove it and re-run`,
+        };
+      }
+      // A re-run with a different process name must update the block, not keep the old one.
+      return processIn(existing) === ctx.androidOptions.providerProcessOverride
+        ? { kind: 'satisfied' }
+        : { kind: 'pending' };
     }
     if (!findOpenTag(content, 'manifest')) {
       return { kind: 'blocked', reason: 'No <manifest> root in AndroidManifest.xml' };
@@ -95,6 +137,27 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
 
     let updated = original;
 
+    if (original.includes(PROVIDER_OVERRIDE_MARKER_BEGIN)) {
+      if (
+        !findMarkerBlock(original, PROVIDER_OVERRIDE_MARKER_BEGIN, PROVIDER_OVERRIDE_MARKER_END)
+      ) {
+        throw new Error(
+          `${PROVIDER_OVERRIDE_MARKER_BEGIN} marker without its end marker in ${ctx.androidPaths.appManifest}`,
+        );
+      }
+      rememberOriginal(originals, ctx, ctx.androidPaths.appManifest, original);
+      await writeFile(
+        ctx.androidPaths.appManifest,
+        replaceMarkerBlock(
+          original,
+          PROVIDER_OVERRIDE_MARKER_BEGIN,
+          PROVIDER_OVERRIDE_MARKER_END,
+          providerOverrideXml(processName),
+        ),
+      );
+      return;
+    }
+
     // Step 1: ensure xmlns:tools is on <manifest>.
     // Judge only the <manifest> open tag: an `xmlns:tools` declared on some
     // nested element (or in a comment) does not make `tools:` resolve on the
@@ -124,6 +187,12 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
   },
 
   async rollback(ctx) {
+    const saved = originals.get(ctx)?.get(ctx.androidPaths.appManifest);
+    if (saved !== undefined) {
+      originals.get(ctx)?.delete(ctx.androidPaths.appManifest);
+      await writeFile(ctx.androidPaths.appManifest, saved);
+      return;
+    }
     const content = await readOrNull(ctx.androidPaths.appManifest);
     if (content === null) return;
     const stripped = stripMarkerBlock(
