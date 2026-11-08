@@ -224,3 +224,65 @@ describe('sizeAnalysis flip is symmetric and ignores comments', () => {
     expect(out.match(/sizeAnalysis/g)?.length).toBe(1);
   });
 });
+
+describe('review follow-ups', () => {
+  const pctx = (processName: string | null) =>
+    makeAndroidContext({
+      cwd: fixture as string,
+      dsl: 'kotlin',
+      androidOptions: opts({ providerProcessOverride: processName }),
+    });
+
+  it('replaces the wizard provider even when the user gave it children', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    await injectProviderOverrideStep.apply(pctx(':one'));
+    await rewrite(MANIFEST, (t) =>
+      t.replace(
+        /<provider([\s\S]*?)\/>/,
+        '<provider$1>\n        <meta-data android:name="x" android:value="1" />\n    </provider>',
+      ),
+    );
+    await injectProviderOverrideStep.apply(pctx(':two'));
+    const out = await readFixture(fixture, MANIFEST);
+    expect(out.match(/BugseeInitProvider/g)?.length).toBe(1);
+    expect(out).toContain(':two');
+    expect(out).not.toContain(':one');
+  });
+
+  it('removal keeps the user lines inside the markers', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    await injectProviderOverrideStep.apply(pctx(':one'));
+    await rewrite(MANIFEST, (t) =>
+      t.replace(
+        '<!-- bugsee:wizard:provider-override:end -->',
+        '<!-- mine -->\n    <!-- bugsee:wizard:provider-override:end -->',
+      ),
+    );
+    await injectProviderOverrideStep.apply(pctx(null));
+    const out = await readFixture(fixture, MANIFEST);
+    expect(out).toContain('<!-- mine -->');
+    expect(out).not.toContain('BugseeInitProvider');
+    expect(out).not.toContain('provider-override');
+  });
+
+  it('flips the top-level enabled, not one nested in a user block', async () => {
+    fixture = await makeFixture({ [GRADLE]: SAMPLE_KOTLIN_APP_BUILD });
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: true }));
+    await rewrite(GRADLE, (t) =>
+      t.replace(
+        /sizeAnalysis \{/,
+        'sizeAnalysis {\n        somePlugin {\n            enabled = true\n        }',
+      ),
+    );
+    expect(await configureBugseeBlockStep.precheck(gradleCtx({ sizeAnalysis: true }))).toEqual({
+      kind: 'satisfied',
+    });
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: false }));
+    const out = await readFixture(fixture, GRADLE);
+    expect(out).toMatch(/enabled = true/);
+    expect(out).toMatch(/^\s*enabled\.set\(false\)/m);
+    expect(await configureBugseeBlockStep.precheck(gradleCtx({ sizeAnalysis: false }))).toEqual({
+      kind: 'satisfied',
+    });
+  });
+});

@@ -49,11 +49,11 @@ function processIn(block: string): string | null {
   return null;
 }
 
-/** The generated block plus any lines the user added inside the markers, in the file's line endings. */
-function mergedProvider(existing: string, generated: string): string {
+/** The lines inside an existing marker block that are the user's: everything but the markers and the wizard's own provider element (with any children). */
+function userLines(existing: string): string[] {
   const own =
-    /[ \t]*<provider\b[^>]*BugseeInitProvider[^>]*?(?:\/>|>\s*<\/provider\s*>)[ \t]*\r?\n?/g;
-  const kept = existing
+    /[ \t]*<provider\b(?=[^>]*BugseeInitProvider)[^>]*?(?:\/>|>[\s\S]*?<\/provider\s*>)[ \t]*\r?\n?/g;
+  return existing
     .split(/\r?\n/)
     .join('\n')
     .replace(own, '')
@@ -64,10 +64,33 @@ function mergedProvider(existing: string, generated: string): string {
         !l.includes(PROVIDER_OVERRIDE_MARKER_BEGIN) &&
         !l.includes(PROVIDER_OVERRIDE_MARKER_END),
     );
+}
+
+const inFileEndings = (existing: string, text: string): string =>
+  /\r\n/.test(existing) ? text.replace(/\n/g, '\r\n') : text;
+
+/** The generated block plus any lines the user added inside the markers, in the file's line endings. */
+function mergedProvider(existing: string, generated: string): string {
   const lines = generated.split('\n').filter((l) => l !== '');
   const end = lines.pop() ?? '';
-  const text = `${[...lines, ...kept, end].join('\n')}\n`;
-  return /\r\n/.test(existing) ? text.replace(/\n/g, '\r\n') : text;
+  return inFileEndings(existing, `${[...lines, ...userLines(existing), end].join('\n')}\n`);
+}
+
+/** The manifest without the wizard's provider; the user's own lines inside the markers stay. */
+function removedProvider(source: string): string {
+  const block = findMarkerBlock(
+    source,
+    PROVIDER_OVERRIDE_MARKER_BEGIN,
+    PROVIDER_OVERRIDE_MARKER_END,
+  );
+  if (block === null) return source;
+  const kept = userLines(block);
+  return replaceMarkerBlock(
+    source,
+    PROVIDER_OVERRIDE_MARKER_BEGIN,
+    PROVIDER_OVERRIDE_MARKER_END,
+    kept.length === 0 ? '' : inFileEndings(block, `${kept.join('\n')}\n`),
+  );
 }
 
 function providerOverrideXml(processName: string): string {
@@ -164,10 +187,7 @@ export const injectProviderOverrideStep: Step<AndroidContext> = {
     if (!processName) {
       // No override wanted any more: strip the block this wizard added earlier.
       rememberOriginal(originals, ctx, ctx.androidPaths.appManifest, original);
-      await writeFile(
-        ctx.androidPaths.appManifest,
-        stripMarkerBlock(original, PROVIDER_OVERRIDE_MARKER_BEGIN, PROVIDER_OVERRIDE_MARKER_END),
-      );
+      await writeFile(ctx.androidPaths.appManifest, removedProvider(original));
       return;
     }
 
