@@ -186,6 +186,7 @@ interface Answers {
   sizeAnalysis: boolean;
 }
 
+const ENABLED_ANY_RE = /enabled(?:\.set\(\s*(?:true|false)\s*\)|\s*=\s*(?:true|false)\b)/;
 const ENABLED_RE = /enabled(?:\.set\(\s*true\s*\)|\s*=\s*true)/;
 
 /** The answers an existing marker block encodes (whitespace, CRLF and extra user lines are irrelevant). */
@@ -211,20 +212,25 @@ function answersIn(block: string): Answers {
 }
 
 /**
- * Turning `sizeAnalysis` off keeps the user's own settings inside it: only its
- * `enabled` flag is flipped. Null when that cannot be done (use the generated text).
+ * Switching `sizeAnalysis` on or off keeps the user's own settings inside it: only the
+ * `enabled` flag is flipped (the line is found in the code, so a comment naming `enabled`
+ * is never edited). Undefined when there is no such line (use the generated text).
  */
-function disabledSizeAnalysis(
+function flippedSizeAnalysis(
   toggle: string,
   have: Map<string, ToggleText>,
   want: Answers,
 ): string | undefined {
   const text = have.get(toggle);
-  if (toggle !== 'sizeAnalysis' || want.sizeAnalysis || text === undefined) return undefined;
-  const raw = text.raw
-    .replace(/enabled\.set\(\s*true\s*\)/, 'enabled.set(false)')
-    .replace(/enabled(\s*=\s*)true\b/, 'enabled$1false');
-  return ENABLED_RE.test(raw) ? undefined : raw;
+  if (toggle !== 'sizeAnalysis' || text === undefined) return undefined;
+  const raws = text.raw.split('\n');
+  const codes = text.code.split('\n');
+  const at = codes.findIndex((c) => ENABLED_ANY_RE.test(c));
+  if (at === -1) return undefined;
+  raws[at] = (raws[at] ?? '').replace(ENABLED_ANY_RE, (m) =>
+    m.replace(/\b(?:true|false)\b/, String(want.sizeAnalysis)),
+  );
+  return raws.join('\n');
 }
 
 /**
@@ -246,7 +252,7 @@ function mergedBlock(existing: string, generated: string): string {
     const keep = haveAnswers[t] === wantAnswers[t] && have.has(t);
     const text = keep
       ? have.get(t)?.raw
-      : (disabledSizeAnalysis(t, have, wantAnswers) ?? want.get(t)?.raw);
+      : (flippedSizeAnalysis(t, have, wantAnswers) ?? want.get(t)?.raw);
     if (text !== undefined) toggleLines.push(...text.split('\n').filter((l) => l !== ''));
   }
   const gen = generated.split(/\r?\n/).filter((l) => l !== '');

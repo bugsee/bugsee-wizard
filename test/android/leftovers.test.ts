@@ -153,3 +153,74 @@ describe('manifest meta-data in paired form', () => {
     expect(out).not.toContain('</meta-data>');
   });
 });
+
+describe('provider override: user lines, CRLF and removal', () => {
+  const ctxFor = (processName: string | null) =>
+    makeAndroidContext({
+      cwd: fixture as string,
+      dsl: 'kotlin',
+      androidOptions: opts({ providerProcessOverride: processName }),
+    });
+
+  it('keeps a user line inside the markers and CRLF on a process change', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    await injectProviderOverrideStep.apply(ctxFor(':one'));
+    await rewrite(MANIFEST, (t) =>
+      t
+        .replace(
+          '<!-- bugsee:wizard:provider-override:end -->',
+          '<!-- mine -->\n    <!-- bugsee:wizard:provider-override:end -->',
+        )
+        .replace(/\n/g, '\r\n'),
+    );
+    await injectProviderOverrideStep.apply(ctxFor(':two'));
+    const out = await readFixture(fixture, MANIFEST);
+    expect(out).toContain('<!-- mine -->');
+    expect(out).toContain('android:process=":two"');
+    expect(out).not.toMatch(/[^\r]\n/);
+  });
+
+  it('removes an earlier override when none is wanted any more; rollback restores it', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    await injectProviderOverrideStep.apply(ctxFor(':one'));
+    const withOverride = await readFixture(fixture, MANIFEST);
+    const off = ctxFor(null);
+    expect((await injectProviderOverrideStep.precheck(off)).kind).toBe('pending');
+    await injectProviderOverrideStep.apply(off);
+    const out = await readFixture(fixture, MANIFEST);
+    expect(out).not.toContain('BugseeInitProvider');
+    expect(await injectProviderOverrideStep.precheck(off)).toMatchObject({ kind: 'satisfied' });
+    await injectProviderOverrideStep.rollback(off);
+    expect(await readFixture(fixture, MANIFEST)).toBe(withOverride);
+  });
+
+  it('is satisfied with no override and no earlier block', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    expect(await injectProviderOverrideStep.precheck(ctxFor(null))).toMatchObject({
+      kind: 'satisfied',
+    });
+  });
+});
+
+describe('sizeAnalysis flip is symmetric and ignores comments', () => {
+  it('a comment naming enabled.set(true) is not edited; on again keeps the user settings', async () => {
+    fixture = await makeFixture({ [GRADLE]: SAMPLE_KOTLIN_APP_BUILD });
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: true }));
+    await rewrite(GRADLE, (t) =>
+      t.replace(
+        /sizeAnalysis \{/,
+        'sizeAnalysis {\n        // enabled.set(true) to turn on\n        uploadMapping.set(true)',
+      ),
+    );
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: false }));
+    let out = await readFixture(fixture, GRADLE);
+    expect(out).toContain('// enabled.set(true) to turn on');
+    expect(out).toContain('uploadMapping.set(true)');
+    expect(out).toMatch(/^\s*enabled\.set\(false\)/m);
+    await configureBugseeBlockStep.apply(gradleCtx({ sizeAnalysis: true }));
+    out = await readFixture(fixture, GRADLE);
+    expect(out).toContain('uploadMapping.set(true)');
+    expect(out).toMatch(/^\s*enabled\.set\(true\)/m);
+    expect(out.match(/sizeAnalysis/g)?.length).toBe(1);
+  });
+});

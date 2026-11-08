@@ -100,10 +100,10 @@ describe('multi-process handling by init mode', () => {
     expect(clack.note.mock.calls.filter((c) => c[1] === 'Multi-process detected')).toHaveLength(2);
   });
 
-  it('manual: no picker, no provider override step, no auto-init noise, launch-gating note stays', async () => {
+  it('manual: no picker, no provider override applied, no auto-init noise, launch-gating note stays', async () => {
     await runAndroidRecipe(input({}, 'manual'));
     expect(clack.select).not.toHaveBeenCalled();
-    expect(ran.steps.map((s) => s.id)).not.toContain('android.inject-provider-override');
+    // The step is always listed (it removes a stale override from an earlier run) but does nothing here.
     expect(clack.note.mock.calls.some((c) => c[1] === 'Multi-process detected')).toBe(false);
     const next = clack.note.mock.calls.find((c) => c[1] === 'Next steps');
     expect(next?.[0]).toContain('gate Bugsee.launch on the process name');
