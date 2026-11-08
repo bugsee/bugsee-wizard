@@ -20,6 +20,7 @@ vi.mock('../../src/recipes/android/run.js', () => ({
 }));
 vi.mock('../../src/recipes/ios/run.js', () => ({ runIosRollback: vi.fn(async () => 'ok') }));
 
+import { validateAppToken } from '../../src/core/token.js';
 import { _resetPodOnPathCache } from '../../src/recipes/ios/pod.js';
 import { _resetManagerOnPathCache } from '../../src/recipes/react-native/package-manager.js';
 import {
@@ -112,6 +113,18 @@ describe('runReactNativeRecipe: what it refuses', () => {
     expect(await runReactNativeRecipe(opts())).toBe('failed');
     expect(logged(clack.log.error)).toMatch(/0\.81.*found 0\.76\.7/);
     expect(clack.text).not.toHaveBeenCalled();
+  });
+
+  it('validates the pasted token with the shared validateAppToken', async () => {
+    fixture = await makeFixture({
+      'package.json': rnPackage(),
+      'App.tsx': SAMPLE_APP_TSX,
+      'android/.keep': '',
+    });
+    answer({ inject: false });
+    clack.select.mockResolvedValue('android');
+    await runReactNativeRecipe(opts());
+    expect(clack.text.mock.calls[0]?.[0].validate).toBe(validateAppToken);
   });
 
   it('does not refuse a version it cannot know (a tag): that is checked at install', async () => {

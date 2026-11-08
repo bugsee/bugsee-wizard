@@ -9,6 +9,7 @@ import type { WizardOptions } from '../../core/context.js';
 import { createLogger } from '../../core/logger.js';
 import type { RecipeResult, RollbackResult } from '../../core/result.js';
 import { runRollback, runSteps, type Step, type StepResult } from '../../core/step.js';
+import { validateAppToken } from '../../core/token.js';
 import { runAndroidRollback } from '../android/run.js';
 import { isPodOnPath } from '../ios/pod.js';
 import { runIosRollback } from '../ios/run.js';
@@ -39,15 +40,6 @@ export interface ReactNativeRecipeInput extends WizardOptions {}
 
 const README_URL = 'https://github.com/bugsee/bugsee-react-native/tree/main/packages/react-native';
 
-const TOKEN_VALIDATE = (v: string | undefined): string | undefined => {
-  const trimmed = (v ?? '').trim();
-  if (trimmed.length === 0) return 'Token is required';
-  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
-    return 'Tokens are alphanumeric (with `.`, `_`, `-` permitted) — looks like extra characters got pasted';
-  }
-  return undefined;
-};
-
 async function pickPlatforms(
   yes: boolean,
   hasAndroid: boolean,
@@ -77,7 +69,7 @@ async function askToken(label: string): Promise<string | null> {
   const ans = await clack.text({
     message: `Bugsee app token (${label})`,
     placeholder: 'paste from your Bugsee dashboard',
-    validate: TOKEN_VALIDATE,
+    validate: validateAppToken,
   });
   return clack.isCancel(ans) ? null : ans.trim();
 }

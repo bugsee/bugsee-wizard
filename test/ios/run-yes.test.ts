@@ -27,6 +27,7 @@ vi.mock('../../src/core/step.js', async (orig) => ({
   },
 }));
 
+import { validateAppToken } from '../../src/core/token.js';
 import { runIosRecipe } from '../../src/recipes/ios/run.js';
 import { cleanup, makeFixture, makeIosContext } from './helpers.js';
 
@@ -119,5 +120,25 @@ describe('runIosRecipe distribution (the SDK ships through SPM only since Septem
       input({ dryRun: false, options: { distribution: 'cocoapods', runPodInstall: false } }),
     );
     expect(notes()).toContain('pod install');
+  });
+});
+
+describe('runIosRecipe token validation (shared validateAppToken)', () => {
+  it('rejects a malformed pre-supplied token before running any step', async () => {
+    steps.ran = [];
+    clack.select.mockResolvedValue((found.paths as { scheme: string }).scheme);
+    expect(await runIosRecipe(input({ token: '"abc"' }))).toBe('failed');
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid Bugsee app token'),
+    );
+    expect(steps.ran).toEqual([]);
+  });
+
+  it('uses the shared validator for the prompt', async () => {
+    clack.text.mockResolvedValueOnce('good-token');
+    clack.select.mockResolvedValue((found.paths as { scheme: string }).scheme);
+    clack.confirm.mockResolvedValue(false);
+    await runIosRecipe(input({ token: undefined }));
+    expect(clack.text.mock.calls[0]?.[0].validate).toBe(validateAppToken);
   });
 });
