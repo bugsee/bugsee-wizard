@@ -169,10 +169,31 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
+/** Wizard-owned markers: any of these in a native file is proof the wizard edited it. */
+const WIZARD_MARKERS = ['bugsee:wizard', 'com.bugsee.android.gradle'];
+
+async function containsMarker(file: string): Promise<boolean> {
+  try {
+    const text = await readFile(file, 'utf8');
+    return WIZARD_MARKERS.some((m) => text.includes(m));
+  } catch {
+    return false;
+  }
+}
+
 async function hasReactNativeLeftovers(cwd: string): Promise<boolean> {
-  // A bare android/ or ios/ directory is not evidence of Bugsee; the wizard's own file is.
-  for (const dir of ['android', path.join('android', 'app')]) {
-    if (await exists(path.join(cwd, dir, 'bugsee.properties'))) return true;
+  // A bare android/ or ios/ directory is not evidence of Bugsee. The wizard's own
+  // properties file, or its markers in the files the React Native recipe edits, are.
+  // (The recipe only touches android/bugsee.properties, never android/app/.)
+  if (await exists(path.join(cwd, 'android', 'bugsee.properties'))) return true;
+  for (const file of [
+    path.join('android', 'build.gradle'),
+    path.join('android', 'build.gradle.kts'),
+    path.join('android', 'app', 'build.gradle'),
+    path.join('android', 'app', 'build.gradle.kts'),
+    path.join('ios', 'Podfile'),
+  ]) {
+    if (await containsMarker(path.join(cwd, file))) return true;
   }
   try {
     const pkg = JSON.parse(await readFile(path.join(cwd, 'package.json'), 'utf8')) as Record<

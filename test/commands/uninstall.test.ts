@@ -299,6 +299,20 @@ describe('runUninstall (nothing detected)', () => {
     expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
   });
 
+  it('native files without a wizard marker are not a Bugsee install', async () => {
+    const cwd = tmp();
+    mkdirSync(path.join(cwd, 'android'), { recursive: true });
+    mkdirSync(path.join(cwd, 'ios'), { recursive: true });
+    writeFileSync(
+      path.join(cwd, 'android', 'build.gradle'),
+      "apply plugin: 'com.android.library'\n",
+    );
+    writeFileSync(path.join(cwd, 'ios', 'Podfile'), "pod 'Alamofire'\n");
+    await runUninstall({ ...opts, cwd });
+    expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
+    expect(outros()).toEqual(['No supported platform detected here. Nothing to uninstall.']);
+  });
+
   it.each(['android', 'ios'])(
     'a bare %s/ directory is not a Bugsee install: says so, no rollback, no success message',
     async (dir) => {
@@ -313,12 +327,14 @@ describe('runUninstall (nothing detected)', () => {
   );
 
   it.each([
-    ['android', 'bugsee.properties'],
-    ['android/app', 'bugsee.properties'],
-  ])('offers the RN rollback when %s/%s is left behind', async (dir, file) => {
+    ['android', 'bugsee.properties', 'app_token=x\n'],
+    ['android', 'build.gradle', "apply plugin: 'com.bugsee.android.gradle'\n"],
+    ['android/app', 'build.gradle.kts', '// bugsee:wizard:bugsee-block:begin\n'],
+    ['ios', 'Podfile', '# bugsee:wizard:pod\n'],
+  ])('offers the RN rollback when %s/%s carries Bugsee leftovers', async (dir, file, text) => {
     const cwd = tmp();
     mkdirSync(path.join(cwd, dir), { recursive: true });
-    writeFileSync(path.join(cwd, dir, file), 'app_token=x\n');
+    writeFileSync(path.join(cwd, dir, file), text);
     await runUninstall({ ...opts, cwd });
     expect(rollbacks.runReactNativeRollback).toHaveBeenCalled();
     expect(outros()).toEqual(['Bugsee removed.']);
