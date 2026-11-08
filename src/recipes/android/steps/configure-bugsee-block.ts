@@ -1,7 +1,13 @@
 import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
-import { findMarkerBlock, readOrNull, replaceMarkerBlock, stripMarkerBlock } from '../io.js';
+import {
+  findMarkerBlock,
+  readOrNull,
+  rememberOriginal,
+  replaceMarkerBlock,
+  stripMarkerBlock,
+} from '../io.js';
 import {
   type AndroidContext,
   type AndroidOptions,
@@ -51,10 +57,50 @@ ${EXT_BLOCK_MARKER_END}
  */
 const originals = new WeakMap<object, Map<string, string>>();
 
-function remember(ctx: object, file: string, content: string): void {
-  const m = originals.get(ctx) ?? new Map<string, string>();
-  originals.set(ctx, m);
-  if (!m.has(file)) m.set(file, content);
+const SIZE_ANALYSIS_RE = /^[ \t]*sizeAnalysis[ \t]*\{\s*enabled\.set\(true\)\s*\}[ \t]*\r?\n?/m;
+const NDK_RE = /^[ \t]*ndk(?:\(true\)|[ \t]+true)[ \t]*\r?\n?/m;
+const FEEDBACK_RE = /^[ \t]*feedback(?:\(true\)|[ \t]+true)[ \t]*\r?\n?/m;
+
+/** The answers an existing marker block encodes (whitespace, CRLF and extra user lines are irrelevant). */
+function answersIn(block: string): { ndk: boolean; feedback: boolean; sizeAnalysis: boolean } {
+  return {
+    ndk: NDK_RE.test(block),
+    feedback: FEEDBACK_RE.test(block),
+    sizeAnalysis: SIZE_ANALYSIS_RE.test(block),
+  };
+}
+
+/** Lines the user added inside the block (everything the wizard does not generate). */
+function userLinesIn(block: string): string[] {
+  const inner = block
+    .replace(EXT_BLOCK_MARKER_BEGIN, '')
+    .replace(EXT_BLOCK_MARKER_END, '')
+    .replace(SIZE_ANALYSIS_RE, '')
+    .replace(NDK_RE, '')
+    .replace(FEEDBACK_RE, '');
+  const lines = inner.split(/\r?\n/).map((l) => l.replace(/\s+$/, ''));
+  // Drop the wrapper `bugsee {` first line and its closing `}` (last non-blank line).
+  const first = lines.findIndex((l) => /^\s*bugsee\s*\{\s*$/.test(l));
+  let last = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if ((lines[i] ?? '').trim() !== '') {
+      last = i;
+      break;
+    }
+  }
+  if (first === -1 || last <= first) return [];
+  return lines.slice(first + 1, last).filter((l) => l.trim() !== '');
+}
+
+/** The generated block with the user's own lines kept, in the file's line-ending style. */
+function mergedBlock(existing: string, generated: string): string {
+  const extra = userLinesIn(existing);
+  let out = generated;
+  if (extra.length > 0) {
+    const close = out.lastIndexOf('\n}\n');
+    out = `${out.slice(0, close + 1)}${extra.join('\n')}\n${out.slice(close + 1)}`;
+  }
+  return /\r\n/.test(existing) ? out.replace(/\r?\n/g, '\r\n') : out;
 }
 
 export const configureBugseeBlockStep: Step<AndroidContext> = {
@@ -67,10 +113,22 @@ export const configureBugseeBlockStep: Step<AndroidContext> = {
       return { kind: 'blocked', reason: `${ctx.androidPaths.appBuildGradle} not found` };
     }
     if (!content.includes(EXT_BLOCK_MARKER_BEGIN)) return { kind: 'pending' };
-    const expected = bugseeBlock(ctx.androidPaths.appBuildGradleDsl, ctx.androidOptions);
     const existing = findMarkerBlock(content, EXT_BLOCK_MARKER_BEGIN, EXT_BLOCK_MARKER_END);
-    // Marker-owned block with different answers: update in place on re-run.
-    return existing === expected ? { kind: 'satisfied' } : { kind: 'pending' };
+    if (existing === null) {
+      return {
+        kind: 'blocked',
+        reason: `${ctx.androidPaths.appBuildGradle} has a "${EXT_BLOCK_MARKER_BEGIN}" marker without its end marker; fix or remove it and re-run`,
+      };
+    }
+    // Compare the answers, not the bytes: user-added lines, indentation and
+    // CRLF must not make a re-run with identical answers rewrite the block.
+    const want = answersIn(bugseeBlock(ctx.androidPaths.appBuildGradleDsl, ctx.androidOptions));
+    const have = answersIn(existing);
+    return want.ndk === have.ndk &&
+      want.feedback === have.feedback &&
+      want.sizeAnalysis === have.sizeAnalysis
+      ? { kind: 'satisfied' }
+      : { kind: 'pending' };
   },
 
   async apply(ctx) {
@@ -80,13 +138,19 @@ export const configureBugseeBlockStep: Step<AndroidContext> = {
     // trailing newline, add exactly one so the BEGIN marker starts a line —
     // any more would leave a stray blank line behind on rollback.
     if (original.includes(EXT_BLOCK_MARKER_BEGIN)) {
+      const existing = findMarkerBlock(original, EXT_BLOCK_MARKER_BEGIN, EXT_BLOCK_MARKER_END);
+      if (existing === null) {
+        throw new Error(
+          `${EXT_BLOCK_MARKER_BEGIN} marker without its end marker in ${ctx.androidPaths.appBuildGradle}`,
+        );
+      }
       const replaced = replaceMarkerBlock(
         original,
         EXT_BLOCK_MARKER_BEGIN,
         EXT_BLOCK_MARKER_END,
-        block,
+        mergedBlock(existing, block),
       );
-      remember(ctx, ctx.androidPaths.appBuildGradle, original);
+      rememberOriginal(originals, ctx, ctx.androidPaths.appBuildGradle, original);
       await writeFile(ctx.androidPaths.appBuildGradle, replaced);
       return;
     }

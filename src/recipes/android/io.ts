@@ -99,6 +99,22 @@ export function replaceMarkerBlock(
   return source.replace(markerBlockRegex(beginMarker, endMarker), () => block);
 }
 
+/**
+ * Remember the pre-apply content of `file` for this run context (first write
+ * wins), so rollback restores it exactly. Note the restore rewrites the whole
+ * file: edits made by anything else during the run are reverted with it.
+ */
+export function rememberOriginal(
+  store: WeakMap<object, Map<string, string>>,
+  ctx: object,
+  file: string,
+  content: string,
+): void {
+  const m = store.get(ctx) ?? new Map<string, string>();
+  store.set(ctx, m);
+  if (!m.has(file)) m.set(file, content);
+}
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

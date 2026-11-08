@@ -5,6 +5,7 @@ import {
   findMarkerBlock,
   findOpenTag,
   readOrNull,
+  rememberOriginal,
   replaceMarkerBlock,
   stripMarkerBlock,
 } from '../io.js';
@@ -35,6 +36,9 @@ function metaForManual(): string {
 /** Pre-apply manifest content per run context, so rollback restores the original exactly. */
 const originals = new WeakMap<object, Map<string, string>>();
 
+const APP_TOKEN_META = 'com.bugsee.app-token';
+const AUTO_INIT_META = 'com.bugsee.auto-init';
+
 function metaFor(ctx: AndroidContext): string {
   return ctx.androidOptions.initMode === 'automatic' ? metaForAutomatic() : metaForManual();
 }
@@ -54,8 +58,21 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
         MANIFEST_META_MARKER_BEGIN,
         MANIFEST_META_MARKER_END,
       );
-      // Marker-owned block with different answers: update in place on re-run.
-      return existing === metaFor(ctx) ? { kind: 'satisfied' } : { kind: 'pending' };
+      if (existing === null) {
+        return {
+          kind: 'blocked',
+          reason: `${ctx.androidPaths.appManifest} has a "${MANIFEST_META_MARKER_BEGIN}" marker without its end marker; fix or remove it and re-run`,
+        };
+      }
+      // Compare the answer (which meta-data the block carries), not the bytes:
+      // re-indenting or CRLF must not make an identical re-run rewrite it.
+      const [want, other] =
+        ctx.androidOptions.initMode === 'automatic'
+          ? [APP_TOKEN_META, AUTO_INIT_META]
+          : [AUTO_INIT_META, APP_TOKEN_META];
+      return existing.includes(want) && !existing.includes(other)
+        ? { kind: 'satisfied' }
+        : { kind: 'pending' };
     }
     const open = findOpenTag(content, 'application');
     if (!open) {
@@ -77,9 +94,12 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
   async apply(ctx) {
     const original = (await readOrNull(ctx.androidPaths.appManifest)) ?? '';
     if (original.includes(MANIFEST_META_MARKER_BEGIN)) {
-      const m = originals.get(ctx) ?? new Map<string, string>();
-      originals.set(ctx, m);
-      if (!m.has(ctx.androidPaths.appManifest)) m.set(ctx.androidPaths.appManifest, original);
+      if (!findMarkerBlock(original, MANIFEST_META_MARKER_BEGIN, MANIFEST_META_MARKER_END)) {
+        throw new Error(
+          `${MANIFEST_META_MARKER_BEGIN} marker without its end marker in ${ctx.androidPaths.appManifest}`,
+        );
+      }
+      rememberOriginal(originals, ctx, ctx.androidPaths.appManifest, original);
       await writeFile(
         ctx.androidPaths.appManifest,
         replaceMarkerBlock(
