@@ -36,6 +36,21 @@ function metaForManual(): string {
 /** Pre-apply manifest content per run context, so rollback restores the original exactly. */
 const originals = new WeakMap<object, Map<string, string>>();
 
+/**
+ * The `android:name` of every active `<meta-data>` element in `block`. One left-to-right
+ * scan over comments and elements: a comment that merely names a meta-data is skipped whole,
+ * and nothing is stripped or rebuilt into a pattern.
+ */
+function activeMetaNames(block: string): Set<string> {
+  const names = new Set<string>();
+  for (const m of block.matchAll(/<!--[\s\S]*?-->|<meta-data\b[^>]*>/g)) {
+    if (!m[0].startsWith('<meta-data')) continue;
+    const name = /android:name\s*=\s*"([^"]*)"/.exec(m[0])?.[1];
+    if (name !== undefined) names.add(name);
+  }
+  return names;
+}
+
 const APP_TOKEN_META = 'com.bugsee.app-token';
 const AUTO_INIT_META = 'com.bugsee.auto-init';
 
@@ -92,12 +107,8 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
         ctx.androidOptions.initMode === 'automatic'
           ? [APP_TOKEN_META, AUTO_INIT_META]
           : [AUTO_INIT_META, APP_TOKEN_META];
-      // Active elements only: a comment that merely names a meta-data does not count.
-      const active = existing.replace(/<!--[\s\S]*?-->/g, '');
-      const has = (name: string): boolean =>
-        new RegExp(`<meta-data\\b[^>]*android:name\\s*=\\s*"${name.replace(/\./g, '\\.')}"`).test(
-          active,
-        );
+      const names = activeMetaNames(existing);
+      const has = (name: string): boolean => names.has(name);
       return has(want) && !has(other) ? { kind: 'satisfied' } : { kind: 'pending' };
     }
     const open = findOpenTag(content, 'application');
