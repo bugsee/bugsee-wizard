@@ -7,9 +7,8 @@ import { manifestPath, readBytes, restoreBytes } from './shared.js';
 
 type Spec = Extract<OpSpec, { op: 'add-package-script' }>;
 
-/** `<pm> run <name>` (deno: `deno task <name>`); npm when no package manager was detected. */
+/** `<pm> run <name>`; npm when no package manager was detected. */
 export function runScriptCommand(pm: DetectedPackageManager | null, name: string): string {
-  if (pm?.name === 'deno') return `deno task ${name}`;
   return `${pm?.name ?? 'npm'} run ${name}`;
 }
 

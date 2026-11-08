@@ -16,7 +16,7 @@ export interface RunChildOptions {
 // On Windows the package managers are `.cmd` shims that cannot be spawned without a
 // shell (ENOENT, or EINVAL for `npm.cmd`). Only this closed set gets a shell, and
 // only with arguments that carry no cmd.exe metacharacters.
-const SHELL_COMMANDS: ReadonlySet<string> = new Set(['npm', 'yarn', 'pnpm', 'bun', 'deno']);
+const SHELL_COMMANDS: ReadonlySet<string> = new Set(['npm', 'yarn', 'pnpm', 'bun']);
 const SAFE_SHELL_ARG = /^[\w@./:=+~-]+$/;
 
 /**

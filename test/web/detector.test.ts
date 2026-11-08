@@ -43,9 +43,15 @@ describe('javascriptDetector', () => {
   });
 
   it('is medium confidence when only a generic runtime is guessed', async () => {
-    const r = await javascriptDetector.detect({ cwd: fx('deno-app') });
-    expect(r?.confidence).toBe('medium');
-    expect(r?.evidence.map((e) => e.path)).toContain('deno.json');
+    const dir = await mkdtemp(path.join(tmpdir(), 'bugsee-js-plain-'));
+    try {
+      await writeFile(path.join(dir, 'package.json'), '{"name":"x"}');
+      const r = await javascriptDetector.detect({ cwd: dir });
+      expect(r?.confidence).toBe('medium');
+      expect(r?.evidence.map((e) => e.path)).toContain('package.json');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('is null for non-JS and for React Native, which the RN detector still owns', async () => {

@@ -99,12 +99,6 @@ const CASES: Record<string, Expected> = {
     typescript: true,
     packageManager: 'bun',
   },
-  'deno-app': {
-    runtimes: ['node', 'deno'],
-    buildTool: 'cli',
-    typescript: false,
-    packageManager: 'deno',
-  },
   'cloudflare-worker': {
     runtimes: ['edge'],
     buildTool: 'tsc',
@@ -153,7 +147,7 @@ describe('detectJavaScript fixtures', () => {
     expect(await detectJavaScript(fx('non-js'))).toBeNull();
   });
 
-  it('returns null for a directory with no package.json or deno.json anywhere up the tree', async () => {
+  it('returns null for a directory with no package.json anywhere up the tree', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'bugsee-js-nonjs-'));
     try {
       await writeFile(path.join(dir, 'requirements.txt'), 'flask\n');
@@ -163,19 +157,15 @@ describe('detectJavaScript fixtures', () => {
     }
   });
 
-  it('a deno.json-only project is a deno project with no node and no package.json', async () => {
-    const det = await detectJavaScript(fx('deno-only'));
-    expect(det).toMatchObject({
-      packageDir: fx('deno-only'),
-      packageManager: 'deno',
-      runtimes: ['deno'],
-      buildTool: 'cli',
-      typescript: true,
-      needsPackageChoice: false,
-      versions: {},
-    });
-    expect(det?.framework).toBeUndefined();
-    expect(det?.startedIn).toBeUndefined();
+  it('a deno.json-only project is not a supported JavaScript project (Deno support was dropped)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'bugsee-js-deno-'));
+    try {
+      await writeFile(path.join(dir, 'deno.json'), '{}');
+      await writeFile(path.join(dir, 'deno.lock'), '{}');
+      expect(await detectJavaScript(dir)).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('walks up from a subdirectory to the nearest package.json and reports startedIn', async () => {
@@ -289,9 +279,9 @@ describe('detectJavaScript rules (synthetic projects)', () => {
     expect((await detectJavaScript(b))?.runtimes).toEqual(['node', 'bun']);
   });
 
-  it('deno is detected from deno.jsonc', async () => {
+  it('deno files add no runtime: a package.json project stays node', async () => {
     const dir = await project({ 'package.json': { name: 'x' }, 'deno.jsonc': '{}' });
-    expect((await detectJavaScript(dir))?.runtimes).toEqual(['node', 'deno']);
+    expect((await detectJavaScript(dir))?.runtimes).toEqual(['node']);
   });
 
   it('a bin field or a server dependency means node alongside a UI library', async () => {
@@ -459,18 +449,12 @@ describe('detectJavaScript rules (synthetic projects)', () => {
     ]);
   });
 
-  it('bun or deno alongside a UI library or an edge target does not add node', async () => {
+  it('bun alongside a UI library does not add node', async () => {
     const ui = await project({
       'package.json': { name: 'x', dependencies: { react: '18.0.0' } },
       'bunfig.toml': '',
     });
     expect((await detectJavaScript(ui))?.runtimes).toEqual(['browser', 'bun']);
-    const edge = await project({
-      'package.json': { name: 'x' },
-      'deno.json': '{}',
-      'wrangler.toml': '',
-    });
-    expect((await detectJavaScript(edge))?.runtimes).toEqual(['deno', 'edge']);
   });
 
   it('a tooling-only workspace root (vite, typescript, rollup, esbuild) is a package choice', async () => {
@@ -532,13 +516,6 @@ describe('detectJavaScript rules (synthetic projects)', () => {
     expect((await detectJavaScript(app))?.needsPackageChoice).toBe(false);
     const srcApp = await project({ ...files, 'src/index.html': '<html></html>' });
     expect((await detectJavaScript(srcApp))?.needsPackageChoice).toBe(false);
-  });
-
-  it('a deno.jsonc-only project works, and deno.json beside a package.json keeps node', async () => {
-    const only = await project({ 'deno.jsonc': '{}' });
-    expect((await detectJavaScript(only))?.runtimes).toEqual(['deno']);
-    const both = await project({ 'package.json': { name: 'x' }, 'deno.json': '{}' });
-    expect((await detectJavaScript(both))?.runtimes).toEqual(['node', 'deno']);
   });
 
   it('walks up at most 10 levels', async () => {

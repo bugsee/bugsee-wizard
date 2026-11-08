@@ -18,7 +18,6 @@ const LOCKFILES: Record<PackageManagerName, readonly string[]> = {
   yarn: ['yarn.lock'],
   pnpm: ['pnpm-lock.yaml', 'pnpm-workspace.yaml'],
   bun: ['bun.lock', 'bun.lockb'],
-  deno: ['deno.lock'],
 };
 
 type Snapshot = ReadonlyMap<string, Buffer | null>;

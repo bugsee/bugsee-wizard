@@ -33,8 +33,8 @@ describe('runChild platform handling', () => {
     expect(spawnMock.mock.calls[0]?.[1]).toEqual([]);
   });
 
-  it('accepts every closed-set manager and deno npm: specifiers on win32', async () => {
-    for (const cmd of ['npm', 'yarn', 'pnpm', 'bun', 'deno']) {
+  it('accepts every closed-set manager and npm: specifiers on win32', async () => {
+    for (const cmd of ['npm', 'yarn', 'pnpm', 'bun']) {
       await runChild(cmd, ['add', '--dev', 'npm:@scope/pkg@1.2.3-beta.1', 'a_b=c+d~e'], {
         ...base,
         platform: 'win32',
@@ -45,7 +45,7 @@ describe('runChild platform handling', () => {
         String(c[0]).split(' ')[0],
         (c[2] as { shell: boolean }).shell,
       ]),
-    ).toEqual(['npm', 'yarn', 'pnpm', 'bun', 'deno'].map((c) => [c, true]));
+    ).toEqual(['npm', 'yarn', 'pnpm', 'bun'].map((c) => [c, true]));
   });
 
   it('win32: any argument with a shell metacharacter is refused BEFORE spawning', async () => {

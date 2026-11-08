@@ -1,9 +1,0 @@
-{
-  "name": "deno-app",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "hono": "^4.5.0"
-  }
-}

@@ -2,7 +2,7 @@ import type { DetectInput, DetectionResult, Detector } from '../core/detect.js';
 import { inspectJavaScript } from '../web/detect.js';
 
 /**
- * JavaScript / TypeScript projects (browser, Node, Bun, Deno, Electron, edge, ...).
+ * JavaScript / TypeScript projects (browser, Node, Bun, Electron, edge, ...).
  * Mutually exclusive with the React Native detector: a `react-native` dependency makes
  * `inspectJavaScript` return null, leaving the project to the RN recipe.
  */

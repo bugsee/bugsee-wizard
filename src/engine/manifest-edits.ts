@@ -30,7 +30,6 @@ const LOCKFILES = new Set([
   'yarn.lock',
   'bun.lock',
   'bun.lockb',
-  'deno.lock',
 ]);
 
 export const isLockfile = (file: string): boolean => LOCKFILES.has(basename(file));

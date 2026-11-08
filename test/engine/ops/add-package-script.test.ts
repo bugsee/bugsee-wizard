@@ -25,11 +25,10 @@ const scripts = async (): Promise<Record<string, string>> =>
   (JSON.parse(await read()) as { scripts: Record<string, string> }).scripts;
 
 describe('runScriptCommand', () => {
-  it('uses the detected pm, npm by default, deno task for deno', () => {
+  it('uses the detected pm, npm by default', () => {
     expect(runScriptCommand(null, 'a')).toBe('npm run a');
     expect(runScriptCommand({ ...npmAt('/'), name: 'pnpm' }, 'a')).toBe('pnpm run a');
     expect(runScriptCommand({ ...npmAt('/'), name: 'yarn' }, 'a')).toBe('yarn run a');
-    expect(runScriptCommand({ ...npmAt('/'), name: 'deno' }, 'a')).toBe('deno task a');
   });
 });
 

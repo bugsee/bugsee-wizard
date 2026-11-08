@@ -30,7 +30,7 @@ describe('SUPPORTED', () => {
     expect(SUPPORTED['@rspack/core']?.min).toBe('1.0.0');
     expect(SUPPORTED.node?.min).toBe('22.0.0');
     expect(SUPPORTED.bun?.min).toBe('1.0.0');
-    expect(SUPPORTED.deno?.min).toBe('2.0.0');
+    expect(SUPPORTED.deno).toBeUndefined();
   });
 });
 
@@ -90,7 +90,7 @@ describe('checkSupported', () => {
 
   it('warns for runtimes below their floor', () => {
     expect(checkSupported(det({ node: '>=18' })).warnings[0]).toContain('node');
-    expect(checkSupported(det({ deno: '1.46.0' })).warnings).toHaveLength(1);
+    expect(checkSupported(det({ bun: '0.6.0' })).warnings).toHaveLength(1);
   });
 
   it('reports every offender', () => {

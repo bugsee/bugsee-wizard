@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-export type PackageManagerName = 'npm' | 'yarn' | 'pnpm' | 'bun' | 'deno';
+export type PackageManagerName = 'npm' | 'yarn' | 'pnpm' | 'bun';
 
 export interface DetectedPackageManager {
   name: PackageManagerName;
@@ -23,7 +23,6 @@ const LOCKFILES: ReadonlyArray<readonly [string, PackageManagerName]> = [
   ['pnpm-lock.yaml', 'pnpm'],
   ['bun.lock', 'bun'],
   ['bun.lockb', 'bun'],
-  ['deno.lock', 'deno'],
 ];
 
 async function exists(path: string): Promise<boolean> {
@@ -39,8 +38,6 @@ function installArgsFor(name: PackageManagerName): (pkgs: string[], dev: boolean
   switch (name) {
     case 'npm':
       return (pkgs, dev) => ['install', ...(dev ? ['-D'] : []), ...pkgs];
-    case 'deno':
-      return (pkgs, dev) => ['add', ...(dev ? ['--dev'] : []), ...pkgs.map((p) => `npm:${p}`)];
     default:
       return (pkgs, dev) => ['add', ...(dev ? ['-D'] : []), ...pkgs];
   }

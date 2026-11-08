@@ -2,6 +2,8 @@
 
 Status: DRAFT for approval (2026-11-04), updated after the owner's answers. Nothing in this document has been built.
 
+> **2026-11-08:** Deno support was dropped (the Deno team is winding the project down; `@bugsee/deno` was removed from the JS SDK). This document is otherwise unchanged; where it still mentions Deno, read it as removed.
+
 ## 1. Intent
 
 `npx @bugsee/wizard` should take a JavaScript/TypeScript project from "no Bugsee" to "Bugsee SDK installed,
@@ -10,7 +12,7 @@ initialised, and source maps uploading on every production build" with one comma
 
 Why now: the JS SDK (`@bugsee/*`, 0.1.0-beta.5) is feature-complete, but only the Vite, Rollup and webpack
 plugins automate source-map upload; the framework adapters (Next, Nuxt, SvelteKit, Astro, Remix, Angular,
-Electron) wire nothing, and Node/Bun/Deno/Angular users run a manual CLI recipe. Nothing is hurting customers
+Electron) wire nothing, and Node/Bun/Angular users run a manual CLI recipe. Nothing is hurting customers
 today; this closes the gaps found in the source-map audit (JS repo, `docs/review/cli-js-flows.md`, plus the
 2026-11-04 survey) and makes setup repeatable and testable.
 
@@ -36,7 +38,7 @@ today; this closes the gaps found in the source-map audit (JS repo, `docs/review
    steps: install packages, add SDK init, wire source maps, store the token safely, optionally add CI and a
    verification page.
 3. Source-map wiring for **every toolchain we can name**: Vite, webpack, Rollup, esbuild, Rspack, Next.js,
-   Nuxt, SvelteKit, Astro, Remix/React Router, Angular, Electron, Cloudflare Wrangler, tsc/Node/Bun/Deno, and a
+   Nuxt, SvelteKit, Astro, Remix/React Router, Angular, Electron, Cloudflare Wrangler, tsc/Node/Bun, and a
    generic "other tool" path that uses `bugsee-cli` directly.
 4. **Idempotent and reversible**: re-running changes nothing; `uninstall` reverses what the wizard did.
 5. **Non-interactive mode** that works in CI and for automation (every prompt has a flag/env equivalent and a
@@ -83,7 +85,7 @@ My calls (change any you disagree with):
 - **C4.** Source-map wiring prefers the **bundler plugin** (`@bugsee/vite-plugin`, `webpack-plugin`, or
   `@bugsee/bundler-plugin-core` for Rollup/esbuild/Rspack), and falls back to a **post-build npm script**
   (`bugsee:sourcemaps`) that runs `bugsee-cli sourcemaps inject` then `debug-files upload` for tsc, Angular,
-  Bun, Deno, Electron and "other". Until the CLI grows a single `ship` command the script chains the existing
+  Bun, Electron and "other". Until the CLI grows a single `ship` command the script chains the existing
   commands; switching later is a template change.
 - **C5.** The wizard installs SDK packages at the **`beta`** dist-tag while the SDK is in beta, and the target
   version lives in one table (`src/web/versions.ts`), not scattered literals.
@@ -113,11 +115,11 @@ My calls (change any you disagree with):
   follow-ups are tracked as issues in `bugsee/bugsee-javascript` (see §10).
 
 - **D3.** Scope of this round is **(B)**: update dependencies and push the existing code, build the recipe engine
-  and the source-map recipes (Vite, webpack, Rollup, esbuild, Rspack, tsc/Node/Bun/Deno, generic). Framework
+  and the source-map recipes (Vite, webpack, Rollup, esbuild, Rspack, tsc/Node/Bun, generic). Framework
   recipes (Next, Nuxt, SvelteKit, Astro, Remix, Angular, Cloudflare, Electron) are a later round, as separate PRs.
 - **D4.** The Bugsee **app token is not a secret** when handled on the developer's machine (the person running
   the wizard). It may be written to a plain `.env` file and into SDK init code.
-- **D6.** The old `web` platform is **decomposed into runtime subtypes** (browser, node, bun, deno, electron,
+- **D6.** The old `web` platform is **decomposed into runtime subtypes** (browser, node, bun, electron,
   webworker, serviceworker, edge), because the JS SDK targets more than the web (§6.1, C16).
 - **D5.** **Recipes are data, published at `download.bugsee.com/sdk/wizard-recipes/<platform>/…`**, one model
   for every platform (web, iOS, Android, React Native, and later Unity, Flutter, Cordova and others), following the
@@ -145,7 +147,7 @@ Further calls (from the builder check; each is mine, change any):
 - **C12.** Supported versions v1 (centralised in `src/web/versions.ts`, anything older gets a warning and a
   manual-docs link): Next.js 14+ (App and Pages Router), Nuxt 3.7+ and 4, SvelteKit 2, Astro 5+, Remix 2 and React
   Router 7, Angular 17+ (standalone), Vite 5+, webpack 5 (4 detected but unsupported for auto-edit), Rollup 4,
-  esbuild 0.2x, Node 22+, Bun 1.x, Deno 2.x. Revisit when the table is first written.
+  esbuild 0.2x, Node 22+, Bun 1.x. Revisit when the table is first written.
 - **C13.** E2E fixtures: the wizard repo's CI checks out `bugsee/bugsee-javascript` at a pinned ref and copies
   `samples/*` and `*-e2e` into temp dirs; the builds install `@bugsee/*` from the public registry at the `beta`
   tag. No submodule, no vendored copies.
@@ -177,12 +179,12 @@ https://download.bugsee.com/sdk/wizard-recipes/<platform>/index.json            
 ```
 
 `<platform>` is one id per SDK target: for JavaScript, one id per runtime subtype, aligned with the backend's
-JS application subtypes (`javascript-browser`, `javascript-node`, `javascript-bun`, `javascript-deno`,
+JS application subtypes (`javascript-browser`, `javascript-node`, `javascript-bun`,
 `javascript-electron`, `javascript-webworker`, `javascript-serviceworker`, `javascript-edge`); framework recipes
 (`javascript-nextjs`, `javascript-nuxt`, …) and build-tool recipes (`javascript-vite`, `javascript-webpack`, …) use
 the same scheme; then `ios`, `android`, `react-native`, `flutter`, `unity`, `cordova`, `capacitor`, `dotnet`, `kmp`
 (new SDKs add an id; the wizard needs no change to read it). There is no `web` id: "web" is not a runtime, since
-the JS SDK also covers Node, Bun, Deno and Electron. A revision file is
+the JS SDK also covers Node, Bun and Electron. A revision file is
 immutable once published. The index lists, per recipe revision: the SDK version range it covers, its URL, its
 `sha256`, and the **minimum wizard engine version** it needs. A recipe fix is a new revision plus an index update,
 with no SDK release. The format, URL scheme, immutability and index rules go into a new spec,
@@ -220,7 +222,7 @@ detect → confirm → preconditions → token → plan → (consent) → apply 
 ```
 
 - **Detect** (`src/web/detect.ts`): from `package.json` (deps/devDeps/workspaces), lockfiles, and config files,
-  produce a ranked set: package manager (npm/yarn/pnpm/bun/deno), framework (most specific wins), bundler, runtime
+  produce a ranked set: package manager (npm/yarn/pnpm/bun), framework (most specific wins), bundler, runtime
   target (browser/node/edge/electron), TypeScript or not. Walk up to the workspace root; find the right package
   in a monorepo.
 - **Preconditions:** git repo, clean tree (prompt or `--ignore-git-changes`), supported framework version, Node
@@ -246,7 +248,7 @@ detect → confirm → preconditions → token → plan → (consent) → apply 
 | Remix / React Router | `@bugsee/remix` | entry files, root | Vite plugin, or build-script upload |
 | Angular | `@bugsee/angular` | `main.ts` / `app.config.ts` (read `angular.json`, do not hard-code paths) | `sourceMap` in `angular.json` + `bugsee:sourcemaps` script |
 | Electron | `@bugsee/electron` | main + preload + renderer | script over main and renderer outputs |
-| Node/Bun/Deno/tsc | `@bugsee/node` / `bun` / `deno` | entry import | `tsconfig` flags + script |
+| Node/Bun/tsc | `@bugsee/node` / `bun` | entry import | `tsconfig` flags + script |
 | Cloudflare/Vercel edge | `@bugsee/cloudflare` / `vercel-edge` | wrap worker, `wrangler` config | `wrangler` or bundler plugin |
 | Any other | — | printed instructions | `bugsee-cli` script |
 
@@ -294,7 +296,7 @@ dir and drive prompts with `clifty`, asserting file contents and that the projec
 1. **Foundation:** dependency updates (own commits), commit the existing code, CI, PR #1 to the repo.
 2. **Engine:** detectors, package-manager and workspace logic, format-preserving writers, AST helpers, the
    operation set and recipe loader/resolver, manifest + markers, token store, non-interactive layer, `uninstall`.
-3. **Source-map recipes (the deliverable):** Vite, webpack, Rollup, esbuild, Rspack, tsc/Node/Bun/Deno, generic;
+3. **Source-map recipes (the deliverable):** Vite, webpack, Rollup, esbuild, Rspack, tsc/Node/Bun, generic;
    the `javascript-*` recipes under `sdk/wizard-recipes/`, the `sdk/wizard-recipes` spec in `bugsee/specs`, and the
    publish step/gate (including the AWS OIDC deploy role) in `bugsee-javascript`'s release.
 
