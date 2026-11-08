@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Push the existing wizard to `bugsee/bugsee-wizard` with current dependencies, then add a recipe engine and the JavaScript source-map recipes (Vite, webpack, Rollup, esbuild, Rspack, tsc/Node/Bun/Deno, generic).
+**Goal:** Push the existing wizard to `bugsee/bugsee-wizard` with current dependencies, then add a recipe engine and the JavaScript source-map recipes (Vite, webpack, Rollup, esbuild, Rspack, tsc/Node/Bun, generic).
 
 **Architecture:** Recipes are JSON data made of a closed set of operations the wizard implements; they are resolved by SDK version from `download.bugsee.com/sdk/wizard-recipes/<platform>/index.json`, with a snapshot bundled in the wizard as fallback. The existing `Step` runner (`precheck → apply → rollback`) is extended, not replaced; each operation compiles to a `Step`. Detection reports runtime subtype(s), framework, build tool and package manager.
 
@@ -21,7 +21,7 @@
 - Token: app token is not secret on the developer's machine (D4); the wizard never prints it. Env file is `.env.bugsee-build-plugin` (C7, C15).
 - Telemetry: off by default, only `--telemetry` / `BUGSEE_WIZARD_TELEMETRY=1`, fixed anonymous vocabulary, **no network transport** this round (C6).
 - SDK install tag: `beta` while the SDK is in beta; all versions come from `src/web/versions.ts` (C5, C12).
-- Recipe platform ids: `javascript-<browser|node|bun|deno|electron|webworker|serviceworker|edge>`, framework `javascript-<nextjs|nuxt|…>`, build tool `javascript-<vite|webpack|rollup|esbuild|rspack|tsc|cli>`. There is no `web` id (D6, C16).
+- Recipe platform ids: `javascript-<browser|node|bun|electron|webworker|serviceworker|edge>`, framework `javascript-<nextjs|nuxt|…>`, build tool `javascript-<vite|webpack|rollup|esbuild|rspack|tsc|cli>`. There is no `web` id (D6, C16).
 - Out of scope: framework recipes, native recipes moving to data, browser token flow, telemetry endpoint, `bugsee-cli ship`, publishing `@bugsee/wizard` to npm, the AWS publish step (JS repo issue #186).
 
 ## Review Focus
@@ -105,7 +105,7 @@ setEnvVar(file: string, key: string, value: string): Promise<'added' | 'present'
 
 **Interfaces:** Produces:
 ```ts
-type PackageManagerName = 'npm' | 'yarn' | 'pnpm' | 'bun' | 'deno';
+type PackageManagerName = 'npm' | 'yarn' | 'pnpm' | 'bun';
 detectPackageManager(startDir: string): Promise<{ name: PackageManagerName; root: string; installArgs: (pkgs: string[], dev: boolean) => string[] } | null>  // walks up; exactly one lockfile or null
 findWorkspace(startDir: string): Promise<{ root: string; packages: { dir: string; name: string }[] } | null>   // package.json `workspaces`, pnpm-workspace.yaml
 resolveDependencyVersion(pkgDir: string, dep: string): Promise<string | undefined>   // understands `catalog:` and `workspace:`
@@ -234,7 +234,7 @@ Most specific wins (framework over bundler over `typescript`); detection never e
 - **webpack:** same with `@bugsee/webpack-plugin` / `bugseeWebpackPlugin`; sets `devtool: 'source-map'` only when absent.
 - **rollup:** `@bugsee/bundler-plugin-core`, `bugseeRollupPlugin`, `output.sourcemap: true`.
 - **esbuild, rspack:** until JS repo issue #184 lands the plugins do **not** upload, so these recipes use the CLI script path of **cli** below (note the issue number in the recipe `notes`).
-- **tsc, cli (Node/Bun/Deno, Angular, Electron, other):** `install-package` (`@bugsee/cli`, dev), `set-json-key` (`tsconfig` `sourceMap: true`, `inlineSources: true`, only for tsc), `add-package-script` (`bugsee:sourcemaps` = `bugsee-cli sourcemaps inject <out> && bugsee-cli debug-files upload <out> --type sourcemaps --version … --build …`, `chainInto: 'build'` only after a confirm), `write-env-var`, `ensure-gitignore`.
+- **tsc, cli (Node/Bun, Angular, Electron, other):** `install-package` (`@bugsee/cli`, dev), `set-json-key` (`tsconfig` `sourceMap: true`, `inlineSources: true`, only for tsc), `add-package-script` (`bugsee:sourcemaps` = `bugsee-cli sourcemaps inject <out> && bugsee-cli debug-files upload <out> --type sourcemaps --version … --build …`, `chainInto: 'build'` only after a confirm), `write-env-var`, `ensure-gitignore`.
 
 - [ ] **Step 1:** Tests: every snapshot file passes `parseRecipe`; `index.json` entries' `sha256` match the files; running each recipe through `executeRecipe` against its fixture twice gives `applied` then all `skipped`.
 - [ ] **Step 2:** Author the files; `scripts/validate-snapshot.mjs` recomputes hashes (run in CI).

@@ -36,7 +36,6 @@ const RUNTIME_ORDER = [
   'browser',
   'node',
   'bun',
-  'deno',
   'electron',
   'webworker',
   'serviceworker',
@@ -89,15 +88,7 @@ const EDGE_DEPS = ['@cloudflare/workers-types', '@vercel/edge', 'wrangler'];
 const BUN_DEPS = ['@types/bun'];
 const EDGE_CONFIGS = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'];
 const BUN_FILES = ['bun.lock', 'bun.lockb', 'bunfig.toml'];
-const DENO_FILES = ['deno.json', 'deno.jsonc', 'deno.lock'];
-const LOCKFILES = [
-  'package-lock.json',
-  'yarn.lock',
-  'pnpm-lock.yaml',
-  'bun.lock',
-  'bun.lockb',
-  'deno.lock',
-];
+const LOCKFILES = ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb'];
 const FRAMEWORK_CONFIGS = [
   'next.config',
   'nuxt.config',
@@ -226,10 +217,7 @@ export interface DetectOptions {
 }
 
 async function hasProjectFile(dir: string): Promise<boolean> {
-  return (
-    (await exists(path.join(dir, 'package.json'))) ||
-    (await firstExisting(dir, ['deno.json', 'deno.jsonc'])) !== undefined
-  );
+  return exists(path.join(dir, 'package.json'));
 }
 
 /**
@@ -274,26 +262,6 @@ async function inspectProject(
   const hasPackageJson = await exists(path.join(cwd, 'package.json'));
   const pkg = hasPackageJson ? await readManifest(cwd) : {};
   if (!pkg) return null;
-  const denoConfig = await firstExisting(cwd, ['deno.json', 'deno.jsonc']);
-  if (!hasPackageJson && denoConfig !== undefined) {
-    // A Deno-only project: no manifest, no node.
-    const lock = await firstExisting(cwd, ['deno.lock']);
-    return {
-      detection: {
-        packageDir: cwd,
-        packageManager: 'deno',
-        runtimes: ['deno'],
-        buildTool: 'cli',
-        typescript: true,
-        versions: {},
-        needsPackageChoice: false,
-      },
-      evidence: [
-        { path: denoConfig, note: 'deno' },
-        ...(lock ? [{ path: lock, note: 'lockfile' }] : []),
-      ],
-    };
-  }
   const deps = depNames(pkg, ['dependencies', 'devDependencies']);
   // A React Native project is owned by the React Native recipe.
   if (deps.has('react-native')) return null;
@@ -370,12 +338,9 @@ async function inspectProject(
   const edge = edgeFile !== undefined || EDGE_DEPS.some((d) => deps.has(d));
   const bunFile = await firstExisting(cwd, BUN_FILES);
   const bun = bunFile !== undefined || BUN_DEPS.some((d) => deps.has(d)) || pm?.name === 'bun';
-  const denoFile = await firstExisting(cwd, DENO_FILES);
-  const deno = denoFile !== undefined;
   if (hasHtml && bundler) evidence.push({ path: 'index.html', note: 'browser entry' });
   if (edgeFile) evidence.push({ path: edgeFile, note: 'edge runtime' });
   if (bunFile) evidence.push({ path: bunFile, note: 'bun' });
-  if (denoFile) evidence.push({ path: denoFile, note: 'deno' });
 
   if (deps.has('electron')) {
     runtimes.add('electron');
@@ -393,10 +358,9 @@ async function inspectProject(
       (!browser && !edge && (engineVersion(pkg, 'node') !== undefined || pkg.type !== undefined));
     if (serverSignal) runtimes.add('node');
     if (bun) runtimes.add('bun');
-    if (deno) runtimes.add('deno');
     if (edge) runtimes.add('edge');
-    // Bun and Deno projects run server-side JS, which also covers node-style code.
-    if ((bun || deno) && !browser && !edge) runtimes.add('node');
+    // Bun projects run server-side JS, which also covers node-style code.
+    if (bun && !browser && !edge) runtimes.add('node');
     if (runtimes.size === 0) runtimes.add('node');
   }
 
@@ -406,7 +370,7 @@ async function inspectProject(
     const v = await resolveDependencyVersion(cwd, d);
     if (v !== undefined) versions[d] = v;
   }
-  for (const rt of ['node', 'bun', 'deno']) {
+  for (const rt of ['node', 'bun']) {
     const v = engineVersion(pkg, rt);
     if (v !== undefined) versions[rt] = v;
   }

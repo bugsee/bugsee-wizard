@@ -9,7 +9,7 @@ export const SDK_FALLBACK_VERSION = '0.1.0-beta.5';
 
 /**
  * The supported-version table (one place). Keys are the package names that identify a tool;
- * `node` / `bun` / `deno` are runtime floors. `min` is the lowest supported version.
+ * `node` / `bun` are runtime floors. `min` is the lowest supported version.
  */
 export const SUPPORTED: Record<string, { min: string; note?: string }> = {
   next: { min: '14.0.0', note: 'App and Pages Router' },
@@ -26,7 +26,6 @@ export const SUPPORTED: Record<string, { min: string; note?: string }> = {
   '@rspack/core': { min: '1.0.0' },
   node: { min: '22.0.0' },
   bun: { min: '1.0.0' },
-  deno: { min: '2.0.0' },
 };
 
 /** Display name and docs slug per table key (docs links are placeholders until a real table exists). */
@@ -45,7 +44,6 @@ const TOOLS: Record<string, { name: string; slug: string }> = {
   '@rspack/core': { name: 'rspack', slug: 'rspack' },
   node: { name: 'node', slug: 'node' },
   bun: { name: 'bun', slug: 'bun' },
-  deno: { name: 'deno', slug: 'deno' },
 };
 
 const DOCS = 'https://docs.bugsee.com/';

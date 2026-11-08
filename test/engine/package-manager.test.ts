@@ -20,7 +20,6 @@ describe('detectPackageManager', () => {
     ['pnpm-lock.yaml', 'pnpm'],
     ['bun.lock', 'bun'],
     ['bun.lockb', 'bun'],
-    ['deno.lock', 'deno'],
   ])('%s maps to %s and reports the lockfile directory as root', async (lock, name) => {
     await writeFile(join(dir, lock), '');
     const r = await detectPackageManager(dir);
@@ -85,8 +84,6 @@ describe('detectPackageManager', () => {
     ['pnpm-lock.yaml', true, ['add', '-D', 'a', 'b']],
     ['bun.lock', false, ['add', 'a', 'b']],
     ['bun.lockb', true, ['add', '-D', 'a', 'b']],
-    ['deno.lock', false, ['add', 'npm:a', 'npm:b']],
-    ['deno.lock', true, ['add', '--dev', 'npm:a', 'npm:b']],
   ])('%s dev=%s installArgs', async (lock, dev, expected) => {
     await writeFile(join(dir, lock), '');
     const r = await detectPackageManager(dir);
