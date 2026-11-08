@@ -20,6 +20,7 @@ import { PROJECT_KIND_LABELS, type ProjectKind } from '../project-kind.js';
 import { runAndroidRollback } from '../recipes/android/run.js';
 import { runIosRollback } from '../recipes/ios/run.js';
 import { runReactNativeRollback } from '../recipes/react-native/run.js';
+import { DSYM_ACTION_TITLE } from '../recipes/react-native/steps/ios-xcode.js';
 import { runJavaScriptUninstall } from '../web/uninstall.js';
 
 type ExitReason = 'switching' | 'not-needed' | 'cost' | 'integration' | 'bugs' | 'other' | 'skip';
@@ -181,7 +182,7 @@ async function containsMarker(file: string): Promise<boolean> {
   }
 }
 
-/** The React Native recipe's iOS edits: a bundle-phase marker in project.pbxproj, a dSYM post-action in a shared scheme. */
+/** The React Native recipe's iOS edits: a bundle-phase marker in project.pbxproj, the wizard's own dSYM post-action (by title, as the rollback matches it) in a shared scheme. */
 async function hasIosLeftovers(cwd: string): Promise<boolean> {
   const ios = path.join(cwd, 'ios');
   let entries: string[];
@@ -200,7 +201,7 @@ async function hasIosLeftovers(cwd: string): Promise<boolean> {
     for (const scheme of schemes.filter((f) => f.endsWith('.xcscheme'))) {
       try {
         const text = await readFile(path.join(dir, 'xcshareddata', 'xcschemes', scheme), 'utf8');
-        if (text.includes('bugsee:wizard') || text.includes('xcode post-action')) return true;
+        if (text.includes(`title = "${DSYM_ACTION_TITLE}"`)) return true;
       } catch {}
     }
   }

@@ -303,7 +303,7 @@ describe('runUninstall (nothing detected)', () => {
     ['ios/App.xcodeproj/project.pbxproj', 'shellScript = "x # bugsee:wizard:rn-bundle:QQ==";'],
     [
       'ios/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme',
-      '<Action>run_cli xcode post-action</Action>',
+      '<ExecutionAction title = "Bugsee: upload dSYMs (React Native)">',
     ],
   ])('offers the RN rollback for the current recipe iOS edit in %s', async (file, text) => {
     const cwd = tmp();
@@ -311,6 +311,18 @@ describe('runUninstall (nothing detected)', () => {
     writeFileSync(path.join(cwd, file), text);
     await runUninstall({ ...opts, cwd });
     expect(rollbacks.runReactNativeRollback).toHaveBeenCalled();
+  });
+
+  it("a user-authored Bugsee post-action (not the wizard's title) is not a leftover", async () => {
+    const cwd = tmp();
+    const file = path.join(cwd, 'ios/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme');
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      '<ExecutionAction title = "Mine">run_cli xcode post-action</ExecutionAction>',
+    );
+    await runUninstall({ ...opts, cwd });
+    expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
   });
 
   it('native files without a wizard marker are not a Bugsee install', async () => {
