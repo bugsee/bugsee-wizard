@@ -254,6 +254,16 @@ describe('re-run: user edits and damaged markers (bugsee {} block)', () => {
     expect((await configureBugseeBlockStep.precheck(withNdk())).kind).toBe('blocked');
   });
 
+  it('text after the closing brace on the same line is blocked, not dropped', async () => {
+    await setup();
+    await editBlock((t) =>
+      t.replace(/\n\}\n(\/\/ bugsee:wizard:bugsee-block:end)/, '\n} extra()\n$1'),
+    );
+    const before = await readFixture(fixture as string, GRADLE);
+    expect((await configureBugseeBlockStep.precheck(withNdk())).kind).toBe('blocked');
+    expect(await readFixture(fixture as string, GRADLE)).toBe(before);
+  });
+
   it('a trailing comment mentioning false does not turn ndk(true) off', async () => {
     const a = await setup();
     await editBlock((t) => t.replace('bugsee {', 'bugsee {\n    ndk(true) // false on CI'));
@@ -278,7 +288,7 @@ describe('re-run: user edits and damaged markers (bugsee {} block)', () => {
     expect(await configureBugseeBlockStep.precheck(a)).toEqual({ kind: 'satisfied' });
   });
 
-  it('is satisfied on a CRLF file and re-indented block', async () => {
+  it('is satisfied on a CRLF file', async () => {
     const a = await setup();
     const file = join(fixture as string, GRADLE);
     const crlf = (await readFixture(fixture as string, GRADLE)).replace(/\n/g, '\r\n');
@@ -387,6 +397,27 @@ describe('re-run with changed answers: manifest meta-data', () => {
     expect(out).toContain('com.bugsee.auto-init');
     expect(out).not.toContain('com.bugsee.app-token');
     expect(out).not.toMatch(/[^\r]\n/);
+  });
+
+  it('a kept user comment naming the other meta-data does not break idempotency', async () => {
+    fixture = await makeFixture({ [MANIFEST]: SAMPLE_MANIFEST });
+    await injectManifestMetaStep.apply(makeAndroidContext({ cwd: fixture, dsl: 'kotlin' }));
+    const file = join(fixture, MANIFEST);
+    await writeFile(
+      file,
+      (await readFixture(fixture, MANIFEST)).replace(
+        '<!-- bugsee:wizard:meta:end -->',
+        '<!-- was com.bugsee.auto-init before -->\n    <!-- bugsee:wizard:meta:end -->',
+      ),
+    );
+    const b = makeAndroidContext({
+      cwd: fixture,
+      dsl: 'kotlin',
+      androidOptions: opts({ initMode: 'manual' }),
+    });
+    await injectManifestMetaStep.apply(b);
+    expect(await injectManifestMetaStep.precheck(b)).toEqual({ kind: 'satisfied' });
+    expect(await readFixture(fixture, MANIFEST)).toContain('was com.bugsee.auto-init before');
   });
 
   it('uninstall rollback strips the block back to the original manifest', async () => {

@@ -113,12 +113,13 @@ function parseBlock(block: string): ParsedBlock | null {
     }
   }
   if (close <= open) return null;
-  // Text on the `bugsee {` line after the brace, or on the closing line before the brace,
+  // Text on the `bugsee {` line after the brace, or on the closing line around the brace,
   // belongs to no part we could keep: refuse rather than drop it.
   const opener = lines[open]?.code ?? '';
   const closer = lines[close]?.code ?? '';
   if (/\{\s*\S/.test(opener.slice(opener.indexOf('{')))) return null;
   if (/\S\s*\}/.test(closer.slice(0, closer.lastIndexOf('}') + 1))) return null;
+  if (/\S/.test(closer.slice(closer.lastIndexOf('}') + 1))) return null;
   return {
     before: lines.slice(0, open).map((l) => l.raw),
     inner: lines.slice(open + 1, close),

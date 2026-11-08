@@ -92,9 +92,13 @@ export const injectManifestMetaStep: Step<AndroidContext> = {
         ctx.androidOptions.initMode === 'automatic'
           ? [APP_TOKEN_META, AUTO_INIT_META]
           : [AUTO_INIT_META, APP_TOKEN_META];
-      return existing.includes(want) && !existing.includes(other)
-        ? { kind: 'satisfied' }
-        : { kind: 'pending' };
+      // Active elements only: a comment that merely names a meta-data does not count.
+      const active = existing.replace(/<!--[\s\S]*?-->/g, '');
+      const has = (name: string): boolean =>
+        new RegExp(`<meta-data\\b[^>]*android:name\\s*=\\s*"${name.replace(/\./g, '\\.')}"`).test(
+          active,
+        );
+      return has(want) && !has(other) ? { kind: 'satisfied' } : { kind: 'pending' };
     }
     const open = findOpenTag(content, 'application');
     if (!open) {
