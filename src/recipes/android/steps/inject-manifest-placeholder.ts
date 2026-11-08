@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 
 import type { Step, StepStatus } from '../../../core/step.js';
 import { findBlock } from '../blocks.js';
-import { closingBraceInsertion, readOrNull, stripMarkerBlock } from '../io.js';
+import { closingBraceInsertion, findMarkerBlock, readOrNull, stripMarkerBlock } from '../io.js';
 import {
   type AndroidContext,
   MANIFEST_PLACEHOLDER_KEY,
@@ -27,6 +27,13 @@ export const injectManifestPlaceholderStep: Step<AndroidContext> = {
       return { kind: 'blocked', reason: `${ctx.androidPaths.appBuildGradle} not found` };
     }
     if (content.includes(PLACEHOLDER_MARKER_BEGIN)) {
+      const existing = findMarkerBlock(content, PLACEHOLDER_MARKER_BEGIN, PLACEHOLDER_MARKER_END);
+      if (existing === null) {
+        return {
+          kind: 'blocked',
+          reason: `${ctx.androidPaths.appBuildGradle} has a "${PLACEHOLDER_MARKER_BEGIN}" marker without its end marker; fix or remove it and re-run`,
+        };
+      }
       return { kind: 'satisfied' };
     }
     if (!findBlock(content, 'defaultConfig')) {

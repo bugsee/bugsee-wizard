@@ -55,7 +55,7 @@ const APP_TOKEN_META = 'com.bugsee.app-token';
 const AUTO_INIT_META = 'com.bugsee.auto-init';
 
 const OWN_META_RE =
-  /[ \t]*<meta-data\b[^>]*android:name\s*=\s*"com\.bugsee\.(?:app-token|auto-init)"[^>]*\/>[ \t]*\r?\n?/g;
+  /[ \t]*<meta-data\b[^>]*android:name\s*=\s*"com\.bugsee\.(?:app-token|auto-init)"[^>]*?(?:\/>|>\s*<\/meta-data\s*>)[ \t]*\r?\n?/g;
 
 /** The replacement block: the generated one plus any lines the user added inside the markers, in the file's line endings. */
 function mergedMeta(existing: string, generated: string): string {
