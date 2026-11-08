@@ -299,9 +299,68 @@ describe('runUninstall (nothing detected)', () => {
     expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
   });
 
-  it.each(['android', 'ios'])('offers the RN rollback when %s/ exists', async (dir) => {
+  it.each([
+    ['ios/App.xcodeproj/project.pbxproj', 'shellScript = "x # bugsee:wizard:rn-bundle:QQ==";'],
+    [
+      'ios/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme',
+      '<ExecutionAction title = "Bugsee: upload dSYMs (React Native)">',
+    ],
+  ])('offers the RN rollback for the current recipe iOS edit in %s', async (file, text) => {
     const cwd = tmp();
-    mkdirSync(path.join(cwd, dir));
+    mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true });
+    writeFileSync(path.join(cwd, file), text);
+    await runUninstall({ ...opts, cwd });
+    expect(rollbacks.runReactNativeRollback).toHaveBeenCalled();
+  });
+
+  it("a user-authored Bugsee post-action (not the wizard's title) is not a leftover", async () => {
+    const cwd = tmp();
+    const file = path.join(cwd, 'ios/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme');
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      '<ExecutionAction title = "Mine">run_cli xcode post-action</ExecutionAction>',
+    );
+    await runUninstall({ ...opts, cwd });
+    expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
+  });
+
+  it('native files without a wizard marker are not a Bugsee install', async () => {
+    const cwd = tmp();
+    mkdirSync(path.join(cwd, 'android'), { recursive: true });
+    mkdirSync(path.join(cwd, 'ios'), { recursive: true });
+    writeFileSync(
+      path.join(cwd, 'android', 'build.gradle'),
+      "apply plugin: 'com.android.library'\n",
+    );
+    writeFileSync(path.join(cwd, 'ios', 'Podfile'), "pod 'Alamofire'\n");
+    await runUninstall({ ...opts, cwd });
+    expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
+    expect(outros()).toEqual(['No supported platform detected here. Nothing to uninstall.']);
+  });
+
+  it.each(['android', 'ios'])(
+    'a bare %s/ directory is not a Bugsee install: says so, no rollback, no success message',
+    async (dir) => {
+      const cwd = tmp();
+      mkdirSync(path.join(cwd, dir));
+      await runUninstall({ ...opts, cwd });
+      expect(rollbacks.runReactNativeRollback).not.toHaveBeenCalled();
+      expect(outros()).toEqual(['No supported platform detected here. Nothing to uninstall.']);
+      expect(outros()).not.toContain('Bugsee removed.');
+      expect(process.exitCode).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ['android', 'bugsee.properties', 'app_token=x\n'],
+    ['android', 'build.gradle', "apply plugin: 'com.bugsee.android.gradle'\n"],
+    ['android/app', 'build.gradle.kts', '// bugsee:wizard:bugsee-block:begin\n'],
+    ['ios', 'Podfile', '# bugsee:wizard:pod\n'],
+  ])('offers the RN rollback when %s/%s carries Bugsee leftovers', async (dir, file, text) => {
+    const cwd = tmp();
+    mkdirSync(path.join(cwd, dir), { recursive: true });
+    writeFileSync(path.join(cwd, dir, file), text);
     await runUninstall({ ...opts, cwd });
     expect(rollbacks.runReactNativeRollback).toHaveBeenCalled();
     expect(outros()).toEqual(['Bugsee removed.']);

@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import * as clack from '@clack/prompts';
@@ -20,6 +20,7 @@ import { PROJECT_KIND_LABELS, type ProjectKind } from '../project-kind.js';
 import { runAndroidRollback } from '../recipes/android/run.js';
 import { runIosRollback } from '../recipes/ios/run.js';
 import { runReactNativeRollback } from '../recipes/react-native/run.js';
+import { DSYM_ACTION_TITLE } from '../recipes/react-native/steps/ios-xcode.js';
 import { runJavaScriptUninstall } from '../web/uninstall.js';
 
 type ExitReason = 'switching' | 'not-needed' | 'cost' | 'integration' | 'bugs' | 'other' | 'skip';
@@ -169,10 +170,59 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-async function hasReactNativeLeftovers(cwd: string): Promise<boolean> {
-  if ((await exists(path.join(cwd, 'android'))) || (await exists(path.join(cwd, 'ios')))) {
-    return true;
+/** Wizard-owned markers: any of these in a native file is proof the wizard edited it. */
+const WIZARD_MARKERS = ['bugsee:wizard', 'com.bugsee.android.gradle'];
+
+async function containsMarker(file: string): Promise<boolean> {
+  try {
+    const text = await readFile(file, 'utf8');
+    return WIZARD_MARKERS.some((m) => text.includes(m));
+  } catch {
+    return false;
   }
+}
+
+/** The React Native recipe's iOS edits: a bundle-phase marker in project.pbxproj, the wizard's own dSYM post-action (by title, as the rollback matches it) in a shared scheme. */
+async function hasIosLeftovers(cwd: string): Promise<boolean> {
+  const ios = path.join(cwd, 'ios');
+  let entries: string[];
+  try {
+    entries = await readdir(ios);
+  } catch {
+    return false;
+  }
+  for (const proj of entries.filter((e) => e.endsWith('.xcodeproj'))) {
+    const dir = path.join(ios, proj);
+    if (await containsMarker(path.join(dir, 'project.pbxproj'))) return true;
+    let schemes: string[] = [];
+    try {
+      schemes = await readdir(path.join(dir, 'xcshareddata', 'xcschemes'));
+    } catch {}
+    for (const scheme of schemes.filter((f) => f.endsWith('.xcscheme'))) {
+      try {
+        const text = await readFile(path.join(dir, 'xcshareddata', 'xcschemes', scheme), 'utf8');
+        if (text.includes(`title = "${DSYM_ACTION_TITLE}"`)) return true;
+      } catch {}
+    }
+  }
+  return false;
+}
+
+async function hasReactNativeLeftovers(cwd: string): Promise<boolean> {
+  // A bare android/ or ios/ directory is not evidence of Bugsee. The wizard's own
+  // properties file, or its markers in the files the React Native recipe edits, are.
+  // (The recipe only touches android/bugsee.properties, never android/app/.)
+  if (await exists(path.join(cwd, 'android', 'bugsee.properties'))) return true;
+  for (const file of [
+    path.join('android', 'build.gradle'),
+    path.join('android', 'build.gradle.kts'),
+    path.join('android', 'app', 'build.gradle'),
+    path.join('android', 'app', 'build.gradle.kts'),
+    path.join('ios', 'Podfile'),
+  ]) {
+    if (await containsMarker(path.join(cwd, file))) return true;
+  }
+  if (await hasIosLeftovers(cwd)) return true;
   try {
     const pkg = JSON.parse(await readFile(path.join(cwd, 'package.json'), 'utf8')) as Record<
       string,
