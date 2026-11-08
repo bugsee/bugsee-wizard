@@ -113,6 +113,12 @@ function parseBlock(block: string): ParsedBlock | null {
     }
   }
   if (close <= open) return null;
+  // Text on the `bugsee {` line after the brace, or on the closing line before the brace,
+  // belongs to no part we could keep: refuse rather than drop it.
+  const opener = lines[open]?.code ?? '';
+  const closer = lines[close]?.code ?? '';
+  if (/\{\s*\S/.test(opener.slice(opener.indexOf('{')))) return null;
+  if (/\S\s*\}/.test(closer.slice(0, closer.lastIndexOf('}') + 1))) return null;
   return {
     before: lines.slice(0, open).map((l) => l.raw),
     inner: lines.slice(open + 1, close),
@@ -125,26 +131,46 @@ const headOf = (code: string): string => /^\s*([A-Za-z_]\w*)/.exec(code)?.[1] ??
 /** Toggles by leading token (`ndk true`, `ndk(false)`, `ndk = true` are all the ndk toggle). */
 const TOGGLES = ['ndk', 'feedback', 'sizeAnalysis'] as const;
 
-/** Inner lines grouped by toggle (a toggle's lines include its depth-matched `{ … }` body); the rest are the user's. */
-function splitInner(inner: Line[]): { toggles: Map<string, string>; other: string[] } {
-  const toggles = new Map<string, string>();
+interface ToggleText {
+  /** As written (for output). */
+  readonly raw: string;
+  /** Comments and string literals blanked (for reading the answer). */
+  readonly code: string;
+}
+
+/**
+ * Inner lines grouped by toggle (a toggle's lines include its depth-matched `{ … }` body);
+ * the rest are the user's. Only top-level lines can be toggles: a toggle-named line nested
+ * inside a user's own block stays with that block.
+ */
+function splitInner(inner: Line[]): { toggles: Map<string, ToggleText>; other: string[] } {
+  const toggles = new Map<string, ToggleText>();
   const other: string[] = [];
   for (let i = 0; i < inner.length; i++) {
     const line = inner[i] as Line;
-    const head = headOf(line.code);
-    if (!(TOGGLES as readonly string[]).includes(head)) {
-      other.push(line.raw);
-      continue;
-    }
-    let text = line.raw;
+    const isToggle = (TOGGLES as readonly string[]).includes(headOf(line.code));
+    let raw = line.raw;
+    let code = line.code;
     let depth = braceDelta(line.code);
+    const rawLines = [raw];
     while (depth > 0 && i + 1 < inner.length) {
       i++;
       const next = inner[i] as Line;
-      text += `\n${next.raw}`;
+      rawLines.push(next.raw);
+      code += `\n${next.code}`;
       depth += braceDelta(next.code);
     }
-    toggles.set(head, `${toggles.get(head) ?? ''}${text}\n`);
+    raw = rawLines.join('\n');
+    if (!isToggle) {
+      other.push(...rawLines);
+      continue;
+    }
+    const head = headOf(line.code);
+    const prev = toggles.get(head);
+    toggles.set(head, {
+      raw: `${prev?.raw ?? ''}${raw}\n`,
+      code: `${prev?.code ?? ''}${code}\n`,
+    });
   }
   return { toggles, other };
 }
@@ -170,12 +196,12 @@ function answersIn(block: string): Answers {
     };
   }
   const { toggles } = splitInner(parsed.inner);
-  const flag = (t: string | undefined): boolean =>
-    t !== undefined && /\btrue\b/.test(t) && !/\bfalse\b/.test(t);
+  const flag = (t: ToggleText | undefined): boolean =>
+    t !== undefined && /\btrue\b/.test(t.code) && !/\bfalse\b/.test(t.code);
   return {
     ndk: flag(toggles.get('ndk')),
     feedback: flag(toggles.get('feedback')),
-    sizeAnalysis: ENABLED_RE.test(toggles.get('sizeAnalysis') ?? ''),
+    sizeAnalysis: ENABLED_RE.test(toggles.get('sizeAnalysis')?.code ?? ''),
   };
 }
 
@@ -197,7 +223,7 @@ function mergedBlock(existing: string, generated: string): string {
   for (const t of TOGGLES) {
     const keep = haveAnswers[t] === wantAnswers[t] && have.has(t);
     const text = keep ? have.get(t) : want.get(t);
-    if (text !== undefined) toggleLines.push(...text.split('\n').filter((l) => l !== ''));
+    if (text !== undefined) toggleLines.push(...text.raw.split('\n').filter((l) => l !== ''));
   }
   const gen = generated.split(/\r?\n/).filter((l) => l !== '');
   const begin = gen[0] ?? '';

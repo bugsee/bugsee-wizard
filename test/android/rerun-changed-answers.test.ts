@@ -226,6 +226,41 @@ describe('re-run: user edits and damaged markers (bugsee {} block)', () => {
     expect(await readFixture(fixture as string, GRADLE)).toBe(before);
   });
 
+  it('a toggle-named line nested in a user block is not a top-level answer and is left alone', async () => {
+    const a = await setup();
+    await editBlock((t) =>
+      t.replace('bugsee {', 'bugsee {\n    variants {\n        ndk(true)\n    }'),
+    );
+    const b = withNdk();
+    expect((await configureBugseeBlockStep.precheck(b)).kind).toBe('pending');
+    await configureBugseeBlockStep.apply(b);
+    const out = await readFixture(fixture as string, GRADLE);
+    expect(out).toContain('variants {\n        ndk(true)\n    }');
+    expect(out.match(/ndk\(true\)/g)?.length).toBe(2);
+    expect(await configureBugseeBlockStep.precheck(a)).toEqual({ kind: 'pending' });
+  });
+
+  it('text on the bugsee { line or before the closing brace is blocked, not dropped', async () => {
+    await setup();
+    await editBlock((t) => t.replace('bugsee {', 'bugsee { appToken("x")'));
+    const before = await readFixture(fixture as string, GRADLE);
+    expect((await configureBugseeBlockStep.precheck(withNdk())).kind).toBe('blocked');
+    expect(await readFixture(fixture as string, GRADLE)).toBe(before);
+    await editBlock((t) =>
+      t
+        .replace('bugsee { appToken("x")', 'bugsee {')
+        .replace(/\n\}\n(\/\/ bugsee:wizard:bugsee-block:end)/, '\n    appToken("y") }\n$1'),
+    );
+    expect((await configureBugseeBlockStep.precheck(withNdk())).kind).toBe('blocked');
+  });
+
+  it('a trailing comment mentioning false does not turn ndk(true) off', async () => {
+    const a = await setup();
+    await editBlock((t) => t.replace('bugsee {', 'bugsee {\n    ndk(true) // false on CI'));
+    expect(await configureBugseeBlockStep.precheck(withNdk())).toEqual({ kind: 'satisfied' });
+    expect((await configureBugseeBlockStep.precheck(a)).kind).toBe('pending');
+  });
+
   it('a user ndk(false) is replaced by the generated ndk(true), not kept beside it', async () => {
     await setup();
     await editBlock((t) => t.replace('bugsee {', 'bugsee {\n    ndk(false)'));
