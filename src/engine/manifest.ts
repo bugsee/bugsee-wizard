@@ -516,7 +516,15 @@ export async function rollbackFromManifest(ctx: {
   const byIndex = new Map<number, RollbackResult>();
   // set once an edit of the user's code (the init, a bundler plugin) could not be taken out: the packages it
   // refers to must then stay installed
+  // Decide BEFORE anything is reverted whether code of the user's still refers to the packages: entries
+  // recorded after the edit (a later install's pnpm-workspace.yaml) are reverted before the loop below
+  // would reach it. A dry run of each such entry says whether it can be taken out cleanly.
   let keepSdk = false;
+  for (const e of manifest.entries) {
+    if (e.marker?.startsWith('bugsee-wizard') !== true || e.action !== 'edited') continue;
+    const probe = await rollbackEntry(ctx.dir, root, e, true, packages).catch(() => undefined);
+    if (probe === undefined || probe.outcome === 'manual') keepSdk = true;
+  }
   const lockfile = manifest.entries.find((m) => isLockfile(m.file));
   const removeCommand = (lockfile && REMOVE_COMMANDS[basename(lockfile.file)]) ?? 'npm uninstall';
   for (const i of order) {
@@ -526,8 +534,9 @@ export async function rollbackFromManifest(ctx: {
       let r: RollbackResult;
       if (keepSdk && basename(e.file) === 'package.json') {
         r = await revertKeepingSdk(ctx.dir, root, e, ctx.dryRun, removeCommand);
-      } else if (keepSdk && isLockfile(e.file)) {
-        r = manual(e.file, 'left untouched: it stays in sync with the dependencies that were kept');
+      } else if (keepSdk && (isLockfile(e.file) || basename(e.file) === 'pnpm-workspace.yaml')) {
+        // the lockfile and pnpm's install-script approvals belong to the dependencies that were kept
+        r = manual(e.file, 'left untouched: it belongs to the dependencies that were kept');
       } else {
         r = await rollbackEntry(ctx.dir, root, e, ctx.dryRun, packages);
       }

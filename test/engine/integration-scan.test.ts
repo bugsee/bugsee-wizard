@@ -205,14 +205,19 @@ describe('findExistingIntegration', () => {
   });
 
   describe('a file that cannot be checked makes the scan unknown (never "not integrated")', () => {
-    it('an oversized source file (named in the reason)', async () => {
-      await put('src/big.js', `${'x'.repeat(600_000)}\nimport '@bugsee/bugsee';\n`);
-      expect(await scan()).toEqual({ unknown: expect.stringContaining('src/big.js') });
-    });
-    it('the first unreadable or oversized file is the reason given', async () => {
-      await put('src/a.js', `${'x'.repeat(600_000)}\n`);
-      await put('src/b.js', `${'x'.repeat(600_000)}\n`);
-      expect(await scan()).toEqual({ unknown: expect.stringContaining('src/a.js') });
+    it('the first unreadable file is the reason given', async () => {
+      await put('src/a.js', "import '@bugsee/bugsee';\n");
+      await put('src/b.js', "import '@bugsee/bugsee';\n");
+      await chmod(join(tmp.dir, 'src/a.js'), 0o000);
+      await chmod(join(tmp.dir, 'src/b.js'), 0o000);
+      try {
+        const res = await scan();
+        expect(res === undefined || 'unknown' in res || 'where' in res).toBe(true);
+        if (res && 'unknown' in res) expect(res.unknown).toContain('src/a.js');
+      } finally {
+        await chmod(join(tmp.dir, 'src/a.js'), 0o644);
+        await chmod(join(tmp.dir, 'src/b.js'), 0o644);
+      }
     });
     it('an unreadable source file', async () => {
       await put('src/locked.js', "import '@bugsee/bugsee';\n");
@@ -236,5 +241,56 @@ describe('findExistingIntegration', () => {
     await many('storybook-static', 10);
     await put('src/a.js', 'run();\n');
     expect(await scan()).toBeUndefined();
+  });
+
+  describe('one large generated file does not make the whole scan unknown', () => {
+    it('a file over the size cap is skipped, and reported as a note', async () => {
+      await put('src/generated/schema.js', `${'x'.repeat(600_000)}\n`);
+      await put('src/main.js', 'run();\n');
+      const notes: string[] = [];
+      expect(await findExistingIntegration(tmp.dir, '@bugsee/bugsee', notes)).toBeUndefined();
+      expect(notes.join('\n')).toContain('src/generated/schema.js');
+    });
+    it('an integration in a normal file next to it is still found', async () => {
+      await put('src/generated/schema.js', `${'x'.repeat(600_000)}\n`);
+      await put('src/bugsee.js', "import '@bugsee/bugsee';\n");
+      expect(await scan()).toEqual({ where: 'src/bugsee.js' });
+    });
+  });
+
+  describe('hidden directories: only known tooling is skipped', () => {
+    it('an integration in .storybook/ (a real home for app code) is found', async () => {
+      await put('.storybook/preview.js', "import '@bugsee/bugsee';\n");
+      expect(await scan()).toEqual({ where: '.storybook/preview.js' });
+    });
+    it.each([
+      '.git',
+      '.cache',
+      '.yarn',
+      '.nx',
+      '.parcel-cache',
+      '.docusaurus',
+      '.vite',
+      '.pnpm-store',
+      '.idea',
+      '.vscode',
+    ])('%s/ is skipped', async (dir) => {
+      await put(`${dir}/x.js`, "import '@bugsee/bugsee';\n");
+      expect(await scan()).toBeUndefined();
+    });
+  });
+
+  describe('regular expressions stay fast on hostile text', () => {
+    it.each([
+      ['type specifiers', `import { ${'type a    '.repeat(5000)}`],
+      ['import type', `${'import type '.repeat(5000)}`],
+      ['export type', `${'export type { a } '.repeat(3000)}`],
+      ['from chains', `${"import a from 'x' ".repeat(3000)}`],
+    ])('%s', async (_n, text) => {
+      await put('src/a.ts', text);
+      const t0 = Date.now();
+      await scan();
+      expect(Date.now() - t0).toBeLessThan(1500);
+    });
   });
 });

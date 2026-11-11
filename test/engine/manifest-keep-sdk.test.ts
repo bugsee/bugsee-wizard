@@ -117,7 +117,7 @@ describe('uninstall when the init cannot be taken out', () => {
     expect(await readFile(p('package-lock.json'), 'utf8')).toBe(LOCK_AFTER);
     const lock = res.results.find((r) => r.file === 'package-lock.json');
     expect(lock?.outcome).toBe('manual');
-    expect(lock?.note).toMatch(/in sync/);
+    expect(lock?.note).toMatch(/belongs to the dependencies that were kept/);
     expect(row?.note).toContain('npm uninstall @bugsee/bugsee @bugsee/vite-plugin');
   });
 
@@ -181,5 +181,45 @@ describe('uninstall when the init cannot be taken out', () => {
     const pkg = JSON.parse(await readFile(p('package.json'), 'utf8'));
     expect(pkg.dependencies['@bugsee/bugsee']).toBeDefined();
     expect(await readFile(p('package-lock.json'), 'utf8')).toBe(LOCK_AFTER);
+  });
+
+  it('pnpm: files created by an install recorded AFTER the init edit are kept too (the decision is made before anything is reverted)', async () => {
+    await wizardRun();
+    // the @bugsee/cli install ran later and created pnpm-workspace.yaml (allowBuilds) for the kept @bugsee/cli
+    const ws = "allowBuilds:\n  '@bugsee/cli': true\n";
+    await writeFile(p('pnpm-workspace.yaml'), ws);
+    const rec = createManifestRecorder(tmp.dir, { wizard: 't', recipes: [] }, { cwd: tmp.dir });
+    rec.record({ file: 'pnpm-workspace.yaml', action: 'created', after: ws });
+    await rec.flush();
+    await writeFile(
+      p('server.js'),
+      (await readFile(p('server.js'), 'utf8')).replace('start();', 'start(8080);'),
+    );
+    const res = await roll();
+    expect(await readFile(p('pnpm-workspace.yaml'), 'utf8')).toBe(ws);
+    expect(res.results.find((r) => r.file === 'pnpm-workspace.yaml')?.outcome).toBe('manual');
+    const pkg = JSON.parse(await readFile(p('package.json'), 'utf8'));
+    expect(pkg.devDependencies['@bugsee/vite-plugin']).toBeDefined();
+  });
+
+  it('a kept set that includes @bugsee/cli keeps it (every package stays, none is picked)', async () => {
+    const before = `${JSON.stringify({ name: 'a' }, null, 2)}\n`;
+    const after = `${JSON.stringify({ name: 'a', devDependencies: { '@bugsee/cli': '^0.9.0' } }, null, 2)}\n`;
+    await writeFile(p('package.json'), after);
+    await writeFile(p('server.js'), "import 'x'; // bugsee-wizard\nstart(8080);\n");
+    const rec = createManifestRecorder(tmp.dir, { wizard: 't', recipes: [] }, { cwd: tmp.dir });
+    rec.record({ file: 'package.json', action: 'edited', before, after });
+    rec.record({
+      file: 'server.js',
+      action: 'edited',
+      before: "import 'x'; start();\n",
+      after: "import 'x';\nimport { l } from '@bugsee/bugsee'; // bugsee-wizard\nstart();\n",
+      marker: 'bugsee-wizard:sdk-init',
+    });
+    await rec.flush();
+    await roll();
+    expect(
+      JSON.parse(await readFile(p('package.json'), 'utf8')).devDependencies['@bugsee/cli'],
+    ).toBeDefined();
   });
 });

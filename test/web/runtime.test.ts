@@ -140,11 +140,13 @@ describe('chooseRuntime (libraries)', () => {
       { main: 'dist/index.js' },
       { module: 'x.js' },
       { exports: './x.js' },
-      { types: 'x.d.ts' },
+      { types: 'x.d.ts', exports: './x.js' },
       { peerDependencies: { react: '*' } },
       { exports: './x.js', scripts: { dev: 'tsc -w', build: 'tsc' } },
       { main: 'x.js', devDependencies: { express: '4' }, scripts: { test: 'vitest' } },
       { main: 'x.js', scripts: { dev: 'rollup -c -w' } },
+      // a real peer dependency is a library; a lone typescript peer (bun init) is not
+      { main: 'x.js', peerDependencies: { react: '*' } },
       // published libraries: a dev runner on their own entry, or a server framework used by a middleware, is not an app
       {
         exports: { '.': { import: './dist/index.js' } },
@@ -177,6 +179,16 @@ describe('chooseRuntime (libraries)', () => {
       // private (never published) is an app even with an exports field, and its dev runner on its own entry counts
       { private: true, exports: './dist/index.js', scripts: { dev: 'tsx watch src/index.ts' } },
       { private: true, exports: './x.js', scripts: { dev: 'tsx watch src/server.ts' } },
+      { name: 'a', private: true, peerDependencies: { react: '^18' } },
+      // a lone typescript peer says nothing, published or not
+      { name: 'a', peerDependencies: { typescript: '^5' } },
+      // main + types + an express app run from src/ is an app: `types` alone is not publishing
+      {
+        main: 'dist/index.js',
+        types: 'dist/index.d.ts',
+        dependencies: { express: '4' },
+        scripts: { dev: 'tsx watch src/index.ts' },
+      },
       // a published package whose dev script runs a playground, not its own entry, is still shown to be run
       {
         exports: './dist/index.js',
@@ -328,6 +340,27 @@ describe('chooseRuntime (unknown runtime, --runtime, Vite env)', () => {
       const p = prompts('node');
       await chooseRuntime(det({ runtimeUnknown: true }), opts, p);
       expect(p.select).not.toHaveBeenCalled();
+    });
+  });
+
+  it('a stock `bun init -y` project (private, module entry, typescript as the only peer) is a Bun app', async () => {
+    await mkdir(tmp.dir, { recursive: true });
+    await writeFile(
+      join(tmp.dir, 'package.json'),
+      JSON.stringify({
+        name: 'app',
+        module: 'index.ts',
+        type: 'module',
+        private: true,
+        devDependencies: { '@types/bun': 'latest' },
+        peerDependencies: { typescript: '^5' },
+      }),
+    );
+    expect(
+      await chooseRuntime(det({ packageDir: tmp.dir, runtimes: ['node', 'bun'] }), opts, prompts()),
+    ).toEqual({
+      runtime: 'bun',
+      platform: 'javascript-bun',
     });
   });
 });

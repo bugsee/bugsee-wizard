@@ -1,9 +1,11 @@
-import { basename, dirname, join } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { basename, dirname, join, relative } from 'node:path';
 import type { ApplyResult, ManualSnippet, Step } from '../../core/step.js';
 import { hasBugseeMarker } from '../config-ast.js';
 import { type EntryFile, findEntry, hasViteClientTypes } from '../entry-detect.js';
 import { editTextFile } from '../fs-edit.js';
 import { findExistingIntegration } from '../integration-scan.js';
+import { stripJsComments } from '../js-text.js';
 import { readPackageJson } from '../package-json.js';
 import type { OpSpec, RecipeContext } from '../recipe.js';
 import {
@@ -72,6 +74,7 @@ async function scriptsLoadEnv(pkg: Record<string, unknown>): Promise<boolean> {
   return used.some(([, c]) => typeof c === 'string' && SCRIPT_LOADS_ENV_RE.test(c));
 }
 
+const MAX_IMPORT_BYTES = 256 * 1024;
 const RESOLVE_SUFFIXES = [
   '',
   '.js',
@@ -87,7 +90,23 @@ const RESOLVE_SUFFIXES = [
 ];
 
 /** Whether a module the entry imports (one level, relative paths only) loads an env file. */
-async function importedModuleLoadsEnv(entryPath: string, src: string): Promise<boolean> {
+/** A project file's text for the env check: inside the project, a regular file, and not huge. */
+async function readImported(root: string, file: string): Promise<string | null> {
+  try {
+    const path = await resolveInside(root, relative(root, file));
+    const st = await stat(path);
+    if (!st.isFile() || st.size > MAX_IMPORT_BYTES) return null;
+    return (await readBytes(path))?.toString('utf8') ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function importedModuleLoadsEnv(
+  root: string,
+  entryPath: string,
+  src: string,
+): Promise<boolean> {
   const specs = [
     ...src.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"](\.{1,2}\/[^'"]+)['"]/g),
   ]
@@ -98,10 +117,7 @@ async function importedModuleLoadsEnv(entryPath: string, src: string): Promise<b
     const swapped = spec.replace(/\.([cm]?)js$/, '.$1ts');
     for (const suffix of [...RESOLVE_SUFFIXES, ...(swapped === spec ? [] : ['<ts>'])]) {
       const file = join(dirname(entryPath), suffix === '<ts>' ? swapped : spec + suffix);
-      const text = await readBytes(file).then(
-        (b) => b?.toString('utf8') ?? null,
-        () => null,
-      );
+      const text = await readImported(root, file);
       if (text !== null) {
         if (loadsEnvFile(text)) return true;
         break;
@@ -111,13 +127,19 @@ async function importedModuleLoadsEnv(entryPath: string, src: string): Promise<b
   return false;
 }
 
+/** A platform file's text without its comments (`#` in Docker/YAML/TOML/Procfile, `//` and block in pm2 configs). */
+function withoutPlatformComments(file: string, text: string): string {
+  if (/^ecosystem\./.test(file)) return stripJsComments(text);
+  return text.replace(/(^|\s)#.*$/gm, '$1');
+}
+
 async function platformProvidesEnv(dir: string): Promise<boolean> {
   for (const f of PLATFORM_FILES) {
     const text = await readBytes(join(dir, f)).then(
       (b) => b?.toString('utf8') ?? '',
       () => '',
     );
-    if (PROVIDES_RE.test(text)) return true;
+    if (PROVIDES_RE.test(withoutPlatformComments(f, text))) return true;
   }
   return false;
 }
@@ -143,7 +165,7 @@ async function envLoaderMissing(
   return !(
     (await scriptsLoadEnv(pkg)) ||
     '@nestjs/config' in deps ||
-    (await importedModuleLoadsEnv(entryPath, src)) ||
+    (await importedModuleLoadsEnv(ctx.packageDir, entryPath, src)) ||
     (await platformProvidesEnv(ctx.packageDir))
   );
 }
@@ -230,7 +252,9 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
           : undefined;
       }
     }
-    const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom);
+    const notes: string[] = [];
+    const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom, notes);
+    if (write) for (const n of notes) ctx.log.warn(n);
     if (existing !== undefined && !('unknown' in existing)) return undefined;
     if (existing !== undefined && 'unknown' in existing) {
       const note = `// Could not check whether Bugsee is already set up (${existing.unknown}), so nothing was changed.\n// If it is not, add:\n`;

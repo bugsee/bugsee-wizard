@@ -58,6 +58,17 @@ export function setJsonKeyStep(spec: Spec): Step<RecipeContext> {
       }
       return undefined;
     },
+    async preview(ctx) {
+      const path = await resolveInside(ctx.packageDir, spec.file);
+      if ((await readBytes(path)) !== null) return undefined;
+      return {
+        manual: {
+          file: manifestPath(ctx, path),
+          title: `Set ${keyPath} in ${spec.file}`,
+          code: JSON.stringify(nested(spec.path, spec.value), null, 2),
+        },
+      };
+    },
     async rollback(ctx) {
       if (before === undefined) return;
       await restoreBytes(await resolveInside(ctx.packageDir, spec.file), before);

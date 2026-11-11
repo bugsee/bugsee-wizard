@@ -504,13 +504,62 @@ describe('add-sdk-init op', () => {
     });
   });
 
-  it('an oversized source file is named in the snippet note (not "too many files")', async () => {
+  it('an oversized generated file does not stop the init: it is skipped and named in a warning', async () => {
     await put('index.html', '<script type="module" src="/src/main.js"></script>');
     await put('src/main.js', MAIN);
     await put('src/generated/schema.js', `${'x'.repeat(600_000)}\n`);
-    const res = await opToStep(browser).apply(makeCtx(tmp.dir));
-    expect(res?.manual?.code).toContain('src/generated/schema.js');
-    expect(res?.manual?.code).not.toMatch(/too many source files/);
-    expect(await read('src/main.js')).toBe(MAIN);
+    const ctx = makeCtx(tmp.dir);
+    expect(await opToStep(browser).apply(ctx)).toBeUndefined();
+    expect(await read('src/main.js')).toContain('bugsee-wizard');
+    expect(ctx.logs.join('\n')).toContain('src/generated/schema.js');
+  });
+
+  describe('what the env checks read (review round 7)', () => {
+    const SERVER = "import { createServer } from 'node:http';\ncreateServer().listen(0);\n";
+    const setup = async (extra: Record<string, string> = {}) => {
+      await put(
+        'package.json',
+        JSON.stringify({ type: 'module', scripts: { start: 'node server.js' } }),
+      );
+      await put('server.js', SERVER);
+      for (const [f, c] of Object.entries(extra)) await put(f, c);
+    };
+    const run = () => opToStep(node).apply(makeCtx(tmp.dir));
+
+    it('never follows an import out of the project', async () => {
+      const outside = join(tmp.dir, '..', `outside-${process.pid}.js`);
+      await writeFile(outside, "import 'dotenv/config';\n");
+      await setup();
+      await put('server.js', `import '../outside-${process.pid}.js';\n${SERVER}`);
+      expect((await run())?.manual?.title).toBe('Give Node the Bugsee token');
+      await rm(outside, { force: true });
+    });
+
+    it('does not read an imported file over the size cap', async () => {
+      await setup({ 'big.js': `${"import 'dotenv/config';\n"}${'x'.repeat(400_000)}` });
+      await put('server.js', `import './big.js';\n${SERVER}`);
+      expect((await run())?.manual?.title).toBe('Give Node the Bugsee token');
+    });
+
+    it.each([
+      ['Dockerfile', '# set BUGSEE_APP_TOKEN at run time\nFROM node\n'],
+      ['docker-compose.yml', 'services:\n  app:\n    image: x # BUGSEE_APP_TOKEN goes here\n'],
+      ['fly.toml', '# BUGSEE_APP_TOKEN = "x"\n'],
+      [
+        'ecosystem.config.cjs',
+        '// env: { BUGSEE_APP_TOKEN: 1 }\n/* BUGSEE_APP_TOKEN */ module.exports = { apps: [] };\n',
+      ],
+    ])(
+      'a comment mentioning the variable in %s does not count as providing it',
+      async (file, text) => {
+        await setup({ [file]: text });
+        expect((await run())?.manual?.title).toBe('Give Node the Bugsee token');
+      },
+    );
+
+    it('a real setting after a comment still counts', async () => {
+      await setup({ Dockerfile: '# note\nENV BUGSEE_APP_TOKEN=abc\n' });
+      expect(await run()).toBeUndefined();
+    });
   });
 });

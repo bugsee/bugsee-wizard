@@ -74,8 +74,7 @@ async function looksLikeLibrary(dir: string, bun: boolean): Promise<boolean> {
   const deps =
     typeof pkg.dependencies === 'object' && pkg.dependencies !== null ? pkg.dependencies : {};
   const published =
-    pkg.private !== true &&
-    ['exports', 'types', 'typings', 'files', 'publishConfig'].some((k) => pkg[k] !== undefined);
+    pkg.private !== true && ['exports', 'files', 'publishConfig'].some((k) => pkg[k] !== undefined);
   const entries = new Set(
     [pkg.main, pkg.module, ...exportPaths(pkg.exports)]
       .filter((v): v is string => typeof v === 'string')
@@ -87,15 +86,16 @@ async function looksLikeLibrary(dir: string, bun: boolean): Promise<boolean> {
     pkg.bin !== undefined ||
     (published ? devElsewhere : scriptsRunAFile(scripts) || SERVER_DEPS.some((d) => d in deps));
   // `bun init` names the app's own entry in `module`: not library evidence on Bun
-  const keys = [
-    'main',
-    'exports',
-    'types',
-    'typings',
-    'peerDependencies',
-    ...(bun ? [] : ['module']),
-  ];
-  return keys.some((k) => pkg[k] !== undefined) && !runs;
+  const keys = ['main', 'exports', ...(bun ? [] : ['module'])];
+  // peer dependencies are library evidence only for a package that can be published, and `typescript`
+  // alone is what `bun init` writes into every project
+  const peers =
+    pkg.private !== true &&
+    typeof pkg.peerDependencies === 'object' &&
+    pkg.peerDependencies !== null
+      ? Object.keys(pkg.peerDependencies).filter((p) => p !== 'typescript')
+      : [];
+  return (keys.some((k) => pkg[k] !== undefined) || peers.length > 0) && !runs;
 }
 
 /** Vite only reads `VITE_*` variables from the package root's .env files: these settings break that. */

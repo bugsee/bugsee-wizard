@@ -217,6 +217,36 @@ async function conventional(root: string, bases: readonly string[]): Promise<str
 }
 
 /** The first local module `<script src>` of an HTML file that names an existing script (never build output). */
+/**
+ * The `<script>` elements of a page, found with plain index searches (one pass, no backtracking: a
+ * page with thousands of unclosed tags cannot make a pattern rescan the rest of the text each time).
+ */
+function* scriptTags(html: string): Generator<{ attrs: string; body: string }> {
+  const lower = html.toLowerCase();
+  let at = 0;
+  for (;;) {
+    const open = lower.indexOf('<script', at);
+    if (open === -1) return;
+    const afterName = open + '<script'.length;
+    // `<scripts>` or `<script-x>` is another element
+    if (/[\w-]/.test(html.charAt(afterName))) {
+      at = afterName;
+      continue;
+    }
+    const gt = html.indexOf('>', afterName);
+    if (gt === -1) return;
+    const close = lower.indexOf('</script', gt + 1);
+    yield {
+      attrs: html.slice(afterName, gt),
+      body: html.slice(gt + 1, close === -1 ? html.length : close),
+    };
+    if (close === -1) return;
+    const end = html.indexOf('>', close);
+    if (end === -1) return;
+    at = end + 1;
+  }
+}
+
 async function htmlScript(root: string, htmlRel: string): Promise<string | undefined> {
   let html: string;
   try {
@@ -224,16 +254,14 @@ async function htmlScript(root: string, htmlRel: string): Promise<string | undef
   } catch {
     return undefined;
   }
-  for (const m of stripHtmlComments(html).matchAll(
-    /<script\b([^>]*)>([\s\S]*?)<\/script[^>]*>/gi,
-  )) {
-    const attrs = m[1] ?? '';
+  for (const tag of scriptTags(stripHtmlComments(html))) {
+    const attrs = tag.attrs;
     // a classic script cannot take an import line: only module scripts are entries
     if (!/\btype\s*=\s*["']?module\b/i.test(attrs)) continue;
     const src = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs);
     // an inline module script is followed to the first local file it imports
     const inline = /^\s*import\s+(?:[^'"]*?\bfrom\s*)?["']([^"']+)["']/m.exec(
-      stripJsComments(m[2] ?? ''),
+      stripJsComments(tag.body),
     )?.[1];
     const value =
       (src?.[1] ?? src?.[2] ?? (src === null ? (inline ?? '') : '')).split(/[?#]/)[0] ?? '';

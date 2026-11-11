@@ -35,6 +35,19 @@ const SKIP_DIRS = new Set([
   '.angular',
   '.vercel',
   'storybook-static',
+  // hidden tool state and caches hold no app code and can hold thousands of files (other hidden
+  // directories, like .storybook, are read: they do hold app code)
+  '.yarn',
+  '.cache',
+  '.vite',
+  '.nx',
+  '.parcel-cache',
+  '.docusaurus',
+  '.pnpm-store',
+  '.expo',
+  '.idea',
+  '.vscode',
+  '.github',
   // not source: media, static files and vendored output can be huge and never hold the app's launch
   'assets',
   'static',
@@ -88,6 +101,8 @@ async function dependencyIntegration(root: string, own: string): Promise<Integra
 export async function findExistingIntegration(
   root: string,
   ownPackage: string,
+  /** Receives a note for each file skipped on purpose (too large to read), to show the user. */
+  notes: string[] = [],
 ): Promise<Integration | UnfinishedScan | undefined> {
   const dep = await dependencyIntegration(root, ownPackage);
   if (dep) return dep;
@@ -110,7 +125,7 @@ export async function findExistingIntegration(
       const path = rel === '' ? e.name : `${rel}/${e.name}`;
       if (e.isDirectory()) {
         // tool state and caches (.yarn, .cache, .nx, ...) hold no app code, and can hold thousands of files
-        if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
+        if (SKIP_DIRS.has(e.name)) continue;
         const found = await walk(join(dir, e.name), path);
         if (found) return found;
         if (capped !== undefined && seen > MAX_FILES) return undefined;
@@ -120,15 +135,19 @@ export async function findExistingIntegration(
           return undefined;
         }
         const abs = join(dir, e.name);
-        // a file that cannot be checked (too big, unreadable, gone) leaves the scan unfinished
-        const text = await stat(abs)
-          .then(
-            async (st) => (st.size > MAX_BYTES ? undefined : readFile(abs, 'utf8')),
-            () => undefined,
-          )
-          .catch(() => undefined);
+        const size = await stat(abs).then(
+          (st) => st.size,
+          () => undefined,
+        );
+        // a very large source file is generated output (a schema, a client): skipped, and said so
+        if (size !== undefined && size > MAX_BYTES) {
+          notes.push(`skipped ${path} (larger than ${MAX_BYTES / 1024} KB)`);
+          continue;
+        }
+        // a file that cannot be read (unreadable, gone) leaves the scan unfinished
+        const text = await readFile(abs, 'utf8').catch(() => undefined);
         if (text === undefined) {
-          capped ??= `could not read ${path} (unreadable or larger than ${MAX_BYTES / 1024} KB)`;
+          capped ??= `could not read ${path}`;
           continue;
         }
         if (loadsRuntimePackage(text, MARKUP_RE.test(e.name))) return { where: path };

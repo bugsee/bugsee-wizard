@@ -405,4 +405,16 @@ describe('findEntry (review follow-ups)', () => {
     await put('actual.ts');
     expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('actual.ts');
   });
+
+  it('hostile html stays fast: thousands of unclosed script tags, and long attribute runs', async () => {
+    await put('index.html', '<script type="module">import "./a"\n'.repeat(20_000));
+    await put('src/main.ts');
+    const t0 = Date.now();
+    await findEntry(tmp.dir, 'browser');
+    expect(Date.now() - t0).toBeLessThan(1500);
+    await put('index.html', `<script ${'type '.repeat(30_000)}`);
+    const t1 = Date.now();
+    await findEntry(tmp.dir, 'browser');
+    expect(Date.now() - t1).toBeLessThan(1500);
+  });
 });
