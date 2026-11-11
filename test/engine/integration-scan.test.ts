@@ -198,6 +198,23 @@ describe('findExistingIntegration', () => {
       expect(await scan()).toBeUndefined();
     });
 
+    it.each([
+      [
+        "import type { Options } from './types';\n\nconst { launch } = await import('@bugsee/bugsee');\n",
+      ],
+      ["import type { O } from './t';\nconst { launch } = require('@bugsee/bugsee');\n"],
+      ["import type A from './a'; import B from '@bugsee/bugsee';\n"],
+      ["import type A from './a'\nimport B from '@bugsee/bugsee'\n"],
+      ["export type { A } from './a';\nimport('@bugsee/browser');\n"],
+      // no semicolons: nothing separates the type statement from the dynamic load but a newline
+      ["import type A from './a'\nconst m = await import('@bugsee/bugsee')\n"],
+      // a `from` clause that is not the type statement's own
+      ["import type A from './a'; foo from '@bugsee/bugsee'\n"],
+    ])('a real load after a type-only statement still counts: %j', async (src) => {
+      await put('src/a.ts', src);
+      expect(await scan()).toEqual({ where: 'src/a.ts' });
+    });
+
     it('a load after a comment on the same line, or next to a URL in a string, still counts', async () => {
       await put('src/a.js', "const u = 'https://example.com'; import('@bugsee/bugsee');\n");
       expect(await scan()).toEqual({ where: 'src/a.js' });

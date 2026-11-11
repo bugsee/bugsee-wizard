@@ -74,10 +74,14 @@ const ALL_TYPE_SPECIFIERS_RE =
 const WINDOW = 400;
 
 function isTypeOnlyLoad(code: string, at: number): boolean {
+  // only a `from '...'` clause can belong to an `import type`: import() and require() are never erased
+  if (!code.startsWith('from', at)) return false;
   const window = code.slice(Math.max(0, at - WINDOW), at);
   const start = Math.max(window.lastIndexOf('import'), window.lastIndexOf('export'));
   if (start === -1) return false;
   const head = window.slice(start);
+  // a `;` before the clause ends the statement: this `from` belongs to a later one
+  if (head.includes(';')) return false;
   return TYPE_STATEMENT_RE.test(head) || ALL_TYPE_SPECIFIERS_RE.test(head);
 }
 const LOAD_RE =
