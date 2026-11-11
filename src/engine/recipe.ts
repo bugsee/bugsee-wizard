@@ -2,6 +2,7 @@ import type { WizardContext } from '../core/context.js';
 import type { PluginTarget } from './config-ast.js';
 import type { ManifestRecorder } from './manifest.js';
 import type { DetectedPackageManager } from './package-manager.js';
+import type { SdkRuntime } from './sdk-init-ast.js';
 
 export type DetectRule = { dependency: string } | { file: string };
 
@@ -16,6 +17,11 @@ export type OpSpec =
        * pnpm 11 for the install to succeed. Not installed themselves; only @bugsee/* is ever approved.
        */
       buildScripts?: string[];
+      /**
+       * `false`: the packages themselves have no install script, so pnpm 11 has nothing to approve for
+       * them (only `buildScripts`). Default true: they are decided like `buildScripts`.
+       */
+      installScripts?: boolean;
     }
   | {
       op: 'add-bundler-plugin';
@@ -24,6 +30,14 @@ export type OpSpec =
       importName: string;
       callArgs: string;
       ensureSourcemap?: boolean;
+    }
+  | {
+      op: 'add-sdk-init';
+      runtime: SdkRuntime;
+      /** The @bugsee package `launch` is imported from. */
+      importFrom: string;
+      /** A member expression read at run time (`process.env.X`); absent: the token is written as a literal. */
+      tokenExpr?: string;
     }
   | { op: 'set-json-key'; file: string; path: string[]; value: unknown }
   | { op: 'add-package-script'; name: string; command: string; chainInto?: string }
@@ -69,6 +83,10 @@ type Obj = Record<string, unknown>;
 
 const KINDS = ['runtime', 'framework', 'buildtool'] as const;
 const TARGETS = ['vite', 'webpack', 'rollup', 'rspack'] as const;
+const SDK_RUNTIMES = ['browser', 'node', 'bun'] as const;
+const SDK_PACKAGE_RE = /^@bugsee\/[a-z0-9][a-z0-9._~-]*$/i;
+/** `process.env.X` / `import.meta.env.X`: a plain member chain, so a recipe cannot smuggle in code. */
+const TOKEN_EXPR_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/;
 const PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i;
 const TAG_RE = /^\w[\w.-]*$/;
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -163,7 +181,14 @@ function checkOp(c: Check, raw: unknown, path: string): OpSpec | undefined {
   let spec: OpSpec | undefined;
   switch (op) {
     case 'install-package': {
-      const o = c.object(raw, path, ['op', 'packages', 'dev', 'tag', 'buildScripts']);
+      const o = c.object(raw, path, [
+        'op',
+        'packages',
+        'dev',
+        'tag',
+        'buildScripts',
+        'installScripts',
+      ]);
       if (!o) return undefined;
       const packages = c.strings(o.packages, `${path}.packages`, true);
       packages?.forEach((p, i) => {
@@ -178,6 +203,7 @@ function checkOp(c: Check, raw: unknown, path: string): OpSpec | undefined {
           c.fail(`${path}.buildScripts[${i}]`, 'is not a valid package name');
       });
       const dev = c.optionalBool(o, 'dev', path);
+      const installScripts = c.optionalBool(o, 'installScripts', path);
       const tag = c.optionalString(o, 'tag', path);
       if (tag !== undefined && !TAG_RE.test(tag))
         c.fail(`${path}.tag`, 'is not a valid version or dist-tag');
@@ -188,6 +214,7 @@ function checkOp(c: Check, raw: unknown, path: string): OpSpec | undefined {
           ...(dev !== undefined ? { dev } : {}),
           ...(tag !== undefined ? { tag } : {}),
           ...(buildScripts !== undefined ? { buildScripts } : {}),
+          ...(installScripts !== undefined ? { installScripts } : {}),
         };
       }
       break;
@@ -225,6 +252,22 @@ function checkOp(c: Check, raw: unknown, path: string): OpSpec | undefined {
           callArgs,
           ...(ensureSourcemap !== undefined ? { ensureSourcemap } : {}),
         };
+      }
+      break;
+    }
+    case 'add-sdk-init': {
+      const o = c.object(raw, path, ['op', 'runtime', 'importFrom', 'tokenExpr']);
+      if (!o) return undefined;
+      const runtime = SDK_RUNTIMES.find((r) => r === o.runtime);
+      if (!runtime) c.fail(`${path}.runtime`, `must be one of ${SDK_RUNTIMES.join(', ')}`);
+      const importFrom = c.string(o, 'importFrom', path);
+      if (importFrom !== undefined && !SDK_PACKAGE_RE.test(importFrom))
+        c.fail(`${path}.importFrom`, 'must be a package in the @bugsee scope');
+      const tokenExpr = c.optionalString(o, 'tokenExpr', path);
+      if (tokenExpr !== undefined && !TOKEN_EXPR_RE.test(tokenExpr))
+        c.fail(`${path}.tokenExpr`, 'must be a member expression such as process.env.NAME');
+      if (runtime && importFrom !== undefined) {
+        spec = { op, runtime, importFrom, ...(tokenExpr !== undefined ? { tokenExpr } : {}) };
       }
       break;
     }

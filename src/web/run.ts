@@ -1,6 +1,7 @@
 import type { WizardOptions } from '../core/context.js';
 import type { Logger } from '../core/logger.js';
 import type { ManualSnippet } from '../core/step.js';
+import { type EntryFile, findEntry } from '../engine/entry-detect.js';
 import { executeRecipe } from '../engine/execute.js';
 import { createManifestRecorder, rollbackFromManifest } from '../engine/manifest.js';
 import {
@@ -31,6 +32,7 @@ import {
   withoutWizardChanges,
 } from './preconditions.js';
 import { clackPrompts, type Prompts } from './prompts.js';
+import { chooseRuntime, type RuntimeChoice } from './runtime.js';
 import { resolveSdkVersion, type SdkVersionQuery } from './sdk-version.js';
 import { checkSupported, SDK_TAG } from './versions.js';
 
@@ -182,7 +184,11 @@ function preview(text: string): string[] {
 }
 
 /** What a step will actually write or run: the recipe's free-text fields, shown rather than hidden behind a title. */
-function opDetails(op: OpSpec, pm: DetectedPackageManager | null): string[] {
+function opDetails(
+  op: OpSpec,
+  pm: DetectedPackageManager | null,
+  entry: EntryFile | undefined,
+): string[] {
   switch (op.op) {
     case 'install-package': {
       const pkgs = op.packages.map((p) => (op.tag ? `${p}@${op.tag}` : p));
@@ -210,6 +216,17 @@ function opDetails(op: OpSpec, pm: DetectedPackageManager | null): string[] {
       return [
         `      adds ${inline(`${op.importName}(${op.callArgs})`)} to the ${op.target} plugins, imported from "${inline(op.importFrom)}"`,
       ];
+    case 'add-sdk-init': {
+      const token = op.tokenExpr === undefined ? 'your token' : op.tokenExpr;
+      const where =
+        entry === undefined
+          ? 'no entry file was found: a snippet to paste will be shown instead'
+          : `edits ${inline(entry.file)} (found via ${inline(entry.via)})`;
+      return [
+        `      ${where}`,
+        `      adds import { launch } from "${inline(op.importFrom)}" and launch(${inline(token)})`,
+      ];
+    }
     case 'set-json-key':
       return [
         `      sets ${inline(op.path.join('.'))} in ${inline(op.file)} to ${inline(JSON.stringify(op.value))}`,
@@ -223,10 +240,14 @@ function opDetails(op: OpSpec, pm: DetectedPackageManager | null): string[] {
   }
 }
 
-function planText(recipe: Recipe, pm: DetectedPackageManager | null): string {
+function planText(
+  recipe: Recipe,
+  pm: DetectedPackageManager | null,
+  entry: EntryFile | undefined,
+): string {
   return [
     'Planned changes:',
-    ...recipe.ops.flatMap((op) => [`  - ${opToStep(op).title}`, ...opDetails(op, pm)]),
+    ...recipe.ops.flatMap((op) => [`  - ${opToStep(op).title}`, ...opDetails(op, pm, entry)]),
   ].join('\n');
 }
 
@@ -286,30 +307,52 @@ export async function runJavaScriptInstall(
   });
   log.debug(`Resolving recipes for SDK ${sdkVersion}.`);
 
-  let resolved: ResolvedRecipe;
-  try {
-    resolved = await deps.resolveRecipe({
-      platform: `javascript-${det.buildTool ?? 'cli'}`,
-      sdkVersion,
-      engine: WIZARD_VERSION,
-    });
-  } catch (err) {
-    if (!(err instanceof RecipeStoreError)) throw err;
-    log.error(err.message);
-    return failed('recipe-unavailable', err.message);
-  }
-  if (resolved.warning !== undefined) log.warn(resolved.warning);
+  const resolve = async (platform: string): Promise<ResolvedRecipe | WizardRunResult> => {
+    try {
+      const found = await deps.resolveRecipe({ platform, sdkVersion, engine: WIZARD_VERSION });
+      if (found.warning !== undefined) log.warn(found.warning);
+      return found;
+    } catch (err) {
+      if (!(err instanceof RecipeStoreError)) throw err;
+      log.error(err.message);
+      return failed('recipe-unavailable', err.message);
+    }
+  };
 
-  const recipe: Recipe = { ...resolved.recipe, ops: [...resolved.recipe.ops, IGNORE_MANIFEST_DIR] };
-  log.info(planText(recipe, packageManager));
-  if (recipe.notes !== undefined) log.info(`Notes:\n${recipe.notes}`);
+  // The runtime recipe (SDK install + init) comes first, the build-tool recipe (source maps) after it.
+  const choice: RuntimeChoice = await chooseRuntime(det, opts, deps.prompts);
+  let runtimeRecipe: ResolvedRecipe | undefined;
+  if ('skip' in choice) {
+    log.info(`Skipping SDK install and init: ${choice.skip}`);
+  } else {
+    const found = await resolve(choice.platform);
+    if ('ok' in found) return found;
+    runtimeRecipe = found;
+  }
+  const buildTool = await resolve(`javascript-${det.buildTool ?? 'cli'}`);
+  if ('ok' in buildTool) return buildTool;
+
+  const parts = [runtimeRecipe, buildTool].flatMap((r) => (r === undefined ? [] : [r]));
+  const recipe: Recipe = {
+    ...buildTool.recipe,
+    ops: [...parts.flatMap((r) => r.recipe.ops), IGNORE_MANIFEST_DIR],
+  };
+  const entry =
+    runtimeRecipe !== undefined && !('skip' in choice)
+      ? await findEntry(packageDir, choice.runtime)
+      : undefined;
+  log.info(planText(recipe, packageManager, entry));
+  for (const r of parts) if (r.recipe.notes !== undefined) log.info(`Notes:\n${r.recipe.notes}`);
   if (!opts.nonInteractive && !opts.yes && !opts.dryRun) {
     if (!(await deps.prompts.confirm('Apply these changes?'))) throw new CancelledError();
   }
 
   const recorder = createManifestRecorder(
     packageDir,
-    { wizard: WIZARD_VERSION, recipes: [{ id: recipe.id, revision: resolved.revision }] },
+    {
+      wizard: WIZARD_VERSION,
+      recipes: parts.map((r) => ({ id: r.recipe.id, revision: r.revision })),
+    },
     { cwd: packageDir, ignoreInGit: false },
   );
   const ctx: RecipeContext = {

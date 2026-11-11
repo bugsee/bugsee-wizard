@@ -81,6 +81,44 @@ interface Case {
   steps: [string, string, string][];
   /** Files and what they must contain after the first run. */
   contains: [string, string[]][];
+  /** The runtime recipe (SDK install + init) that runs first, when the project is a plain runtime. */
+  runtime?: Runtime;
+}
+
+interface Runtime {
+  platform: string;
+  steps: [string, string, string][];
+  install: string[];
+  contains: [string, string[]][];
+}
+
+const applied = (id: string): [string, string, string] => [id, 'applied', 'skipped'];
+
+/** What the runtime recipes do on a fixture whose entry file is `entry`. */
+function runtimeCase(
+  kind: 'browser-vite' | 'browser' | 'node',
+  pm: string,
+  entry: string,
+  needles: string[],
+): Runtime {
+  const envFile = kind === 'browser-vite' ? '.env.local' : '.env';
+  const key = kind === 'browser-vite' ? 'VITE_BUGSEE_APP_TOKEN' : 'BUGSEE_APP_TOKEN';
+  const withEnv = kind !== 'browser';
+  return {
+    platform: `javascript-${kind}`,
+    install: [pm === 'npm' ? 'install' : 'add', '@bugsee/bugsee@beta'],
+    steps: [
+      applied('install-package:@bugsee/bugsee'),
+      ...(withEnv
+        ? [applied(`ensure-gitignore:${envFile}`), applied(`write-env-var:${envFile}:${key}`)]
+        : []),
+      applied(`add-sdk-init:${kind === 'node' ? 'node' : 'browser'}`),
+    ],
+    contains: [
+      [entry, ['// bugsee-wizard', ...needles]],
+      ...(withEnv ? ([[envFile, [`${key}=${TOKEN}`]]] as [string, string[]][]) : []),
+    ],
+  };
 }
 
 const ENV_STEP = `write-env-var:${ENV_FILE}:BUGSEE_APP_TOKEN`;
@@ -98,11 +136,13 @@ function pluginCase(
   pkg: string,
   importName: string,
   config: string,
+  runtime?: Runtime,
 ): Case {
   return {
     id,
     fixture,
     pm,
+    ...(runtime ? { runtime } : {}),
     install: [pm === 'npm' ? 'install' : 'add', '-D', `${pkg}@beta`],
     steps: [
       [`install-package:${pkg}`, 'applied', 'skipped'],
@@ -118,11 +158,19 @@ function pluginCase(
   };
 }
 
-function cliCase(id: string, fixture: string, pm: string, file: string, tsc: boolean): Case {
+function cliCase(
+  id: string,
+  fixture: string,
+  pm: string,
+  file: string,
+  tsc: boolean,
+  runtime?: Runtime,
+): Case {
   return {
     id,
     fixture,
     pm,
+    ...(runtime ? { runtime } : {}),
     install: [pm === 'npm' ? 'install' : 'add', '-D', '@bugsee/cli'],
     steps: [
       ['install-package:@bugsee/cli', 'applied', 'skipped'],
@@ -152,6 +200,10 @@ const CASES: Case[] = [
     '@bugsee/vite-plugin',
     'bugseeVitePlugin',
     'vite.config.ts',
+    runtimeCase('browser-vite', 'npm', 'src/main.tsx', [
+      '/// <reference types="vite/client" />',
+      'launch(import.meta.env.VITE_BUGSEE_APP_TOKEN);',
+    ]),
   ),
   pluginCase(
     'webpack',
@@ -160,6 +212,7 @@ const CASES: Case[] = [
     '@bugsee/webpack-plugin',
     'bugseeWebpackPlugin',
     'webpack.config.js',
+    runtimeCase('browser', 'yarn', 'src/index.js', [`launch('${TOKEN}');`]),
   ),
   pluginCase(
     'rollup',
@@ -168,11 +221,34 @@ const CASES: Case[] = [
     '@bugsee/bundler-plugin-core',
     'bugseeRollupPlugin',
     'rollup.config.mjs',
+    runtimeCase('node', 'npm', 'src/index.js', ['launch(process.env.BUGSEE_APP_TOKEN);']),
   ),
+  // a framework: no runtime recipe yet, only the build tool's
   cliCase('cli', 'angular-spa', 'npm', 'package.json', false),
-  cliCase('tsc', 'tsc-node', 'npm', 'tsconfig.json', true),
-  cliCase('esbuild', 'esbuild-node', 'npm', 'package.json', false),
-  cliCase('rspack', 'rspack-app', 'pnpm', 'package.json', false),
+  cliCase(
+    'tsc',
+    'tsc-node',
+    'npm',
+    'tsconfig.json',
+    true,
+    runtimeCase('node', 'npm', 'src/index.ts', ['launch(process.env.BUGSEE_APP_TOKEN as string);']),
+  ),
+  cliCase(
+    'esbuild',
+    'esbuild-node',
+    'npm',
+    'package.json',
+    false,
+    runtimeCase('node', 'npm', 'src/index.js', ['launch(process.env.BUGSEE_APP_TOKEN);']),
+  ),
+  cliCase(
+    'rspack',
+    'rspack-app',
+    'pnpm',
+    'package.json',
+    false,
+    runtimeCase('browser', 'pnpm', 'src/index.js', [`launch('${TOKEN}');`]),
+  ),
 ];
 
 function outcomes(r: WizardRunResult): [string, string][] {
@@ -196,14 +272,18 @@ describe.skipIf(process.platform === 'win32')('bundled recipes, end to end', () 
       const deps = () => makeDeps(captureOutput(), { resolveRecipe: realStore(platforms) });
 
       const first = await runJavaScriptInstall(baseOpts(sb.project), deps());
-      expect(platforms).toEqual([`javascript-${c.id}`]);
+      const steps = [...(c.runtime?.steps ?? []), ...c.steps];
+      expect(platforms).toEqual([...(c.runtime ? [c.runtime.platform] : []), `javascript-${c.id}`]);
       expect(first.ok).toBe(true);
-      expect(outcomes(first)).toEqual(c.steps.map(([id, o]) => [id, o]));
-      expect(first.incomplete).toBe(c.steps.some(([, o]) => o === 'manual'));
+      expect(outcomes(first)).toEqual(steps.map(([id, o]) => [id, o]));
+      expect(first.incomplete).toBe(steps.some(([, o]) => o === 'manual'));
       const calls = (await sb.npmCalls()) as { pm?: string; args: string[] }[];
-      expect(calls).toEqual([expect.objectContaining({ args: c.install })]);
-      expect(calls[0]?.pm ?? 'npm').toBe(c.pm);
-      for (const [file, needles] of c.contains) {
+      expect(calls).toEqual([
+        ...(c.runtime ? [expect.objectContaining({ args: c.runtime.install })] : []),
+        expect.objectContaining({ args: c.install }),
+      ]);
+      for (const call of calls) expect(call.pm ?? 'npm').toBe(c.pm);
+      for (const [file, needles] of [...(c.runtime?.contains ?? []), ...c.contains]) {
         const text = await readFile(join(sb.project, file), 'utf8');
         for (const n of needles) expect(text).toContain(n);
       }
@@ -211,9 +291,9 @@ describe.skipIf(process.platform === 'win32')('bundled recipes, end to end', () 
 
       const second = await runJavaScriptInstall(baseOpts(sb.project), deps());
       expect(second.ok).toBe(true);
-      expect(outcomes(second)).toEqual(c.steps.map(([id, , o]) => [id, o]));
+      expect(outcomes(second)).toEqual(steps.map(([id, , o]) => [id, o]));
       expect(await tree(sb.project)).toEqual(installed);
-      expect(await sb.npmCalls()).toHaveLength(1);
+      expect(await sb.npmCalls()).toHaveLength(calls.length);
 
       const un = await runJavaScriptUninstall(
         baseOpts(sb.project, { yes: true }),

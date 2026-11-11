@@ -42,6 +42,28 @@ export const VITE_RECIPE: Recipe = parseRecipe({
   ],
 });
 
+const RUNTIME_PLATFORM = /^javascript-(?:browser|node|bun)(?:-|$)/;
+export const emptyRuntimeRecipe = (platform: string): Recipe =>
+  parseRecipe({
+    schema: 1,
+    id: platform,
+    kind: 'runtime',
+    platform,
+    engine: { min: '0.0.0' },
+    sdk: { range: '*' },
+    detect: [],
+    ops: [],
+  });
+
+/** A resolveRecipe for tests of the build-tool flow: that recipe for it, an empty one for runtime platforms. */
+export const resolveBuildToolOnly =
+  (recipe: Recipe, revision = 'r1') =>
+  async (q: { platform: string }) => ({
+    recipe: RUNTIME_PLATFORM.test(q.platform) ? emptyRuntimeRecipe(q.platform) : recipe,
+    revision,
+    source: 'snapshot' as const,
+  });
+
 /**
  * A fake `npm` first on PATH (run for real through runChild, shell false): it records its
  * arguments and adds each named package to package.json the way npm would, plus a lockfile.
@@ -172,8 +194,9 @@ export function baseOpts(cwd: string, over: Partial<WizardOptions> = {}): Wizard
 
 export function makeDeps(cap: Captured, over: Partial<Deps> = {}): Partial<Deps> {
   return {
-    resolveRecipe: vi.fn(async () => ({
-      recipe: VITE_RECIPE,
+    // runtime (SDK install + init) recipes are empty here: those flows have their own tests
+    resolveRecipe: vi.fn(async (q: { platform: string }) => ({
+      recipe: RUNTIME_PLATFORM.test(q.platform) ? emptyRuntimeRecipe(q.platform) : VITE_RECIPE,
       revision: 'r1',
       source: 'snapshot' as const,
     })),

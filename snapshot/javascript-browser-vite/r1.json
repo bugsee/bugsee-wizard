@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "id": "javascript-browser-vite",
+  "kind": "runtime",
+  "platform": "javascript-browser-vite",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Vite browser app: the SDK is initialised in the entry module that index.html loads. The token is read from import.meta.env.VITE_BUGSEE_APP_TOKEN, which Vite inlines at build time from .env.local (git-ignored); set VITE_BUGSEE_APP_TOKEN in CI and hosting builds too, otherwise the production bundle has no token.",
+  "detect": [
+    {
+      "dependency": "vite"
+    }
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/bugsee"],
+      "tag": "beta",
+      "installScripts": false
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env.local"
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env.local",
+      "key": "VITE_BUGSEE_APP_TOKEN",
+      "from": "token"
+    },
+    {
+      "op": "add-sdk-init",
+      "runtime": "browser",
+      "importFrom": "@bugsee/bugsee",
+      "tokenExpr": "import.meta.env.VITE_BUGSEE_APP_TOKEN"
+    }
+  ]
+}

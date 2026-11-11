@@ -216,6 +216,8 @@ Most specific wins (framework over bundler over `typescript`); detection never e
 > covered by this plan**: the first PRs ship source-map wiring only, and runtime SDK install/init needs its own task
 > (a runtime recipe kind in the snapshot, plus an entry-file op). The deferrals D3 and C8 (framework-specific init)
 > are unchanged. Owner to schedule.
+>
+> **Update (runtime init, first slice, issue #8):** done for the plain runtimes (browser, Node, Bun): `add-sdk-init` op, `kind: runtime` snapshot recipes `javascript-browser`, `javascript-browser-vite`, `javascript-node`, `javascript-bun`, run ahead of the build-tool recipe. Frameworks, Electron, edge and workers remain a later wave.
 
 - [ ] **Step 1:** Tests: each fixture detects the expected runtime/framework/build tool; Electron fixture ⇒ `runtimes` includes `electron`; a version below `SUPPORTED[...].min` warns and continues; non-JS dir ⇒ `null`.
 - [ ] **Step 2:** `runJavaScriptRecipe`: git precondition (clean tree, `--ignore-git-changes`), pick package (prompt or `--package`), resolve token, resolve recipes for the detected build tool, `executeRecipe`, write manifest, print outro with production-build test steps. Exit code: `failed` ⇒ 1, `incomplete` with `--non-interactive` ⇒ 3, else 0.

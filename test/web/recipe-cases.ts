@@ -140,3 +140,56 @@ export async function scriptTemplate(platform: string): Promise<string> {
   if (op?.op !== 'write-file') throw new Error(`${platform} has no write-file op`);
   return op.template;
 }
+
+/** Runtime recipes: install the SDK package and initialise it in the entry file. */
+export const RUNTIME_IDS = ['browser-vite', 'browser', 'node', 'bun'] as const;
+export type RuntimeKey = (typeof RUNTIME_IDS)[number];
+
+const runtimeEnvOps = (file: string, key: string): OpSpec[] => [
+  { op: 'ensure-gitignore', line: file },
+  { op: 'write-env-var', file, key, from: 'token' },
+];
+
+export const EXPECTED_RUNTIME_OPS: Record<RuntimeKey, OpSpec[]> = {
+  'browser-vite': [
+    { op: 'install-package', packages: ['@bugsee/bugsee'], tag: 'beta', installScripts: false },
+    ...runtimeEnvOps('.env.local', 'VITE_BUGSEE_APP_TOKEN'),
+    {
+      op: 'add-sdk-init',
+      runtime: 'browser',
+      importFrom: '@bugsee/bugsee',
+      tokenExpr: 'import.meta.env.VITE_BUGSEE_APP_TOKEN',
+    },
+  ],
+  browser: [
+    { op: 'install-package', packages: ['@bugsee/bugsee'], tag: 'beta', installScripts: false },
+    { op: 'add-sdk-init', runtime: 'browser', importFrom: '@bugsee/bugsee' },
+  ],
+  node: [
+    { op: 'install-package', packages: ['@bugsee/bugsee'], tag: 'beta', installScripts: false },
+    ...runtimeEnvOps('.env', 'BUGSEE_APP_TOKEN'),
+    {
+      op: 'add-sdk-init',
+      runtime: 'node',
+      importFrom: '@bugsee/bugsee',
+      tokenExpr: 'process.env.BUGSEE_APP_TOKEN',
+    },
+  ],
+  bun: [
+    { op: 'install-package', packages: ['@bugsee/bun'], tag: 'beta', installScripts: false },
+    ...runtimeEnvOps('.env', 'BUGSEE_APP_TOKEN'),
+    {
+      op: 'add-sdk-init',
+      runtime: 'bun',
+      importFrom: '@bugsee/bun',
+      tokenExpr: 'process.env.BUGSEE_APP_TOKEN',
+    },
+  ],
+};
+
+export const EXPECTED_RUNTIME_NOTES: Record<RuntimeKey, RegExp[]> = {
+  'browser-vite': [/VITE_BUGSEE_APP_TOKEN/, /CI/],
+  browser: [/entry file/, /not a secret/],
+  node: [/--env-file/, /BUGSEE_APP_TOKEN/],
+  bun: [/loads it|loads from \.env|automatically/, /@bugsee\/bun/],
+};

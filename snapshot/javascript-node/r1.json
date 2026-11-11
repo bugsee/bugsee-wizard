@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "id": "javascript-node",
+  "kind": "runtime",
+  "platform": "javascript-node",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Node.js app: the SDK is initialised at the top of the entry file (found from the start script, package.json main/bin, or a conventional name). The token is read from process.env.BUGSEE_APP_TOKEN and written to .env (git-ignored). Node does not load .env by itself: start the app with node --env-file=.env or set BUGSEE_APP_TOKEN in the environment (production, CI, containers).",
+  "detect": [
+    {
+      "dependency": "@types/node"
+    }
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/bugsee"],
+      "tag": "beta",
+      "installScripts": false
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env"
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env",
+      "key": "BUGSEE_APP_TOKEN",
+      "from": "token"
+    },
+    {
+      "op": "add-sdk-init",
+      "runtime": "node",
+      "importFrom": "@bugsee/bugsee",
+      "tokenExpr": "process.env.BUGSEE_APP_TOKEN"
+    }
+  ]
+}
