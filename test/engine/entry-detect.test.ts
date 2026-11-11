@@ -364,6 +364,16 @@ describe('findEntry (review follow-ups)', () => {
       });
     });
 
+    it('a closing tag with stray attributes or whitespace still closes the script', async () => {
+      await put(
+        'index.html',
+        '<script type="module">import "./src/a.ts"</script\t\n bar><script type="module" src="/src/b.ts"></script>',
+      );
+      await put('src/a.ts');
+      await put('src/b.ts');
+      expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('src/a.ts');
+    });
+
     it('skips service-worker and worker registration scripts', async () => {
       await put(
         'index.html',

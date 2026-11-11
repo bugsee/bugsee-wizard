@@ -232,7 +232,9 @@ async function htmlScript(root: string, htmlRel: string): Promise<string | undef
   } catch {
     return undefined;
   }
-  for (const m of stripHtmlComments(html).matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+  for (const m of stripHtmlComments(html).matchAll(
+    /<script\b([^>]*)>([\s\S]*?)<\/script[^>]*>/gi,
+  )) {
     const attrs = m[1] ?? '';
     // a classic script cannot take an import line: only module scripts are entries
     if (!/\btype\s*=\s*["']?module\b/i.test(attrs)) continue;

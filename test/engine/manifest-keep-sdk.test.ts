@@ -57,7 +57,7 @@ async function wizardRun(): Promise<string> {
     action: 'edited',
     before: ENTRY,
     after: res.code,
-    marker: 'bugsee-wizard',
+    marker: 'bugsee-wizard:sdk-init',
   });
   await rec.flush();
   return res.code;
@@ -136,5 +136,31 @@ describe('uninstall when the init cannot be taken out', () => {
     const res = await roll(true);
     expect(await readFile(p('package.json'), 'utf8')).toBe(before);
     expect(res.results.find((r) => r.file === 'package.json')?.note).toMatch(/kept/);
+  });
+
+  it('a bundler-plugin edit that cannot be reverted does not keep the SDK (only the init entry does)', async () => {
+    await wizardRun();
+    const cfg = 'export default { plugins: [] };\n';
+    const cfgAfter =
+      "import { p } from '@bugsee/vite-plugin'; // bugsee-wizard\nexport default { plugins: [p()] };\n";
+    await writeFile(
+      p('vite.config.js'),
+      `${cfgAfter}// user note\nconst x = 1;\n`.replace('plugins: [p()]', 'plugins: [ p( ) ]'),
+    );
+    const rec = createManifestRecorder(tmp.dir, { wizard: 't', recipes: [] }, { cwd: tmp.dir });
+    rec.record({
+      file: 'vite.config.js',
+      action: 'edited',
+      before: cfg,
+      after: cfgAfter,
+      marker: 'bugsee-wizard',
+    });
+    await rec.flush();
+    const res = await roll();
+    expect(res.results.find((r) => r.file === 'vite.config.js')?.outcome).toBe('manual');
+    expect(res.results.find((r) => r.file === 'server.js')?.outcome).toBe('reverted');
+    const pkg = JSON.parse(await readFile(p('package.json'), 'utf8'));
+    expect(pkg.dependencies['@bugsee/bugsee']).toBeUndefined();
+    expect(await readFile(p('package-lock.json'), 'utf8')).toBe(LOCK_BEFORE);
   });
 });

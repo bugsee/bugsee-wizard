@@ -53,7 +53,13 @@ describe('add-sdk-init op', () => {
     expect(after).toContain("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
     expect(after).toContain("launch('tok_SECRET_123').catch(() => {}); // bugsee-wizard");
     expect(ctx.entries).toEqual([
-      { file: 'src/main.js', action: 'edited', before: MAIN, after, marker: 'bugsee-wizard' },
+      {
+        file: 'src/main.js',
+        action: 'edited',
+        before: MAIN,
+        after,
+        marker: 'bugsee-wizard:sdk-init',
+      },
     ]);
     expect(ctx.logs.join('\n')).not.toContain('tok_SECRET');
     expect((await step.precheck(ctx)).kind).toBe('satisfied');

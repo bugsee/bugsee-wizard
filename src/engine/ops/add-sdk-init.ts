@@ -17,7 +17,8 @@ import { manifestPath, readBytes, resolveInside, restoreBytes } from './shared.j
 
 type Spec = Extract<OpSpec, { op: 'add-sdk-init' }>;
 
-const MARKER = 'bugsee-wizard';
+/** The manifest marker of this op's edit (distinct from the bundler plugin's, so uninstall can tell them apart). */
+const MANIFEST_MARKER = 'bugsee-wizard:sdk-init';
 /** Shown (and recorded) when no entry file could be found: the user knows which file it is. */
 const NO_ENTRY = 'your entry file';
 
@@ -198,7 +199,7 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
           action: 'edited',
           before: edit.before,
           after: edit.after,
-          marker: MARKER,
+          marker: MANIFEST_MARKER,
         });
       }
       if (hasBugseeMarker(edit.after) && (await envLoaderMissing(spec, ctx, edit.after))) {

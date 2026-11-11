@@ -527,7 +527,7 @@ export async function rollbackFromManifest(ctx: {
       } else {
         r = await rollbackEntry(ctx.dir, root, e, ctx.dryRun, packages);
       }
-      if (e.marker === 'bugsee-wizard' && e.action === 'edited' && r.outcome === 'manual')
+      if (e.marker === 'bugsee-wizard:sdk-init' && e.action === 'edited' && r.outcome === 'manual')
         keepSdk = true;
       byIndex.set(i, r);
     } catch (err) {
