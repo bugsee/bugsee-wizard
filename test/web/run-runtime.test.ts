@@ -62,7 +62,9 @@ describe.skipIf(process.platform === 'win32')('runtime recipes through the run',
     expect(r.snippets?.[0]).toMatchObject({ title: 'Initialise Bugsee in your app' });
     expect(r.snippets?.[0]?.code).toContain("from '@bugsee/bugsee'");
     expect(r.snippets?.[0]?.code).toContain('nextjs');
-    expect(r.snippets?.[0]?.code).toMatch(/First install the SDK: npm install @bugsee\/bugsee@beta/);
+    expect(r.snippets?.[0]?.code).toMatch(
+      /First install the SDK: npm install @bugsee\/bugsee@beta/,
+    );
     expect(r.snippets?.[0]?.code).toContain('CommonJS');
     expect(r.snippets?.[0]?.code).not.toContain(TOKEN);
     expect(exitCodeFor(r, true)).toBe(3);
