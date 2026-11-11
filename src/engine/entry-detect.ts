@@ -105,12 +105,12 @@ const VALUE_FLAGS = new Set([
 ]);
 
 /**
- * Script paths in a shell command, the last command of a chain first (`migrate && node server.js`
+ * Script paths of the last command of a chain that names one (`migrate && node server.js`
  * runs the server last). Flag values (`--import ./x.mjs`) and `NAME=value` words are not scripts.
  */
 function scriptTokens(command: string): string[] {
-  const out: string[] = [];
   for (const part of command.split(/&&|\|\||[;|]/).reverse()) {
+    const out: string[] = [];
     const words = part.split(/\s+/).map((t) => t.replace(/^["']|["']$/g, ''));
     for (let i = 0; i < words.length; i++) {
       const w = words[i] ?? '';
@@ -118,8 +118,10 @@ function scriptTokens(command: string): string[] {
       else if (w !== '' && !w.startsWith('-') && !w.includes('=') && SCRIPT_EXT_RE.test(w))
         out.push(w);
     }
+    // only the last command that names a script is the app; an earlier one is a setup step
+    if (out.length > 0) return out;
   }
-  return out;
+  return [];
 }
 
 async function readPackage(root: string): Promise<Record<string, unknown>> {

@@ -23,7 +23,7 @@ function platformFor(runtime: SdkRuntime, det: JsDetection): string {
 }
 
 /** A package with an entry point and nothing that starts it: importing it must not start Bugsee. */
-async function looksLikeLibrary(dir: string): Promise<boolean> {
+async function looksLikeLibrary(dir: string, bun: boolean): Promise<boolean> {
   let pkg: Record<string, unknown>;
   try {
     pkg = (await readPackageJson(join(dir, 'package.json'))).data;
@@ -32,7 +32,10 @@ async function looksLikeLibrary(dir: string): Promise<boolean> {
   }
   const scripts = typeof pkg.scripts === 'object' && pkg.scripts !== null ? pkg.scripts : {};
   const starts = ['start', 'dev', 'serve'].some((n) => n in scripts);
-  const entry = ['main', 'module', 'exports'].some((k) => pkg[k] !== undefined);
+  // `bun init` names the app's own entry in `module`: not library evidence on Bun
+  const entry = (bun ? ['main', 'exports'] : ['main', 'module', 'exports']).some(
+    (k) => pkg[k] !== undefined,
+  );
   return entry && !starts && pkg.bin === undefined;
 }
 
@@ -62,7 +65,7 @@ export async function chooseRuntime(
     };
   }
   const server = !candidates.includes('browser');
-  if (server && (await looksLikeLibrary(det.packageDir))) {
+  if (server && (await looksLikeLibrary(det.packageDir, candidates.includes('bun')))) {
     return {
       skip: 'this package looks like a library (an entry point and nothing that starts it): initialising Bugsee there would run it inside every app that imports the library. Add the SDK to your application instead.',
     };

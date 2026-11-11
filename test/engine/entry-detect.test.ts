@@ -244,4 +244,16 @@ describe('findEntry (review follow-ups)', () => {
     await put('tsconfig.app.json', '{ "compilerOptions": { "types": ["vite/client"] } }');
     expect(await hasViteClientTypes(tmp.dir)).toBe(true);
   });
+
+  it('only the last command of a chain is the app: an unresolved one does not fall back to an earlier one', async () => {
+    await pkg({ scripts: { start: 'node scripts/migrate.js && node dist/server.js' } });
+    await put('scripts/migrate.js');
+    expect(await findEntry(tmp.dir, 'node')).toBeUndefined();
+    await pkg({
+      scripts: { start: 'node scripts/migrate.js && node dist/server.js | tee log' },
+      main: 'real.js',
+    });
+    await put('real.js');
+    expect(await findEntry(tmp.dir, 'node')).toEqual({ file: 'real.js', via: 'package.json main' });
+  });
 });

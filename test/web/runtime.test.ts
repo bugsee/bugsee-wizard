@@ -165,4 +165,23 @@ describe('chooseRuntime (libraries)', () => {
       await chooseRuntime(det({ packageDir: tmp.dir, runtimes: ['browser'] }), opts, prompts()),
     ).toMatchObject({ runtime: 'browser' });
   });
+
+  it('a fresh `bun init` project (module entry, no scripts) is an app; for Node the module field still marks a library', async () => {
+    await mkdir(tmp.dir, { recursive: true });
+    await writeFile(
+      join(tmp.dir, 'package.json'),
+      JSON.stringify({ module: 'index.ts', type: 'module', private: true }),
+    );
+    expect(
+      await chooseRuntime(det({ packageDir: tmp.dir, runtimes: ['bun'] }), opts, prompts()),
+    ).toEqual({
+      runtime: 'bun',
+      platform: 'javascript-bun',
+    });
+    expect(
+      await chooseRuntime(det({ packageDir: tmp.dir, runtimes: ['node'] }), opts, prompts()),
+    ).toEqual({
+      skip: expect.stringMatching(/library/i),
+    });
+  });
 });
