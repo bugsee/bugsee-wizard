@@ -145,6 +145,20 @@ describe('chooseRuntime (libraries)', () => {
       { exports: './x.js', scripts: { dev: 'tsc -w', build: 'tsc' } },
       { main: 'x.js', devDependencies: { express: '4' }, scripts: { test: 'vitest' } },
       { main: 'x.js', scripts: { dev: 'rollup -c -w' } },
+      // published libraries: a dev runner on their own entry, or a server framework used by a middleware, is not an app
+      {
+        exports: { '.': { import: './dist/index.js' } },
+        files: ['dist'],
+        main: './dist/index.js',
+        scripts: { dev: 'tsx watch src/index.ts' },
+      },
+      { files: ['dist'], main: 'dist/index.js', dependencies: { express: '4' } },
+      {
+        exports: './dist/index.js',
+        types: './dist/index.d.ts',
+        publishConfig: { access: 'public' },
+        scripts: { dev: 'tsx watch src/index.ts' },
+      },
     ]) {
       expect(await at(pkg)).toEqual({ skip: expect.stringMatching(/library/i) });
     }
@@ -160,6 +174,15 @@ describe('chooseRuntime (libraries)', () => {
       { main: 'index.js', dependencies: { fastify: '4' }, scripts: { test: 'x' } },
       { main: 'index.js', scripts: { dev: 'nodemon index.js' } },
       { main: 'index.js', scripts: { dev: 'tsx watch src/server.ts' } },
+      // private (never published) is an app even with an exports field, and its dev runner on its own entry counts
+      { private: true, exports: './dist/index.js', scripts: { dev: 'tsx watch src/index.ts' } },
+      { private: true, exports: './x.js', scripts: { dev: 'tsx watch src/server.ts' } },
+      // a published package whose dev script runs a playground, not its own entry, is still shown to be run
+      {
+        exports: './dist/index.js',
+        main: 'dist/index.js',
+        scripts: { dev: 'tsx watch playground/server.ts' },
+      },
       { main: 'index.js', scripts: { start: 'NODE_ENV=production node --env-file=.env index.js' } },
       {},
     ]) {

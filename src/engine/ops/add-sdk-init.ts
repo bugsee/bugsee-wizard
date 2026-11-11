@@ -1,5 +1,5 @@
-import { basename, join } from 'node:path';
-import type { ManualSnippet, Step } from '../../core/step.js';
+import { basename, dirname, join } from 'node:path';
+import type { ApplyResult, ManualSnippet, Step } from '../../core/step.js';
 import { hasBugseeMarker } from '../config-ast.js';
 import { type EntryFile, findEntry, hasViteClientTypes } from '../entry-detect.js';
 import { editTextFile } from '../fs-edit.js';
@@ -33,27 +33,117 @@ async function packageType(dir: string): Promise<string | undefined> {
 
 /** A script that loads an env file for the process: `--env-file`, dotenv's CLI or `-r dotenv/config`. */
 const SCRIPT_LOADS_ENV_RE = /--env-file(?:-if-exists)?\b|\bdotenvx?\b/;
+/** The scripts that start the app (a loader in `test` or `lint` does not load anything for `npm start`). */
+const START_SCRIPT_RE = /^(?:start|dev|serve)(?::.*)?$/;
+/** Files where a platform sets the app's environment. */
+const PLATFORM_FILES = [
+  'Dockerfile',
+  'docker-compose.yml',
+  'docker-compose.yaml',
+  'compose.yml',
+  'compose.yaml',
+  'Procfile',
+  'ecosystem.config.js',
+  'ecosystem.config.cjs',
+  'ecosystem.config.mjs',
+  'fly.toml',
+  'render.yaml',
+  'app.yaml',
+];
+const PROVIDES_RE = /BUGSEE_APP_TOKEN|\benv_file\b|--env-file\b/;
 
-async function scriptsLoadEnv(dir: string): Promise<boolean> {
+async function packageData(dir: string): Promise<Record<string, unknown>> {
   try {
-    const scripts = (await readPackageJson(join(dir, 'package.json'))).data.scripts;
-    return (
-      typeof scripts === 'object' &&
-      scripts !== null &&
-      Object.values(scripts).some((c) => typeof c === 'string' && SCRIPT_LOADS_ENV_RE.test(c))
-    );
+    return (await readPackageJson(join(dir, 'package.json'))).data;
   } catch {
-    return false;
+    return {};
   }
+}
+
+async function scriptsLoadEnv(pkg: Record<string, unknown>): Promise<boolean> {
+  const scripts = pkg.scripts;
+  return (
+    typeof scripts === 'object' &&
+    scripts !== null &&
+    Object.entries(scripts).some(
+      ([name, c]) =>
+        START_SCRIPT_RE.test(name) && typeof c === 'string' && SCRIPT_LOADS_ENV_RE.test(c),
+    )
+  );
+}
+
+const RESOLVE_SUFFIXES = [
+  '',
+  '.js',
+  '.mjs',
+  '.cjs',
+  '.ts',
+  '.mts',
+  '.cts',
+  '.tsx',
+  '.jsx',
+  '/index.js',
+  '/index.ts',
+];
+
+/** Whether a module the entry imports (one level, relative paths only) loads an env file. */
+async function importedModuleLoadsEnv(entryPath: string, src: string): Promise<boolean> {
+  const specs = [
+    ...src.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"](\.{1,2}\/[^'"]+)['"]/g),
+  ]
+    .map((m) => m[1] as string)
+    .slice(0, 20);
+  for (const spec of specs) {
+    for (const suffix of RESOLVE_SUFFIXES) {
+      const file = join(dirname(entryPath), spec + suffix);
+      const text = await readBytes(file).then(
+        (b) => b?.toString('utf8') ?? null,
+        () => null,
+      );
+      if (text !== null) {
+        if (loadsEnvFile(text)) return true;
+        break;
+      }
+    }
+  }
+  return false;
+}
+
+async function platformProvidesEnv(dir: string): Promise<boolean> {
+  for (const f of PLATFORM_FILES) {
+    const text = await readBytes(join(dir, f)).then(
+      (b) => b?.toString('utf8') ?? '',
+      () => '',
+    );
+    if (PROVIDES_RE.test(text)) return true;
+  }
+  return false;
 }
 
 /**
  * Plain Node does not read `.env`: with a token that comes from `process.env` and nothing that loads
- * the file (a start script flag, dotenv in the entry), the SDK would silently never start.
+ * the file (a start script flag, dotenv in the entry or a module it imports, @nestjs/config, a platform
+ * file that sets the variable, or `--env-provided`), the SDK would silently never start.
  */
-async function envLoaderMissing(spec: Spec, ctx: RecipeContext, src: string): Promise<boolean> {
+async function envLoaderMissing(
+  spec: Spec,
+  ctx: RecipeContext,
+  src: string,
+  entryPath: string,
+): Promise<boolean> {
   if (spec.runtime !== 'node' || spec.tokenExpr?.startsWith('process.env.') !== true) return false;
-  return !loadsEnvFile(src) && !(await scriptsLoadEnv(ctx.packageDir));
+  if (ctx.envProvided === true || loadsEnvFile(src)) return false;
+  const pkg = await packageData(ctx.packageDir);
+  const deps = {
+    ...(pkg.dependencies as object | undefined),
+    ...(pkg.devDependencies as object | undefined),
+  };
+  return !(
+    (await scriptsLoadEnv(pkg)) ||
+    '@nestjs/config' in deps ||
+    (await importedModuleLoadsEnv(entryPath, src)) ||
+    (await platformProvidesEnv(ctx.packageDir))
+  );
 }
 
 /**
@@ -94,6 +184,116 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
     ...(spec.tokenExpr !== undefined ? { tokenExpr: spec.tokenExpr } : {}),
   });
 
+  /** One decision path for the real run and the dry run: `write` false changes nothing and records nothing. */
+  const perform = async (ctx: RecipeContext, write: boolean): Promise<ApplyResult | undefined> => {
+    const record = (entry: Parameters<RecipeContext['manifest']['record']>[0]): void => {
+      if (write) ctx.manifest.record(entry);
+    };
+    const found = await locate(ctx);
+    const manual = (file: string, code: string): { manual: ManualSnippet } => {
+      record({ file, action: 'manual' });
+      const name = file === NO_ENTRY ? NO_ENTRY : basename(file);
+      return { manual: { file, title: `Initialise Bugsee in ${name}`, code } };
+    };
+    const loaderSnippet = async (entry: string): Promise<{ manual: ManualSnippet }> => {
+      record({ file: 'package.json', action: 'manual' });
+      // a TypeScript entry is not what node runs: name the built file, or say to add the flag
+      const main = (await packageData(ctx.packageDir)).main;
+      const runnable = /\.[cm]?tsx?$/.test(entry)
+        ? typeof main === 'string' && !/\.[cm]?tsx?$/.test(main)
+          ? main
+          : '<your start command>'
+        : entry;
+      return {
+        manual: {
+          file: 'package.json',
+          title: 'Give Node the Bugsee token',
+          code: [
+            '// Node does not read .env by itself. Bugsee will not start until the token is provided to the process.',
+            '// Start the app with the env file:',
+            runnable.startsWith('<')
+              ? `node --env-file=.env ${runnable}   // i.e. add --env-file=.env to the node command you start the app with`
+              : `node --env-file=.env ${runnable}`,
+            '// or set BUGSEE_APP_TOKEN in the environment (CI, containers, production), or pass --env-provided to the wizard.',
+          ].join('\n'),
+        },
+      };
+    };
+    // the wizard's own earlier init: nothing to edit, only the token may still be missing
+    if (found) {
+      const present = (await readBytes(found.path))?.toString('utf8') ?? '';
+      if (hasBugseeMarker(present)) {
+        return (await envLoaderMissing(spec, ctx, present, found.path))
+          ? loaderSnippet(found.entry.file)
+          : undefined;
+      }
+    }
+    const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom);
+    if (existing !== undefined && existing !== 'unknown') return undefined;
+    if (existing === 'unknown') {
+      const note =
+        '// The project has too many source files to check whether Bugsee is already set up, so nothing was changed.\n// If it is not, add:\n';
+      return manual(NO_ENTRY, `${note}${sdkInitSnippet(probeSpec(), false)}`);
+    }
+    if (!found) {
+      const probe = probeSpec();
+      // the module system of an entry nobody found is unknown: a server shows both forms
+      const esm = sdkInitSnippet(probe, false);
+      return manual(
+        NO_ENTRY,
+        spec.runtime === 'browser'
+          ? esm
+          : `// ES modules:\n${esm}\n\n// CommonJS:\n${sdkInitSnippet(probe, true)}`,
+      );
+    }
+    const file = manifestPath(ctx, found.path);
+    const sdk = await initSpec(ctx, found.entry);
+    // the edit is generated from the text this write replaces (read once, inside the write), so a
+    // change made by someone else in between is never overwritten with output made from older text
+    let snippet: string | undefined;
+    let read = '';
+    const transform = (current: string): string => {
+      read = current;
+      const res = addSdkInit(current, sdk);
+      if ('manual' in res) {
+        snippet = res.manual;
+        return current;
+      }
+      return res.code;
+    };
+    // a dry run decides exactly like a real run, on the same text, but writes nothing
+    const edit = write
+      ? await editTextFile(found.path, transform, { validate: (out) => hasBugseeMarker(out) })
+      : await (async () => {
+          const before = (await readBytes(found.path))?.toString('utf8') ?? '';
+          const after = transform(before);
+          return { changed: after !== before, before, after };
+        })();
+    if (snippet !== undefined) return manual(file, snippet);
+    if (edit.changed && write) {
+      before = Buffer.from(read, 'utf8');
+      editedPath = found.path;
+      record({
+        file,
+        action: 'edited',
+        before: edit.before,
+        after: edit.after,
+        marker: MANIFEST_MARKER,
+      });
+    }
+    if (
+      hasBugseeMarker(edit.after) &&
+      (await envLoaderMissing(spec, ctx, edit.after, found.path))
+    ) {
+      // the entry edit made in this run stays covered by rollback
+      return {
+        ...(await loaderSnippet(found.entry.file)),
+        ...(edit.changed ? { applied: true } : {}),
+      };
+    }
+    return undefined;
+  };
+
   return {
     id: `add-sdk-init:${spec.runtime}`,
     title: `Initialise the Bugsee SDK in the ${spec.runtime} entry file`,
@@ -110,7 +310,7 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
       const src = found ? ((await readBytes(found.path))?.toString('utf8') ?? '') : '';
       if (hasBugseeMarker(src)) {
         // the wizard's own init: done, unless nothing gives Node the token
-        return (await envLoaderMissing(spec, ctx, src))
+        return (await envLoaderMissing(spec, ctx, src, found?.path ?? ''))
           ? { kind: 'pending' }
           : { kind: 'satisfied' };
       }
@@ -123,90 +323,10 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
       return hasSdkIntegration(src) ? { kind: 'satisfied' } : { kind: 'pending' };
     },
     async apply(ctx) {
-      const found = await locate(ctx);
-      const manual = (file: string, code: string): { manual: ManualSnippet } => {
-        ctx.manifest.record({ file, action: 'manual' });
-        const name = file === NO_ENTRY ? NO_ENTRY : basename(file);
-        return { manual: { file, title: `Initialise Bugsee in ${name}`, code } };
-      };
-      const loaderSnippet = (entry: string): { manual: ManualSnippet } => {
-        ctx.manifest.record({ file: 'package.json', action: 'manual' });
-        return {
-          manual: {
-            file: 'package.json',
-            title: 'Give Node the Bugsee token',
-            code: [
-              '// Node does not read .env by itself. Bugsee will not start until the token is provided to the process.',
-              '// Start the app with the env file:',
-              `node --env-file=.env ${entry}`,
-              '// or set BUGSEE_APP_TOKEN in the environment (CI, containers, production).',
-            ].join('\n'),
-          },
-        };
-      };
-      // the wizard's own earlier init: nothing to edit, only the token may still be missing
-      if (found) {
-        const present = (await readBytes(found.path))?.toString('utf8') ?? '';
-        if (hasBugseeMarker(present)) {
-          return (await envLoaderMissing(spec, ctx, present))
-            ? loaderSnippet(found.entry.file)
-            : undefined;
-        }
-      }
-      const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom);
-      if (existing !== undefined && existing !== 'unknown') return undefined;
-      if (existing === 'unknown') {
-        const note =
-          '// The project has too many source files to check whether Bugsee is already set up, so nothing was changed.\n// If it is not, add:\n';
-        return manual(NO_ENTRY, `${note}${sdkInitSnippet(probeSpec(), false)}`);
-      }
-      if (!found) {
-        const probe = probeSpec();
-        // the module system of an entry nobody found is unknown: a server shows both forms
-        const esm = sdkInitSnippet(probe, false);
-        return manual(
-          NO_ENTRY,
-          spec.runtime === 'browser'
-            ? esm
-            : `// ES modules:\n${esm}\n\n// CommonJS:\n${sdkInitSnippet(probe, true)}`,
-        );
-      }
-      const file = manifestPath(ctx, found.path);
-      const sdk = await initSpec(ctx, found.entry);
-      // the edit is generated from the text this write replaces (read once, inside the write), so a
-      // change made by someone else in between is never overwritten with output made from older text
-      let snippet: string | undefined;
-      let read = '';
-      const edit = await editTextFile(
-        found.path,
-        (current) => {
-          read = current;
-          const res = addSdkInit(current, sdk);
-          if ('manual' in res) {
-            snippet = res.manual;
-            return current;
-          }
-          return res.code;
-        },
-        { validate: (out) => hasBugseeMarker(out) },
-      );
-      if (snippet !== undefined) return manual(file, snippet);
-      if (edit.changed) {
-        before = Buffer.from(read, 'utf8');
-        editedPath = found.path;
-        ctx.manifest.record({
-          file,
-          action: 'edited',
-          before: edit.before,
-          after: edit.after,
-          marker: MANIFEST_MARKER,
-        });
-      }
-      if (hasBugseeMarker(edit.after) && (await envLoaderMissing(spec, ctx, edit.after))) {
-        // the entry edit made in this run stays covered by rollback
-        return { ...loaderSnippet(found.entry.file), ...(edit.changed ? { applied: true } : {}) };
-      }
-      return undefined;
+      return perform(ctx, true);
+    },
+    async preview(ctx) {
+      return perform(ctx, false);
     },
     async rollback() {
       if (before === undefined || editedPath === undefined) return;

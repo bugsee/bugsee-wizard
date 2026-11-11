@@ -42,6 +42,7 @@ export interface EnvFlags {
   readonly telemetry: boolean;
   readonly ignoreGitChanges: boolean;
   readonly yes: boolean;
+  readonly envProvided: boolean;
   readonly package: string | undefined;
 }
 
@@ -59,6 +60,7 @@ export function readEnvFlags(env: NodeJS.ProcessEnv): EnvFlags {
     telemetry: isTruthy(env.BUGSEE_WIZARD_TELEMETRY),
     ignoreGitChanges: isTruthy(env.BUGSEE_WIZARD_IGNORE_GIT_CHANGES),
     yes: isTruthy(env.BUGSEE_WIZARD_YES),
+    envProvided: isTruthy(env.BUGSEE_WIZARD_ENV_PROVIDED),
     package: pkg === undefined || pkg === '' ? undefined : pkg,
   };
 }
@@ -76,6 +78,7 @@ export interface RawCliOptions {
   readonly yes?: boolean | undefined;
   readonly sdkVersion?: string | undefined;
   readonly runtime?: string | undefined;
+  readonly envProvided?: boolean | undefined;
 }
 
 export interface BuiltOptions {
@@ -92,6 +95,7 @@ export interface BuiltOptions {
   readonly sdkVersion?: string;
   /** The runtime to set the SDK up for (`none`: leave the code alone). */
   readonly runtime?: 'browser' | 'node' | 'bun' | 'none';
+  readonly envProvided: boolean;
 }
 
 const RUNTIMES: readonly string[] = ['browser', 'node', 'bun', 'none'];
@@ -129,6 +133,7 @@ export function buildOptions(opts: RawCliOptions, env: NodeJS.ProcessEnv): Built
     json: opts.json ?? e.json,
     ignoreGitChanges: opts.ignoreGitChanges ?? e.ignoreGitChanges,
     yes: opts.yes ?? e.yes,
+    envProvided: opts.envProvided ?? e.envProvided,
     ...(pkg === undefined ? {} : { package: pkg }),
     ...(token === undefined ? {} : { token }),
     ...(sdkVersion === undefined ? {} : { sdkVersion }),

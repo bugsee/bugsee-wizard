@@ -222,6 +222,28 @@ describe('--runtime', () => {
   });
 });
 
+describe('--env-provided', () => {
+  const parse = (argv: string[], env: NodeJS.ProcessEnv = {}) => {
+    const p = createBaseProgram().exitOverride();
+    p.parse(argv, { from: 'user' });
+    return buildOptions(p.opts(), env);
+  };
+  it('is off by default, on with the flag or a truthy env var, and the flag can turn it off', () => {
+    expect(parse([]).envProvided).toBe(false);
+    expect(parse(['--env-provided']).envProvided).toBe(true);
+    expect(parse([], { BUGSEE_WIZARD_ENV_PROVIDED: '1' }).envProvided).toBe(true);
+    expect(parse([], { BUGSEE_WIZARD_ENV_PROVIDED: 'no' }).envProvided).toBe(false);
+    expect(parse(['--no-env-provided'], { BUGSEE_WIZARD_ENV_PROVIDED: '1' }).envProvided).toBe(
+      false,
+    );
+  });
+  it('is documented with its env var', () => {
+    expect(createBaseProgram().helpInformation()).toMatch(
+      /--env-provided[\s\S]*BUGSEE_WIZARD_ENV_PROVIDED/,
+    );
+  });
+});
+
 describe('reportError (top-level CLI errors)', () => {
   const io = () => {
     const out: string[] = [];

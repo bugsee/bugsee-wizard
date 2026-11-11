@@ -172,6 +172,14 @@ function scriptTokens(command: string): string[] {
   return [];
 }
 
+/** The script files the `start`/`dev`/`serve` scripts run with a runner (`tsx watch playground/main.ts` -> `playground/main.ts`). */
+export function scriptFiles(scripts: Record<string, unknown>): string[] {
+  return START_SCRIPTS.flatMap((n) => {
+    const command = scripts[n];
+    return typeof command === 'string' ? scriptTokens(command) : [];
+  });
+}
+
 /** Whether a `start`/`dev`/`serve` script runs a script file with a runner (`nodemon index.js`), i.e. the project is an app. */
 export function scriptsRunAFile(scripts: Record<string, unknown>): boolean {
   return START_SCRIPTS.some((n) => {

@@ -249,10 +249,16 @@ function planText(
   recipe: Recipe,
   pm: DetectedPackageManager | null,
   entry: EntryFile | undefined,
+  setUp: ReadonlyMap<OpSpec, string>,
 ): string {
   return [
     'Planned changes:',
-    ...recipe.ops.flatMap((op) => [`  - ${opToStep(op).title}`, ...opDetails(op, pm, entry)]),
+    ...recipe.ops.flatMap((op) => [
+      `  - ${opToStep(op).title}`,
+      ...(setUp.has(op)
+        ? [`      already set up: nothing to change (${inline(setUp.get(op) ?? '')})`]
+        : opDetails(op, pm, entry)),
+    ]),
   ].join('\n');
 }
 
@@ -358,16 +364,6 @@ export async function runJavaScriptInstall(
     ...buildTool.recipe,
     ops: [...parts.flatMap((r) => r.recipe.ops), IGNORE_MANIFEST_DIR],
   };
-  const entry =
-    runtimeRecipe !== undefined && !('skip' in choice)
-      ? await findEntry(packageDir, choice.runtime)
-      : undefined;
-  log.info(planText(recipe, packageManager, entry));
-  for (const r of parts) if (r.recipe.notes !== undefined) log.info(`Notes:\n${r.recipe.notes}`);
-  if (!opts.nonInteractive && !opts.yes && !opts.dryRun) {
-    if (!(await deps.prompts.confirm('Apply these changes?'))) throw new CancelledError();
-  }
-
   const recorder = createManifestRecorder(
     packageDir,
     {
@@ -388,6 +384,26 @@ export async function runJavaScriptInstall(
     manifest: recorder,
     confirm: (m) => deps.prompts.confirm(m),
   };
+  const entry =
+    runtimeRecipe !== undefined && !('skip' in choice)
+      ? await findEntry(packageDir, choice.runtime)
+      : undefined;
+  // an init that is already done (a re-run) must not be promised as an edit in the plan
+  const setUp = new Map<OpSpec, string>();
+  for (const op of recipe.ops) {
+    if (op.op !== 'add-sdk-init') continue;
+    // the plan is advice: a check that cannot run just leaves the plan as it was
+    const status = await opToStep(op)
+      .precheck(ctx)
+      .catch(() => undefined);
+    if (status?.kind === 'satisfied') setUp.set(op, status.note ?? 'Bugsee is already set up');
+  }
+  log.info(planText(recipe, packageManager, entry, setUp));
+  for (const r of parts) if (r.recipe.notes !== undefined) log.info(`Notes:\n${r.recipe.notes}`);
+  if (!opts.nonInteractive && !opts.yes && !opts.dryRun) {
+    if (!(await deps.prompts.confirm('Apply these changes?'))) throw new CancelledError();
+  }
+
   const abort = new AbortController();
   let caught: InterruptSignal | undefined;
   const quarantineWarnings: string[] = [];
@@ -460,10 +476,15 @@ export async function runJavaScriptInstall(
     skipped === undefined
       ? []
       : [{ file: 'your entry file', title: 'Initialise Bugsee in your app', code: skipCode() }];
-  const snippets = [
-    ...skipSnippet,
-    ...run.results.flatMap((r) => (r.snippet === undefined ? [] : [r.snippet])),
-  ];
+  // a failed run rolled everything back (unless a rollback itself failed): its snippets describe changes
+  // that are gone, and printing them would send the user to finish work that was undone
+  const snippets =
+    run.failed && run.rollbackFailed !== true
+      ? []
+      : [
+          ...skipSnippet,
+          ...run.results.flatMap((r) => (r.snippet === undefined ? [] : [r.snippet])),
+        ];
   for (const s of snippets) log.warn(snippetText(s));
 
   const result: WizardRunResult = {

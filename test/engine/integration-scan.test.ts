@@ -129,4 +129,31 @@ describe('findExistingIntegration', () => {
       expect(await scan()).toBeUndefined();
     });
   });
+
+  it.each([
+    'node_modules',
+    '.git',
+    '.bugsee',
+    'dist',
+    'build',
+    'out',
+    'coverage',
+    '.next',
+    '.nuxt',
+    '.svelte-kit',
+    '.output',
+    '.turbo',
+    '.angular',
+    '.vercel',
+    'assets',
+    'static',
+    'public',
+    'vendor',
+  ])('does not look inside %s/', async (dir) => {
+    await put(`${dir}/x.js`, "import '@bugsee/bugsee';\n");
+    expect(await scan()).toBeUndefined();
+    // ...while the same file in a source directory is found
+    await put('src/x.js', "import '@bugsee/bugsee';\n");
+    expect(await scan()).toEqual({ where: 'src/x.js' });
+  });
 });

@@ -192,12 +192,33 @@ function engineVersion(pkg: Record<string, unknown>, runtime: string): string | 
 }
 
 /** Any HTML page the project serves: the root, `src/`, `public/` (webpack's and CRA's home), or one level below `src/`/`public/`. */
-async function configBuildsForPage(dir: string, configs: Iterable<string>): Promise<boolean> {
+/** What the bundler config and the package scripts say about where the output runs. */
+const SERVER_CONFIG_RE =
+  /\btarget\s*:\s*['"](?:node|async-node|electron-main)\b|\bplatform\s*[=:]\s*['"]?node\b|--platform(?:=|\s+)node\b/;
+const PAGE_SCRIPT_RE = /--platform(?:=|\s+)browser\b/;
+
+/** Config text without comments: a note mentioning a plugin is not the plugin. */
+function withoutComments(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+}
+
+async function bundlerTargets(
+  dir: string,
+  configs: Iterable<string>,
+  scripts: unknown,
+): Promise<{ page: boolean; server: boolean }> {
+  const texts: string[] = [];
   for (const name of configs) {
-    const text = await readFile(path.join(dir, name), 'utf8').catch(() => '');
-    if (PAGE_CONFIG_RE.test(text)) return true;
+    texts.push(withoutComments(await readFile(path.join(dir, name), 'utf8').catch(() => '')));
   }
-  return false;
+  if (isRecord(scripts)) {
+    texts.push(...Object.values(scripts).filter((v): v is string => typeof v === 'string'));
+  }
+  const all = texts.join('\n');
+  return {
+    page: PAGE_CONFIG_RE.test(all) || PAGE_SCRIPT_RE.test(all),
+    server: SERVER_CONFIG_RE.test(all),
+  };
 }
 
 async function hasHtmlEntry(dir: string): Promise<boolean> {
@@ -369,12 +390,13 @@ async function inspectProject(
   let runtimeUnknown = false;
   const hasHtml = await hasHtmlEntry(cwd);
   const hasUi = UI_DEPS.some((d) => deps.has(d));
+  const targets = await bundlerTargets(cwd, bundlerConfigs.values(), pkg.scripts);
   const browser =
     hasUi ||
     BROWSER_SDK_DEPS.some((d) => deps.has(d)) ||
     PAGE_TOOLING_DEPS.some((d) => deps.has(d)) ||
     (bundler !== undefined && hasHtml) ||
-    (await configBuildsForPage(cwd, bundlerConfigs.values()));
+    (targets.page && !targets.server);
   const edgeFile = await firstExisting(cwd, EDGE_CONFIGS);
   const edge = edgeFile !== undefined || EDGE_DEPS.some((d) => deps.has(d));
   const bunFile = await firstExisting(cwd, BUN_FILES);
@@ -395,6 +417,8 @@ async function inspectProject(
       pkg.bin !== undefined ||
       // Server libraries (hono, ...) also run on the edge: with an edge signal they say nothing about node.
       (!edge && SERVER_DEPS.some((d) => deps.has(d))) ||
+      // a bundle that is built for node says so
+      (!browser && !edge && targets.server) ||
       // engines.node / "type" only tell us it runs on node when no UI library or edge target claims the project.
       // A bundled project is a page unless it says otherwise: there, these say nothing at all.
       (!browser &&

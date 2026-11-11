@@ -10,12 +10,12 @@ import {
   isLockfile,
   lockfileNote,
   type ManifestEdit,
+  REMOVE_COMMANDS,
   revertEdits,
   validEdits,
   withoutPackages,
 } from './manifest-edits.js';
 import { resolveInside } from './ops/shared.js';
-import { isRuntimeSdkPackage } from './sdk-packages.js';
 import { findWorkspace } from './workspace.js';
 
 /** What ops hand to the recorder. `file` is relative to the wizard's cwd; before/after are file TEXT. */
@@ -471,9 +471,13 @@ async function revertKeepingSdk(
   root: string,
   e: ManifestFileEntry,
   dryRun: boolean,
+  removeCommand: string,
 ): Promise<RollbackResult> {
-  const kept = addedPackages(e.edits).filter((n) => isRuntimeSdkPackage(n));
-  const note = `kept ${kept.length > 0 ? kept.join(', ') : 'the @bugsee SDK packages'}: your code still imports ${kept.length === 1 ? 'it' : 'them'} (remove the import, then run uninstall again)`;
+  // every dependency stays: the lockfile is not touched, and a package.json that lost a dependency the
+  // lockfile still lists fails `--frozen-lockfile` installs (pnpm, yarn, bun)
+  const kept = addedPackages(e.edits);
+  const list = kept.length > 0 ? kept.join(' ') : '@bugsee/*';
+  const note = `kept ${kept.length > 0 ? kept.join(', ') : 'the @bugsee packages'}: your code still refers to ${kept.length === 1 ? 'it' : 'them'}. Remove that code, then run \`${removeCommand} ${list}\` (it also updates the lockfile) and uninstall again`;
   let abs: string;
   try {
     abs = await resolveInside(root, resolve(dir, e.file));
@@ -485,7 +489,7 @@ async function revertKeepingSdk(
   if (e.edits === undefined) return manual(e.file, `left untouched. ${note}`);
   const res = revertEdits(
     current,
-    withoutPackages(e.edits, (n) => isRuntimeSdkPackage(n)),
+    withoutPackages(e.edits, () => true),
   );
   if (res.text !== current && !dryRun) await writeFileAtomic(abs, res.text);
   return manual(
@@ -510,24 +514,28 @@ export async function rollbackFromManifest(ctx: {
     isLockfile(e.file) ? [] : addedPackages(e.edits),
   );
   const byIndex = new Map<number, RollbackResult>();
-  // set once the init edit of an entry file could not be taken out: the SDK must then stay installed
+  // set once an edit of the user's code (the init, a bundler plugin) could not be taken out: the packages it
+  // refers to must then stay installed
   let keepSdk = false;
+  const lockfile = manifest.entries.find((m) => isLockfile(m.file));
+  const removeCommand = (lockfile && REMOVE_COMMANDS[basename(lockfile.file)]) ?? 'npm uninstall';
   for (const i of order) {
     const e = manifest.entries[i];
     if (e === undefined) continue;
     try {
       let r: RollbackResult;
       if (keepSdk && basename(e.file) === 'package.json') {
-        r = await revertKeepingSdk(ctx.dir, root, e, ctx.dryRun);
+        r = await revertKeepingSdk(ctx.dir, root, e, ctx.dryRun, removeCommand);
       } else if (keepSdk && isLockfile(e.file)) {
-        r = manual(
-          e.file,
-          'left untouched: it still describes the @bugsee SDK packages your code imports',
-        );
+        r = manual(e.file, 'left untouched: it stays in sync with the dependencies that were kept');
       } else {
         r = await rollbackEntry(ctx.dir, root, e, ctx.dryRun, packages);
       }
-      if (e.marker === 'bugsee-wizard:sdk-init' && e.action === 'edited' && r.outcome === 'manual')
+      if (
+        e.marker?.startsWith('bugsee-wizard') === true &&
+        e.action === 'edited' &&
+        r.outcome === 'manual'
+      )
         keepSdk = true;
       byIndex.set(i, r);
     } catch (err) {

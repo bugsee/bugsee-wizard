@@ -787,4 +787,49 @@ describe('detectJavaScript rules (synthetic projects)', () => {
       expect(det?.runtimeUnknown).toBeUndefined();
     });
   });
+
+  describe('bundler config and script text (comments and explicit targets)', () => {
+    const cfg = (text: string, scripts: object = {}) =>
+      project({
+        'package.json': {
+          name: 'a',
+          devDependencies: { webpack: '5', esbuild: '0.20.0' },
+          scripts,
+        },
+        'webpack.config.js': text,
+      });
+
+    it('a comment that mentions a page plugin is not a page signal', async () => {
+      for (const text of [
+        "// TODO: add HtmlWebpackPlugin later\nexport default { entry: './x.js' };",
+        "/* new HtmlWebpackPlugin() */ export default { entry: './x.js' };",
+      ]) {
+        const det = await detectJavaScript(await cfg(text));
+        expect(det?.runtimes).not.toContain('browser');
+      }
+    });
+
+    it("an explicit target 'node' is a server signal, even with a page plugin mentioned in a comment", async () => {
+      const det = await detectJavaScript(
+        await cfg(
+          "// HtmlWebpackPlugin is for the other config\nexport default { target: 'node' };",
+        ),
+      );
+      expect(det?.runtimes).toEqual(['node']);
+      expect(det?.runtimeUnknown).toBeUndefined();
+    });
+
+    it('esbuild --platform=browser in a package script is a page, --platform=node a server', async () => {
+      const page = await detectJavaScript(
+        await cfg('export default {};', {
+          build: 'esbuild src/main.js --bundle --platform=browser',
+        }),
+      );
+      expect(page?.runtimes).toEqual(['browser']);
+      const server = await detectJavaScript(
+        await cfg('export default {};', { build: 'esbuild src/main.js --bundle --platform node' }),
+      );
+      expect(server?.runtimes).toEqual(['node']);
+    });
+  });
 });

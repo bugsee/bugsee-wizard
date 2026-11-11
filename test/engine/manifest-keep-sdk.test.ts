@@ -93,8 +93,15 @@ describe('uninstall when the init cannot be taken out', () => {
     expect(await readFile(p('server.js'), 'utf8')).toContain('start(8080);');
   });
 
-  it('the SDK dependency stays while its import stays; everything else of the install is taken out', async () => {
+  it('all dependency additions stay (the lockfile cannot follow a removal), the rest of the install is taken out', async () => {
     await wizardRun();
+    await writeFile(
+      p('package.json'),
+      (await readFile(p('package.json'), 'utf8')).replace(
+        '"name": "a"',
+        '"name": "a", "scripts": { "x": "y" }',
+      ),
+    );
     await writeFile(
       p('server.js'),
       (await readFile(p('server.js'), 'utf8')).replace('start();', 'start(8080);'),
@@ -102,13 +109,16 @@ describe('uninstall when the init cannot be taken out', () => {
     const res = await roll();
     const pkg = JSON.parse(await readFile(p('package.json'), 'utf8'));
     expect(pkg.dependencies['@bugsee/bugsee']).toBeDefined();
-    expect(pkg.devDependencies).toBeUndefined();
+    expect(pkg.devDependencies['@bugsee/vite-plugin']).toBeDefined();
     expect(pkg.dependencies.express).toBe('4');
     const row = res.results.find((r) => r.file === 'package.json');
-    expect(row?.note).toMatch(/kept.*@bugsee\/bugsee/);
-    // the lockfile still describes the kept dependency: it is left alone
+    expect(row?.note).toMatch(/kept.*@bugsee\/bugsee.*@bugsee\/vite-plugin/);
+    // the lockfile still matches package.json, and the user is told the exact command
     expect(await readFile(p('package-lock.json'), 'utf8')).toBe(LOCK_AFTER);
-    expect(res.results.find((r) => r.file === 'package-lock.json')?.outcome).toBe('manual');
+    const lock = res.results.find((r) => r.file === 'package-lock.json');
+    expect(lock?.outcome).toBe('manual');
+    expect(lock?.note).toMatch(/in sync/);
+    expect(row?.note).toContain('npm uninstall @bugsee/bugsee @bugsee/vite-plugin');
   });
 
   it('the manifest keeps what is left, so a later uninstall finishes the job once the line is fixed', async () => {
@@ -138,15 +148,12 @@ describe('uninstall when the init cannot be taken out', () => {
     expect(res.results.find((r) => r.file === 'package.json')?.note).toMatch(/kept/);
   });
 
-  it('a bundler-plugin edit that cannot be reverted does not keep the SDK (only the init entry does)', async () => {
+  it('a bundler-plugin edit that cannot be reverted keeps the dependencies too (the config still imports the plugin)', async () => {
     await wizardRun();
     const cfg = 'export default { plugins: [] };\n';
     const cfgAfter =
       "import { p } from '@bugsee/vite-plugin'; // bugsee-wizard\nexport default { plugins: [p()] };\n";
-    await writeFile(
-      p('vite.config.js'),
-      `${cfgAfter}// user note\nconst x = 1;\n`.replace('plugins: [p()]', 'plugins: [ p( ) ]'),
-    );
+    await writeFile(p('vite.config.js'), cfgAfter.replace('plugins: [p()]', 'plugins: [ p( ) ]'));
     const rec = createManifestRecorder(tmp.dir, { wizard: 't', recipes: [] }, { cwd: tmp.dir });
     rec.record({
       file: 'vite.config.js',
@@ -160,7 +167,7 @@ describe('uninstall when the init cannot be taken out', () => {
     expect(res.results.find((r) => r.file === 'vite.config.js')?.outcome).toBe('manual');
     expect(res.results.find((r) => r.file === 'server.js')?.outcome).toBe('reverted');
     const pkg = JSON.parse(await readFile(p('package.json'), 'utf8'));
-    expect(pkg.dependencies['@bugsee/bugsee']).toBeUndefined();
-    expect(await readFile(p('package-lock.json'), 'utf8')).toBe(LOCK_BEFORE);
+    expect(pkg.devDependencies['@bugsee/vite-plugin']).toBeDefined();
+    expect(await readFile(p('package-lock.json'), 'utf8')).toBe(LOCK_AFTER);
   });
 });

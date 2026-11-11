@@ -48,6 +48,11 @@ export function createBaseProgram() {
       '--runtime <name>',
       'set the SDK up for this runtime: browser, node, bun, or none to leave the code alone; needed when detection cannot decide (env: BUGSEE_WIZARD_RUNTIME)',
     )
+    .option(
+      '--env-provided',
+      'the app token reaches the Node process another way (Docker, pm2, the platform): do not report a missing .env loader (env: BUGSEE_WIZARD_ENV_PROVIDED)',
+    )
+    .option('--no-env-provided', 'override the env var and turn this off')
     .addHelpText(
       'after',
       '\nPrecedence: an explicit flag always wins over its environment variable.\nTruthy env values: 1, true, yes.',

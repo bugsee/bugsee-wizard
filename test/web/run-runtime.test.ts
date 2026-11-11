@@ -103,6 +103,63 @@ describe.skipIf(process.platform === 'win32')('runtime recipes through the run',
     expect(code).toContain('CommonJS');
   });
 
+  it('a failed run rolled everything back: no snippet of a rolled-back step is printed or reported', async () => {
+    sb = await sandbox('tsc-node');
+    const file = join(sb.project, 'package.json');
+    const pkg = JSON.parse(await readFile(file, 'utf8'));
+    const { start: _start, ...scripts } = pkg.scripts;
+    await writeFile(file, JSON.stringify({ ...pkg, scripts }));
+    // a later step fails: the upload script's path is a directory
+    await mkdir(join(sb.project, 'scripts/bugsee-sourcemaps.mjs'), { recursive: true });
+    const cap = captureOutput();
+    const r = await runJavaScriptInstall(
+      baseOpts(sb.project),
+      makeDeps(cap, { resolveRecipe: real }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.snippets).toBeUndefined();
+    expect(cap.lines.join('\n')).not.toContain('Give Node the Bugsee token');
+    expect(await readFile(join(sb.project, 'src/index.ts'), 'utf8')).not.toContain('bugsee');
+  });
+
+  it('a dry run predicts the real outcome: a missing env loader is a manual step, exit 3', async () => {
+    sb = await sandbox('tsc-node');
+    const file = join(sb.project, 'package.json');
+    const pkg = JSON.parse(await readFile(file, 'utf8'));
+    const { start: _start, ...scripts } = pkg.scripts;
+    await writeFile(file, JSON.stringify({ ...pkg, scripts }));
+    const before = await tree(sb.project);
+    const dry = await runJavaScriptInstall(
+      baseOpts(sb.project, { dryRun: true }),
+      makeDeps(captureOutput(), { resolveRecipe: real }),
+    );
+    expect(dry.steps.find((s) => s.id === 'add-sdk-init:node')?.outcome).toBe('manual');
+    expect(dry.incomplete).toBe(true);
+    expect(await tree(sb.project)).toEqual(before);
+    const realRun = await runJavaScriptInstall(
+      baseOpts(sb.project),
+      makeDeps(captureOutput(), { resolveRecipe: real }),
+    );
+    expect(realRun.steps.find((s) => s.id === 'add-sdk-init:node')?.outcome).toBe('manual');
+    expect(exitCodeFor(realRun, true)).toBe(exitCodeFor(dry, true));
+  });
+
+  it('after an install the plan says the init is already set up instead of promising an edit', async () => {
+    sb = await sandbox('tsc-node');
+    await runJavaScriptInstall(
+      baseOpts(sb.project),
+      makeDeps(captureOutput(), { resolveRecipe: real }),
+    );
+    const cap = captureOutput();
+    await runJavaScriptInstall(
+      baseOpts(sb.project, { dryRun: true }),
+      makeDeps(cap, { resolveRecipe: real }),
+    );
+    const text = cap.lines.join('\n');
+    expect(text).toContain('already set up');
+    expect(text).not.toMatch(/adds import \{ launch \}/);
+  });
+
   it('--runtime none leaves the code alone on purpose: not incomplete, no step', async () => {
     sb = await sandbox('tsc-node');
     const r = await runJavaScriptInstall(

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { WizardOptions } from '../core/context.js';
 import { findConfigFile } from '../engine/config-ast.js';
-import { scriptsRunAFile } from '../engine/entry-detect.js';
+import { scriptFiles, scriptsRunAFile } from '../engine/entry-detect.js';
 import { readPackageJson } from '../engine/package-json.js';
 import type { SdkRuntime } from '../engine/sdk-init-ast.js';
 import { type JsDetection, SERVER_DEPS } from './detect.js';
@@ -37,10 +37,29 @@ async function choose(runtime: SdkRuntime, det: JsDetection): Promise<RuntimeCho
       };
 }
 
+/** Every string in a package.json `exports` value (it nests conditions and sub-paths). */
+function exportPaths(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (typeof value !== 'object' || value === null) return [];
+  return Object.values(value).flatMap(exportPaths);
+}
+
+/** `./dist/index.js` and `src/index.ts` are the same module: compare without the build directory and extension. */
+const moduleKey = (p: string): string =>
+  p
+    .replace(/^\.\//, '')
+    .replace(/^(?:dist|build|out|lib)\//, 'src/')
+    .replace(/\.[cm]?[jt]sx?$/, '');
+
 /**
- * A package that looks published for others to import: an entry point or type declarations or peer
- * dependencies, and nothing that runs it (`start`/`serve` script, `bin`). A `dev` script does not
- * make an app (`tsc -w` is a library's). Importing a library must not start Bugsee in every app.
+ * A package that looks published for others to import, and nothing that runs it. Importing a library
+ * must not start Bugsee in every app that uses it.
+ *
+ * Something runs it when it has a `start`/`serve` script or a `bin`; or, if it is not a published
+ * package, a runner on a file in `dev` (`nodemon index.js`) or a server framework dependency (the
+ * `npm init -y` + express shape). A published package (not `private`, with `exports`/`types`/`files`/
+ * `publishConfig`) is a library whatever its `dev` script or dependencies say, unless that dev script
+ * runs a file that is not the package's own entry (a playground, an example server).
  */
 async function looksLikeLibrary(dir: string, bun: boolean): Promise<boolean> {
   let pkg: Record<string, unknown>;
@@ -49,16 +68,24 @@ async function looksLikeLibrary(dir: string, bun: boolean): Promise<boolean> {
   } catch {
     return false;
   }
-  const scripts = typeof pkg.scripts === 'object' && pkg.scripts !== null ? pkg.scripts : {};
+  const scripts = (
+    typeof pkg.scripts === 'object' && pkg.scripts !== null ? pkg.scripts : {}
+  ) as Record<string, unknown>;
   const deps =
     typeof pkg.dependencies === 'object' && pkg.dependencies !== null ? pkg.dependencies : {};
-  // something runs it: a start/serve script, a runner on a file in start/dev/serve, a bin, or a server
-  // framework it depends on (the `npm init -y` + express shape has none of the scripts)
+  const published =
+    pkg.private !== true &&
+    ['exports', 'types', 'typings', 'files', 'publishConfig'].some((k) => pkg[k] !== undefined);
+  const entries = new Set(
+    [pkg.main, pkg.module, ...exportPaths(pkg.exports)]
+      .filter((v): v is string => typeof v === 'string')
+      .map(moduleKey),
+  );
+  const devElsewhere = scriptFiles(scripts).some((f) => !entries.has(moduleKey(f)));
   const runs =
     ['start', 'serve'].some((n) => n in scripts) ||
-    scriptsRunAFile(scripts as Record<string, unknown>) ||
     pkg.bin !== undefined ||
-    SERVER_DEPS.some((d) => d in deps);
+    (published ? devElsewhere : scriptsRunAFile(scripts) || SERVER_DEPS.some((d) => d in deps));
   // `bun init` names the app's own entry in `module`: not library evidence on Bun
   const keys = [
     'main',

@@ -380,7 +380,7 @@ export function withoutPackages(
   return out;
 }
 
-const REMOVE_COMMAND: Record<string, string> = {
+export const REMOVE_COMMANDS: Record<string, string> = {
   'package-lock.json': 'npm uninstall',
   'npm-shrinkwrap.json': 'npm uninstall',
   'pnpm-lock.yaml': 'pnpm remove',
@@ -391,7 +391,7 @@ const REMOVE_COMMAND: Record<string, string> = {
 
 /** What to tell the user about a lockfile that changed since the wizard wrote it. */
 export function lockfileNote(file: string, packages: readonly string[]): string {
-  const cmd = REMOVE_COMMAND[basename(file)];
+  const cmd = REMOVE_COMMANDS[basename(file)];
   if (packages.length === 0 || cmd === undefined) {
     return 'changed since the wizard wrote it; left untouched. Remove the Bugsee packages (@bugsee/*) with your package manager so it updates this lockfile';
   }

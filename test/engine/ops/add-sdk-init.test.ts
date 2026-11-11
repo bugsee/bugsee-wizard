@@ -1,4 +1,4 @@
-import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { executeRecipe } from '../../../src/engine/execute.js';
@@ -375,6 +375,96 @@ describe('add-sdk-init op', () => {
       await nodePkg();
       const literal: Spec = { op: 'add-sdk-init', runtime: 'node', importFrom: '@bugsee/bugsee' };
       expect(await opToStep(literal).apply(makeCtx(tmp.dir))).toBeUndefined();
+    });
+  });
+
+  describe('what counts as loading .env (review follow-ups)', () => {
+    const SERVER = "import { createServer } from 'node:http';\ncreateServer().listen(0);\n";
+    const setup = async (scripts: object, entry = SERVER, extra: Record<string, string> = {}) => {
+      await put('package.json', JSON.stringify({ type: 'module', scripts }));
+      await put('server.js', entry);
+      for (const [f, c] of Object.entries(extra)) await put(f, c);
+    };
+    const run = (ctxOver = {}) => opToStep(node).apply(makeCtx(tmp.dir, ctxOver));
+
+    it('only the scripts that start the app count: a dotenv mention in "test" does not silence the warning', async () => {
+      await setup({ start: 'node server.js', test: 'jest --setupFiles dotenv/config' });
+      expect((await run())?.manual?.title).toBe('Give Node the Bugsee token');
+    });
+
+    it.each([['start'], ['dev'], ['serve'], ['start:prod'], ['dev:watch']])(
+      'a loader in the %s script counts',
+      async (name) => {
+        await setup({ [name]: 'node --env-file=.env server.js' });
+        expect(await run()).toBeUndefined();
+      },
+    );
+
+    it('follows one level of relative imports of the entry (a config module that loads dotenv)', async () => {
+      await setup({ start: 'node server.js' }, "import './config.js';\n" + SERVER, {
+        'config.js': "import 'dotenv/config';\n",
+      });
+      expect(await run()).toBeUndefined();
+      await setup({ start: 'node server.js' }, "import { c } from './lib/config';\n" + SERVER, {
+        'lib/config.js': "import dotenv from 'dotenv';\ndotenv.config();\nexport const c = 1;\n",
+      });
+      expect(await run()).toBeUndefined();
+    });
+
+    it('does not follow package imports or go deeper than one level', async () => {
+      await setup({ start: 'node server.js' }, "import './a.js';\n" + SERVER, {
+        'a.js': "import './b.js';\n",
+        'b.js': "import 'dotenv/config';\n",
+      });
+      expect((await run())?.manual?.title).toBe('Give Node the Bugsee token');
+    });
+
+    it('@nestjs/config (ConfigModule loads .env) counts', async () => {
+      await put(
+        'package.json',
+        JSON.stringify({
+          type: 'module',
+          dependencies: { '@nestjs/config': '3' },
+          scripts: { start: 'node server.js' },
+        }),
+      );
+      await put('server.js', SERVER);
+      expect(await run()).toBeUndefined();
+    });
+
+    it.each([
+      ['Dockerfile', 'ENV BUGSEE_APP_TOKEN=abc\n'],
+      ['docker-compose.yml', 'services:\n  app:\n    environment:\n      - BUGSEE_APP_TOKEN=abc\n'],
+      ['compose.yaml', 'services:\n  app:\n    env_file: .env\n'],
+      ['Procfile', 'web: node --env-file=.env server.js\n'],
+      [
+        'ecosystem.config.cjs',
+        'module.exports = { apps: [{ env: { BUGSEE_APP_TOKEN: "x" } }] };\n',
+      ],
+      ['fly.toml', '[env]\n  BUGSEE_APP_TOKEN = "x"\n'],
+    ])('a platform file that provides the variable (%s) counts', async (file, text) => {
+      await setup({ start: 'node server.js' }, SERVER, { [file]: text });
+      expect(await run()).toBeUndefined();
+    });
+
+    it('--env-provided acknowledges it explicitly', async () => {
+      await setup({ start: 'node server.js' });
+      expect(await run({ envProvided: true })).toBeUndefined();
+    });
+
+    it('the snippet names a runnable command: built output or a generic form for TypeScript, the file otherwise', async () => {
+      await put(
+        'package.json',
+        JSON.stringify({ type: 'module', scripts: { start: 'node server.js' } }),
+      );
+      await put('server.js', SERVER);
+      expect((await run())?.manual?.code).toContain('node --env-file=.env server.js');
+      await put('package.json', JSON.stringify({ type: 'module', main: 'dist/main.js' }));
+      await put('src/main.ts', SERVER);
+      await rm(abs('server.js'));
+      const res = await run();
+      expect(res?.manual?.code).not.toContain('src/main.ts');
+      expect(res?.manual?.code).toMatch(/<your start command>|dist\/main\.js/);
     });
   });
 });
