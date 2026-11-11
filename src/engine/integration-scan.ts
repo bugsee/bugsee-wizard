@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { stripJsComments } from './js-text.js';
+import { stripHtmlComments, stripJsComments } from './js-text.js';
 import { isRuntimeSdkPackage } from './sdk-packages.js';
 
 /**
@@ -56,8 +56,13 @@ const TYPE_ONLY_RE = [
 const LOAD_RE =
   /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"](@bugsee\/[\w.-]+)(?:\/[^'"]*)?['"]/g;
 
-function loadsRuntimePackage(text: string): boolean {
-  const code = TYPE_ONLY_RE.reduce((t, re) => t.replace(re, ''), stripJsComments(text));
+const MARKUP_RE = /\.(?:vue|svelte|astro|html)$/i;
+
+function loadsRuntimePackage(text: string, markup: boolean): boolean {
+  const code = TYPE_ONLY_RE.reduce(
+    (t, re) => t.replace(re, ''),
+    stripJsComments(markup ? stripHtmlComments(text) : text, { markup }),
+  );
   for (const m of code.matchAll(LOAD_RE)) {
     if (isRuntimeSdkPackage(m[1])) return true;
   }
@@ -126,7 +131,7 @@ export async function findExistingIntegration(
           capped ??= `could not read ${path} (unreadable or larger than ${MAX_BYTES / 1024} KB)`;
           continue;
         }
-        if (loadsRuntimePackage(text)) return { where: path };
+        if (loadsRuntimePackage(text, MARKUP_RE.test(e.name))) return { where: path };
       }
     }
     return undefined;

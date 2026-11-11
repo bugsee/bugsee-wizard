@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stripJsComments } from '../../src/engine/js-text.js';
+import { stripHtmlComments, stripJsComments } from '../../src/engine/js-text.js';
 
 describe('stripJsComments', () => {
   it('removes line and block comments, keeping the code and the line structure', () => {
@@ -81,5 +81,35 @@ describe('stripJsComments', () => {
     expect(stripJsComments('const t = `a\n// not a comment`;\n')).toBe(
       'const t = `a\n// not a comment`;\n',
     );
+  });
+
+  it('a regular expression right after an arrow is a pattern (/* inside it is not a comment)', () => {
+    const src = "const t = (s) => /a\\/*b/.test(s);\nconst b = await import('@bugsee/bugsee');\n";
+    expect(stripJsComments(src)).toContain("import('@bugsee/bugsee')");
+  });
+
+  it('a closing tag followed by a comment on the same line is stripped', () => {
+    expect(stripJsComments("const a = <div>x</div>; // import '@bugsee/bugsee'\n")).not.toContain(
+      '@bugsee',
+    );
+  });
+
+  describe('markup files (.html, .vue, .svelte, .astro)', () => {
+    it('a lone backtick in text does not run to the end of the file', () => {
+      const src = "<p>press the ` key</p>\n// import '@bugsee/bugsee'\n";
+      expect(stripJsComments(src, { markup: true })).not.toContain('@bugsee');
+    });
+    it('a template literal on one line is still a string in markup', () => {
+      const src = 'const t = `// not a comment`;\n';
+      expect(stripJsComments(src, { markup: true })).toBe(src);
+    });
+  });
+});
+
+describe('stripHtmlComments', () => {
+  it('reads left to right: an unterminated comment runs to the end, leftovers never form a new comment', () => {
+    expect(stripHtmlComments('a<!-- x -->b')).toBe('ab');
+    expect(stripHtmlComments('a<!-- never closed')).toBe('a');
+    expect(stripHtmlComments('<!<!-- x -->-- y')).toBe('<!-- y');
   });
 });

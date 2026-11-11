@@ -186,6 +186,18 @@ describe('findExistingIntegration', () => {
       },
     );
 
+    it.each([
+      ['index.html', '<!-- <script type="module">import "@bugsee/bugsee"</script> -->\n'],
+      [
+        'src/App.vue',
+        '<!--\n<script>import "@bugsee/bugsee"</script>\n-->\n<p>press the ` key</p>\n// import "@bugsee/bugsee"\n',
+      ],
+      ['src/page.astro', "---\n// import '@bugsee/bugsee'\n---\n<p>it's</p>\n"],
+    ])('a commented-out script in %s does not count', async (file, src) => {
+      await put(file, src);
+      expect(await scan()).toBeUndefined();
+    });
+
     it('a load after a comment on the same line, or next to a URL in a string, still counts', async () => {
       await put('src/a.js', "const u = 'https://example.com'; import('@bugsee/bugsee');\n");
       expect(await scan()).toEqual({ where: 'src/a.js' });

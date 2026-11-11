@@ -1,6 +1,6 @@
 import { access, readdir, readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
-import { stripJsComments } from './js-text.js';
+import { stripHtmlComments, stripJsComments } from './js-text.js';
 import type { SdkRuntime } from './sdk-init-ast.js';
 
 /**
@@ -214,23 +214,6 @@ async function conventional(root: string, bases: readonly string[]): Promise<str
     }
   }
   return found.length === 1 ? found[0] : undefined;
-}
-
-/**
- * The page without its comments, read once from left to right like a browser: an unterminated comment
- * runs to the end, and what is left of one comment is never re-read as the start of another.
- */
-function stripHtmlComments(html: string): string {
-  let out = '';
-  let at = 0;
-  for (;;) {
-    const open = html.indexOf('<!--', at);
-    if (open === -1) return out + html.slice(at);
-    out += html.slice(at, open);
-    const close = html.indexOf('-->', open + 4);
-    if (close === -1) return out;
-    at = close + 3;
-  }
 }
 
 /** The first local module `<script src>` of an HTML file that names an existing script (never build output). */
