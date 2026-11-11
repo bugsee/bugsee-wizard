@@ -14,6 +14,11 @@ export interface Integration {
   where: string;
 }
 
+/** The scan could not finish, and why: the project is neither "integrated" nor "not integrated". */
+export interface UnfinishedScan {
+  unknown: string;
+}
+
 const SKIP_DIRS = new Set([
   'node_modules',
   '.git',
@@ -45,7 +50,8 @@ const MAX_BYTES = 512 * 1024;
 /** Type-only loads are erased at build time: they do not run the SDK. */
 const TYPE_ONLY_RE = [
   /\b(?:import|export)\s+type\b[^;'"]*?from\s*['"][^'"]+['"]/g,
-  /\bimport\s*\{\s*(?:type\s+[\w$]+(?:\s+as\s+[\w$]+)?\s*,?\s*)+\}\s*from\s*['"][^'"]+['"]/g,
+  // every specifier is `type X` or `type X as Y`: one unambiguous shape, so it cannot backtrack badly
+  /\bimport\s*\{\s*type\s+[\w$]+(?:\s+as\s+[\w$]+)?(?:\s*,\s*type\s+[\w$]+(?:\s+as\s+[\w$]+)?)*[\s,]*\}\s*from\s*['"][^'"]+['"]/g,
 ];
 const LOAD_RE =
   /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"](@bugsee\/[\w.-]+)(?:\/[^'"]*)?['"]/g;
@@ -77,11 +83,11 @@ async function dependencyIntegration(root: string, own: string): Promise<Integra
 export async function findExistingIntegration(
   root: string,
   ownPackage: string,
-): Promise<Integration | 'unknown' | undefined> {
+): Promise<Integration | UnfinishedScan | undefined> {
   const dep = await dependencyIntegration(root, ownPackage);
   if (dep) return dep;
   let seen = 0;
-  let capped = false;
+  let capped: string | undefined;
   const walk = async (dir: string, rel: string): Promise<Integration | undefined> => {
     let entries: import('node:fs').Dirent[];
     try {
@@ -102,10 +108,10 @@ export async function findExistingIntegration(
         if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
         const found = await walk(join(dir, e.name), path);
         if (found) return found;
-        if (capped) return undefined;
+        if (capped !== undefined && seen > MAX_FILES) return undefined;
       } else if (e.isFile() && SOURCE_EXT_RE.test(e.name) && !e.name.endsWith('.d.ts')) {
         if (++seen > MAX_FILES) {
-          capped = true;
+          capped = `more than ${MAX_FILES} source files`;
           return undefined;
         }
         const abs = join(dir, e.name);
@@ -117,7 +123,7 @@ export async function findExistingIntegration(
           )
           .catch(() => undefined);
         if (text === undefined) {
-          capped = true;
+          capped ??= `could not read ${path} (unreadable or larger than ${MAX_BYTES / 1024} KB)`;
           continue;
         }
         if (loadsRuntimePackage(text)) return { where: path };
@@ -128,5 +134,5 @@ export async function findExistingIntegration(
   const found = await walk(root, '');
   if (found) return found;
   // an unfinished scan proves nothing: the caller must not act as if the project had no integration
-  return capped ? 'unknown' : undefined;
+  return capped === undefined ? undefined : { unknown: capped };
 }

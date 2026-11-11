@@ -295,7 +295,7 @@ describe('add-sdk-init op', () => {
     const step = opToStep(browser);
     expect((await step.precheck(ctx)).kind).toBe('pending');
     const res = await step.apply(ctx);
-    expect(res?.manual?.code).toMatch(/too many source files/);
+    expect(res?.manual?.code).toMatch(/more than 3000 source files/);
     expect(res?.manual?.code).not.toContain('tok_SECRET');
     expect(await read('src/main.js')).toBe(MAIN);
     expect(ctx.entries).toEqual([{ file: 'your entry file', action: 'manual' }]);
@@ -502,5 +502,15 @@ describe('add-sdk-init op', () => {
       await put('src/env.ts', "import 'dotenv/config';\n");
       expect(await run()).toBeUndefined();
     });
+  });
+
+  it('an oversized source file is named in the snippet note (not "too many files")', async () => {
+    await put('index.html', '<script type="module" src="/src/main.js"></script>');
+    await put('src/main.js', MAIN);
+    await put('src/generated/schema.js', `${'x'.repeat(600_000)}\n`);
+    const res = await opToStep(browser).apply(makeCtx(tmp.dir));
+    expect(res?.manual?.code).toContain('src/generated/schema.js');
+    expect(res?.manual?.code).not.toMatch(/too many source files/);
+    expect(await read('src/main.js')).toBe(MAIN);
   });
 });

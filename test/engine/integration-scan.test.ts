@@ -118,7 +118,7 @@ describe('findExistingIntegration', () => {
 
     it('hitting the cap without finding anything is "unknown", never undefined', async () => {
       await many('docs', 3100);
-      expect(await scan()).toBe('unknown');
+      expect(await scan()).toEqual({ unknown: expect.stringContaining('more than 3000') });
     });
 
     it('assets, static and public directories are not source: they cannot exhaust the bound', async () => {
@@ -175,9 +175,14 @@ describe('findExistingIntegration', () => {
   });
 
   describe('a file that cannot be checked makes the scan unknown (never "not integrated")', () => {
-    it('an oversized source file', async () => {
+    it('an oversized source file (named in the reason)', async () => {
       await put('src/big.js', `${'x'.repeat(600_000)}\nimport '@bugsee/bugsee';\n`);
-      expect(await scan()).toBe('unknown');
+      expect(await scan()).toEqual({ unknown: expect.stringContaining('src/big.js') });
+    });
+    it('the first unreadable or oversized file is the reason given', async () => {
+      await put('src/a.js', `${'x'.repeat(600_000)}\n`);
+      await put('src/b.js', `${'x'.repeat(600_000)}\n`);
+      expect(await scan()).toEqual({ unknown: expect.stringContaining('src/a.js') });
     });
     it('an unreadable source file', async () => {
       await put('src/locked.js', "import '@bugsee/bugsee';\n");
@@ -186,7 +191,8 @@ describe('findExistingIntegration', () => {
         const res = await scan();
         // root can read anything: then it is simply found
         expect(
-          res === 'unknown' || (typeof res === 'object' && res.where === 'src/locked.js'),
+          (res !== undefined && 'unknown' in res && res.unknown.includes('src/locked.js')) ||
+            (res !== undefined && 'where' in res && res.where === 'src/locked.js'),
         ).toBe(true);
       } finally {
         await chmod(join(tmp.dir, 'src/locked.js'), 0o644);

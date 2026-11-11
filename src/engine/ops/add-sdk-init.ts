@@ -231,10 +231,9 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
       }
     }
     const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom);
-    if (existing !== undefined && existing !== 'unknown') return undefined;
-    if (existing === 'unknown') {
-      const note =
-        '// The project has too many source files to check whether Bugsee is already set up, so nothing was changed.\n// If it is not, add:\n';
+    if (existing !== undefined && !('unknown' in existing)) return undefined;
+    if (existing !== undefined && 'unknown' in existing) {
+      const note = `// Could not check whether Bugsee is already set up (${existing.unknown}), so nothing was changed.\n// If it is not, add:\n`;
       return manual(NO_ENTRY, `${note}${sdkInitSnippet(probeSpec(), false)}`);
     }
     if (!found) {
@@ -318,7 +317,7 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
       }
       const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom);
       // too big to scan: pending, and apply turns it into a snippet (never "not integrated")
-      if (existing !== undefined && existing !== 'unknown') {
+      if (existing !== undefined && !('unknown' in existing)) {
         return { kind: 'satisfied', note: `Bugsee is already set up (${existing.where})` };
       }
       if (!found) return { kind: 'pending' }; // apply hands back a manual snippet
