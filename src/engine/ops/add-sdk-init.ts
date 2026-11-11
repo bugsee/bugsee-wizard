@@ -60,16 +60,16 @@ async function packageData(dir: string): Promise<Record<string, unknown>> {
   }
 }
 
+/**
+ * Whether the script that starts the app loads an env file. `npm start` is the start script when
+ * there is one (a loader in `dev` does not cover production); otherwise dev/serve/`start:*` count.
+ */
 async function scriptsLoadEnv(pkg: Record<string, unknown>): Promise<boolean> {
   const scripts = pkg.scripts;
-  return (
-    typeof scripts === 'object' &&
-    scripts !== null &&
-    Object.entries(scripts).some(
-      ([name, c]) =>
-        START_SCRIPT_RE.test(name) && typeof c === 'string' && SCRIPT_LOADS_ENV_RE.test(c),
-    )
-  );
+  if (typeof scripts !== 'object' || scripts === null) return false;
+  const entries = Object.entries(scripts).filter(([name]) => START_SCRIPT_RE.test(name));
+  const used = 'start' in scripts ? entries.filter(([name]) => name === 'start') : entries;
+  return used.some(([, c]) => typeof c === 'string' && SCRIPT_LOADS_ENV_RE.test(c));
 }
 
 const RESOLVE_SUFFIXES = [
@@ -94,8 +94,10 @@ async function importedModuleLoadsEnv(entryPath: string, src: string): Promise<b
     .map((m) => m[1] as string)
     .slice(0, 20);
   for (const spec of specs) {
-    for (const suffix of RESOLVE_SUFFIXES) {
-      const file = join(dirname(entryPath), spec + suffix);
+    // TypeScript ESM writes `./env.js` for `env.ts`
+    const swapped = spec.replace(/\.([cm]?)js$/, '.$1ts');
+    for (const suffix of [...RESOLVE_SUFFIXES, ...(swapped === spec ? [] : ['<ts>'])]) {
+      const file = join(dirname(entryPath), suffix === '<ts>' ? swapped : spec + suffix);
       const text = await readBytes(file).then(
         (b) => b?.toString('utf8') ?? null,
         () => null,

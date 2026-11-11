@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { findExistingIntegration } from '../../src/engine/integration-scan.js';
@@ -78,11 +78,10 @@ describe('findExistingIntegration', () => {
     expect(await scan('@bugsee/bugsee')).toBeUndefined();
   });
 
-  it('skips node_modules, build output and .git, and is bounded in file size', async () => {
+  it('skips node_modules, build output and .git', async () => {
     await put('node_modules/x/index.js', "import '@bugsee/bugsee';\n");
     await put('dist/main.js', "import '@bugsee/bugsee';\n");
     await put('.git/hooks/x.js', "import '@bugsee/bugsee';\n");
-    await put('src/huge.ts', `${'x'.repeat(600_000)}\nimport '@bugsee/bugsee';\n`);
     expect(await scan()).toBeUndefined();
   });
 
@@ -155,5 +154,51 @@ describe('findExistingIntegration', () => {
     // ...while the same file in a source directory is found
     await put('src/x.js', "import '@bugsee/bugsee';\n");
     expect(await scan()).toEqual({ where: 'src/x.js' });
+  });
+
+  describe('only executable loads count', () => {
+    it.each([
+      ["// import '@bugsee/bugsee';\n"],
+      ["/* import '@bugsee/bugsee';\n*/\n"],
+      ["export type { X } from '@bugsee/bugsee';\n"],
+      ["import { type X } from '@bugsee/bugsee';\n"],
+      ["import { type X, type Y as Z } from '@bugsee/bugsee';\n"],
+    ])('does not count %j', async (src) => {
+      await put('src/a.ts', src);
+      expect(await scan()).toBeUndefined();
+    });
+
+    it('a load after a comment on the same line, or next to a URL in a string, still counts', async () => {
+      await put('src/a.js', "const u = 'https://example.com'; import('@bugsee/bugsee');\n");
+      expect(await scan()).toEqual({ where: 'src/a.js' });
+    });
+  });
+
+  describe('a file that cannot be checked makes the scan unknown (never "not integrated")', () => {
+    it('an oversized source file', async () => {
+      await put('src/big.js', `${'x'.repeat(600_000)}\nimport '@bugsee/bugsee';\n`);
+      expect(await scan()).toBe('unknown');
+    });
+    it('an unreadable source file', async () => {
+      await put('src/locked.js', "import '@bugsee/bugsee';\n");
+      await chmod(join(tmp.dir, 'src/locked.js'), 0o000);
+      try {
+        const res = await scan();
+        // root can read anything: then it is simply found
+        expect(
+          res === 'unknown' || (typeof res === 'object' && res.where === 'src/locked.js'),
+        ).toBe(true);
+      } finally {
+        await chmod(join(tmp.dir, 'src/locked.js'), 0o644);
+      }
+    });
+  });
+
+  it('hidden tool and cache directories are not scanned (a big .yarn cannot make the scan unknown)', async () => {
+    await many('.yarn/unplugged', 3100);
+    await many('.cache', 10);
+    await many('storybook-static', 10);
+    await put('src/a.js', 'run();\n');
+    expect(await scan()).toBeUndefined();
   });
 });

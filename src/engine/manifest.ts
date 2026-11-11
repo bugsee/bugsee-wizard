@@ -540,6 +540,8 @@ export async function rollbackFromManifest(ctx: {
       byIndex.set(i, r);
     } catch (err) {
       errored.add(i);
+      // an edit of the user's code that could not be undone: its packages must stay
+      if (e.marker?.startsWith('bugsee-wizard') === true && e.action === 'edited') keepSdk = true;
       const note = err instanceof Error ? err.message : String(err);
       ctx.log.error(`Could not roll back ${e.file}: ${note}`);
       byIndex.set(i, { file: e.file, outcome: 'skipped', note });

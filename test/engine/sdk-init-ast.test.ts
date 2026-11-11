@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addSdkInit,
   hasSdkIntegration,
+  loadsEnvFile,
   type SdkInitSpec,
   sdkInitSnippet,
 } from '../../src/engine/sdk-init-ast.js';
@@ -620,6 +621,30 @@ describe('addSdkInit (same-line code, env loading, integration checks)', () => {
       expect(
         code(addSdkInit('run();\n', spec({ runtime: 'bun', fileName: 'a.ts' }))),
       ).not.toContain('.catch');
+    });
+  });
+
+  describe('review round 5', () => {
+    it.each([
+      ["import { type Options } from '@bugsee/bugsee';\n", false],
+      ["import { type A, type B as C } from '@bugsee/bugsee';\n", false],
+      ["import { launch, type Options } from '@bugsee/bugsee';\n", true],
+      ["import '@bugsee/bugsee';\n", true],
+    ])('a type-only import is not a load: %j -> %s', (src, expected) => {
+      expect(hasSdkIntegration(src)).toBe(expected);
+    });
+
+    it.each([
+      ["import { parse } from 'dotenv';\nparse('A=1');\n", false],
+      ["import dotenv from 'dotenv';\ndotenv.parse('A=1');\n", false],
+      ["const { parse } = require('dotenv');\nparse('A=1');\n", false],
+      ["import { config } from 'dotenv';\nconfig();\n", true],
+      ["import { configDotenv as load } from 'dotenv';\nload();\n", true],
+      ["import * as d from 'dotenv';\nd.config();\n", true],
+      ["const { config: c } = require('dotenv');\nc();\n", true],
+      ["require('dotenv').configDotenv();\n", true],
+    ])('dotenv calls: only the ones that load the file count: %j -> %s', (src, expected) => {
+      expect(loadsEnvFile(src)).toBe(expected);
     });
   });
 });

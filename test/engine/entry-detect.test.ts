@@ -393,4 +393,16 @@ describe('findEntry (review follow-ups)', () => {
     await put('tsconfig.app.json', '{ "compilerOptions": { "types": ["vite/client"] } }');
     expect(await hasViteClientTypes(tmp.dir)).toBe(true);
   });
+
+  it('imports inside comments of an inline module script are not the entry', async () => {
+    await put(
+      'index.html',
+      '<script type="module">/*\nimport "./unused.ts";\n*/\n// import "./also-unused.ts"\nimport "./actual.ts"</script>',
+    );
+    for (const f of ['unused', 'also-unused', 'actual']) await put(`src/${f}.ts`);
+    await put('unused.ts');
+    await put('also-unused.ts');
+    await put('actual.ts');
+    expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('actual.ts');
+  });
 });

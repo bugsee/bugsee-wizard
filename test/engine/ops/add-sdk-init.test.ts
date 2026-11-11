@@ -330,7 +330,7 @@ describe('add-sdk-init op', () => {
 
     it.each([
       ['--env-file', { start: 'node --env-file=.env server.js' }],
-      ['--env-file-if-exists', { dev: 'node --env-file-if-exists=.env server.js' }],
+      ['--env-file-if-exists', { start: 'node --env-file-if-exists=.env server.js' }],
       ['dotenv cli', { start: 'dotenv -e .env -- node server.js' }],
       ['dotenvx', { start: 'dotenvx run -- node server.js' }],
       ['-r dotenv/config', { start: 'node -r dotenv/config server.js' }],
@@ -465,6 +465,42 @@ describe('add-sdk-init op', () => {
       const res = await run();
       expect(res?.manual?.code).not.toContain('src/main.ts');
       expect(res?.manual?.code).toMatch(/<your start command>|dist\/main\.js/);
+    });
+  });
+
+  describe('start script and imports (review round 5)', () => {
+    const SERVER = "import { createServer } from 'node:http';\ncreateServer().listen(0);\n";
+    const run = () => opToStep(node).apply(makeCtx(tmp.dir));
+
+    it('the start script decides: a loader in dev does not cover `npm start`', async () => {
+      await put(
+        'package.json',
+        JSON.stringify({
+          type: 'module',
+          scripts: { start: 'node server.js', dev: 'node --env-file=.env server.js' },
+        }),
+      );
+      await put('server.js', SERVER);
+      expect((await run())?.manual?.title).toBe('Give Node the Bugsee token');
+    });
+
+    it('without a start script, dev or serve count', async () => {
+      await put(
+        'package.json',
+        JSON.stringify({ type: 'module', scripts: { dev: 'node --env-file=.env server.js' } }),
+      );
+      await put('server.js', SERVER);
+      expect(await run()).toBeUndefined();
+    });
+
+    it('a NodeNext-style `./env.js` import finds env.ts', async () => {
+      await put(
+        'package.json',
+        JSON.stringify({ type: 'module', scripts: { start: 'node dist/index.js' } }),
+      );
+      await put('src/index.ts', "import './env.js';\n" + SERVER);
+      await put('src/env.ts', "import 'dotenv/config';\n");
+      expect(await run()).toBeUndefined();
     });
   });
 });

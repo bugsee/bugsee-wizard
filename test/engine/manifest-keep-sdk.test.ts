@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -168,6 +168,18 @@ describe('uninstall when the init cannot be taken out', () => {
     expect(res.results.find((r) => r.file === 'server.js')?.outcome).toBe('reverted');
     const pkg = JSON.parse(await readFile(p('package.json'), 'utf8'));
     expect(pkg.devDependencies['@bugsee/vite-plugin']).toBeDefined();
+    expect(await readFile(p('package-lock.json'), 'utf8')).toBe(LOCK_AFTER);
+  });
+
+  it('an init entry whose rollback throws also keeps the SDK (the package is not removed under an import that stays)', async () => {
+    await wizardRun();
+    // reading the entry fails (EISDIR), so reverting it throws instead of finishing
+    await rm(p('server.js'));
+    await mkdir(p('server.js'));
+    const res = await roll();
+    expect(res.failed).toBe(true);
+    const pkg = JSON.parse(await readFile(p('package.json'), 'utf8'));
+    expect(pkg.dependencies['@bugsee/bugsee']).toBeDefined();
     expect(await readFile(p('package-lock.json'), 'utf8')).toBe(LOCK_AFTER);
   });
 });

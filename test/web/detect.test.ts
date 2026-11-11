@@ -832,4 +832,33 @@ describe('detectJavaScript rules (synthetic projects)', () => {
       expect(server?.runtimes).toEqual(['node']);
     });
   });
+
+  describe('an explicit node start command is Node evidence', () => {
+    it('esbuild + type + start: node dist/index.js (no server dependency) is node, not unknown', async () => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': {
+            name: 'a',
+            type: 'module',
+            devDependencies: { esbuild: '0.20.0' },
+            scripts: { start: 'node dist/index.js', build: 'esbuild src/index.js --bundle' },
+          },
+        }),
+      );
+      expect(det?.runtimes).toEqual(['node']);
+      expect(det?.runtimeUnknown).toBeUndefined();
+    });
+    it('a tool command (vite, webpack serve) is not', async () => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': {
+            name: 'a',
+            devDependencies: { webpack: '5' },
+            scripts: { start: 'webpack serve' },
+          },
+        }),
+      );
+      expect(det?.runtimeUnknown).toBe(true);
+    });
+  });
 });

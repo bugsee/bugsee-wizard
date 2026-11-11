@@ -1,5 +1,6 @@
 import { access, readdir, readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
+import { stripJsComments } from './js-text.js';
 import type { SdkRuntime } from './sdk-init-ast.js';
 
 /**
@@ -248,7 +249,9 @@ async function htmlScript(root: string, htmlRel: string): Promise<string | undef
     if (!/\btype\s*=\s*["']?module\b/i.test(attrs)) continue;
     const src = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs);
     // an inline module script is followed to the first local file it imports
-    const inline = /^\s*import\s+(?:[^'"]*?\bfrom\s*)?["']([^"']+)["']/m.exec(m[2] ?? '')?.[1];
+    const inline = /^\s*import\s+(?:[^'"]*?\bfrom\s*)?["']([^"']+)["']/m.exec(
+      stripJsComments(m[2] ?? ''),
+    )?.[1];
     const value =
       (src?.[1] ?? src?.[2] ?? (src === null ? (inline ?? '') : '')).split(/[?#]/)[0] ?? '';
     if (

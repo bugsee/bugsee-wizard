@@ -94,9 +94,12 @@ const SKIP_KEYS = new Set([
 function loadedModule(node: Node): string | undefined {
   if (node.type === 'ImportDeclaration') {
     // `import type` is erased: it does not run the SDK
-    return node.importKind === 'type' || node.importKind === 'typeof'
-      ? undefined
-      : name(child(node, 'source'));
+    if (node.importKind === 'type' || node.importKind === 'typeof') return undefined;
+    // `import { type A, type B }` is erased too: every specifier is type-only
+    const specifiers = children(node, 'specifiers');
+    if (specifiers.length > 0 && specifiers.every((sp) => sp?.importKind === 'type'))
+      return undefined;
+    return name(child(node, 'source'));
   }
   if (node.type === 'ImportExpression') return name(child(node, 'source'));
   if (node.type !== 'CallExpression') return undefined;
@@ -238,36 +241,59 @@ export function sdkInitSnippet(spec: SdkInitSpec, cjs: boolean): string {
   return lines(spec, cjs, LAUNCH, undefined).join('\n');
 }
 
-/** Local names bound to the `dotenv` package at the top level (ESM imports and CommonJS requires). */
-function dotenvNames(body: Node[]): Set<string> {
-  const out: string[] = [];
+const DOTENV_LOADERS = new Set(['config', 'configDotenv']);
+
+/**
+ * Local names bound to dotenv at the top level: `objects` (the module: `dotenv.config()`) and `fns`
+ * (the loading functions imported by name: `config()`). Other exports (`parse`, `populate`) are neither.
+ */
+function dotenvBindings(body: Node[]): { objects: Set<string>; fns: Set<string> } {
+  const objects = new Set<string>();
+  const fns = new Set<string>();
   for (const stmt of body) {
     if (stmt.type === 'ImportDeclaration' && name(child(stmt, 'source')) === 'dotenv') {
       for (const sp of children(stmt, 'specifiers')) {
         const local = name(sp ? child(sp, 'local') : undefined);
-        if (local !== undefined) out.push(local);
+        if (local === undefined || sp === null) continue;
+        if (sp.type === 'ImportSpecifier') {
+          if (DOTENV_LOADERS.has(name(child(sp, 'imported')) ?? '')) fns.add(local);
+        } else {
+          objects.add(local);
+        }
       }
     } else if (stmt.type === 'VariableDeclaration') {
       for (const d of children(stmt, 'declarations')) {
-        if (d && requireArg(child(d, 'init')) === 'dotenv') collectBoundNames(child(d, 'id'), out);
+        if (!d || requireArg(child(d, 'init')) !== 'dotenv') continue;
+        const id = child(d, 'id');
+        if (id?.type === 'Identifier') {
+          objects.add(name(id) ?? '');
+        } else if (id?.type === 'ObjectPattern') {
+          for (const pr of children(id, 'properties')) {
+            if (pr?.type === 'ObjectProperty' && DOTENV_LOADERS.has(name(child(pr, 'key')) ?? '')) {
+              const local = name(child(pr, 'value'));
+              if (local !== undefined) fns.add(local);
+            }
+          }
+        }
       }
     }
   }
-  return new Set(out);
+  return { objects, fns };
 }
 
 /** The last top-level statement that loads an env file (`dotenv.config()`, `config()`, `process.loadEnvFile()`). */
 function lastEnvLoad(body: Node[]): Node | undefined {
-  const names = dotenvNames(body);
+  const { objects, fns } = dotenvBindings(body);
   const loads = (call: Node | undefined): boolean => {
     if (call?.type !== 'CallExpression') return false;
     const callee = child(call, 'callee');
-    if (callee?.type === 'Identifier') return names.has(name(callee) ?? '');
+    if (callee?.type === 'Identifier') return fns.has(name(callee) ?? '');
     if (callee?.type !== 'MemberExpression') return false;
     const obj = child(callee, 'object');
-    const prop = name(child(callee, 'property'));
+    const prop = name(child(callee, 'property')) ?? '';
     if (name(obj) === 'process') return prop === 'loadEnvFile';
-    return names.has(name(obj) ?? '') || requireArg(obj) === 'dotenv';
+    if (!DOTENV_LOADERS.has(prop)) return false;
+    return objects.has(name(obj) ?? '') || requireArg(obj) === 'dotenv';
   };
   const found = body.filter((s) => {
     if (s.type !== 'ExpressionStatement') return false;

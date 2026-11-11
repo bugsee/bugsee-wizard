@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { findConfigFile } from '../engine/config-ast.js';
+import { scriptsRunAFile } from '../engine/entry-detect.js';
+import { stripJsComments } from '../engine/js-text.js';
 import { readPackageJson } from '../engine/package-json.js';
 import { detectPackageManager, type PackageManagerName } from '../engine/package-manager.js';
 import { findWorkspace, resolveDependencyVersion } from '../engine/workspace.js';
@@ -197,11 +199,6 @@ const SERVER_CONFIG_RE =
   /\btarget\s*:\s*['"](?:node|async-node|electron-main)\b|\bplatform\s*[=:]\s*['"]?node\b|--platform(?:=|\s+)node\b/;
 const PAGE_SCRIPT_RE = /--platform(?:=|\s+)browser\b/;
 
-/** Config text without comments: a note mentioning a plugin is not the plugin. */
-function withoutComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
-}
-
 async function bundlerTargets(
   dir: string,
   configs: Iterable<string>,
@@ -209,7 +206,7 @@ async function bundlerTargets(
 ): Promise<{ page: boolean; server: boolean }> {
   const texts: string[] = [];
   for (const name of configs) {
-    texts.push(withoutComments(await readFile(path.join(dir, name), 'utf8').catch(() => '')));
+    texts.push(stripJsComments(await readFile(path.join(dir, name), 'utf8').catch(() => '')));
   }
   if (isRecord(scripts)) {
     texts.push(...Object.values(scripts).filter((v): v is string => typeof v === 'string'));
@@ -418,7 +415,9 @@ async function inspectProject(
       // Server libraries (hono, ...) also run on the edge: with an edge signal they say nothing about node.
       (!edge && SERVER_DEPS.some((d) => deps.has(d))) ||
       // a bundle that is built for node says so
-      (!browser && !edge && targets.server) ||
+      (!browser &&
+        !edge &&
+        (targets.server || (isRecord(pkg.scripts) && scriptsRunAFile(pkg.scripts)))) ||
       // engines.node / "type" only tell us it runs on node when no UI library or edge target claims the project.
       // A bundled project is a page unless it says otherwise: there, these say nothing at all.
       (!browser &&

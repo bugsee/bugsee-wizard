@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { stripJsComments } from './js-text.js';
 import { isRuntimeSdkPackage } from './sdk-packages.js';
 
 /**
@@ -28,6 +29,7 @@ const SKIP_DIRS = new Set([
   '.turbo',
   '.angular',
   '.vercel',
+  'storybook-static',
   // not source: media, static files and vendored output can be huge and never hold the app's launch
   'assets',
   'static',
@@ -40,13 +42,17 @@ const SOURCE_EXT_RE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|html)$/i;
 const MAX_FILES = 3000;
 const MAX_BYTES = 512 * 1024;
 
-/** `import type … from '@bugsee/x'` is erased at build time: it does not run the SDK. */
-const TYPE_IMPORT_RE = /\bimport\s+type\b[^;'"]*?from\s*['"][^'"]+['"]/g;
+/** Type-only loads are erased at build time: they do not run the SDK. */
+const TYPE_ONLY_RE = [
+  /\b(?:import|export)\s+type\b[^;'"]*?from\s*['"][^'"]+['"]/g,
+  /\bimport\s*\{\s*(?:type\s+[\w$]+(?:\s+as\s+[\w$]+)?\s*,?\s*)+\}\s*from\s*['"][^'"]+['"]/g,
+];
 const LOAD_RE =
   /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"](@bugsee\/[\w.-]+)(?:\/[^'"]*)?['"]/g;
 
 function loadsRuntimePackage(text: string): boolean {
-  for (const m of text.replace(TYPE_IMPORT_RE, '').matchAll(LOAD_RE)) {
+  const code = TYPE_ONLY_RE.reduce((t, re) => t.replace(re, ''), stripJsComments(text));
+  for (const m of code.matchAll(LOAD_RE)) {
     if (isRuntimeSdkPackage(m[1])) return true;
   }
   return false;
@@ -92,7 +98,8 @@ export async function findExistingIntegration(
     )) {
       const path = rel === '' ? e.name : `${rel}/${e.name}`;
       if (e.isDirectory()) {
-        if (SKIP_DIRS.has(e.name)) continue;
+        // tool state and caches (.yarn, .cache, .nx, ...) hold no app code, and can hold thousands of files
+        if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
         const found = await walk(join(dir, e.name), path);
         if (found) return found;
         if (capped) return undefined;
@@ -102,8 +109,18 @@ export async function findExistingIntegration(
           return undefined;
         }
         const abs = join(dir, e.name);
-        if ((await stat(abs)).size > MAX_BYTES) continue;
-        if (loadsRuntimePackage(await readFile(abs, 'utf8'))) return { where: path };
+        // a file that cannot be checked (too big, unreadable, gone) leaves the scan unfinished
+        const text = await stat(abs)
+          .then(
+            async (st) => (st.size > MAX_BYTES ? undefined : readFile(abs, 'utf8')),
+            () => undefined,
+          )
+          .catch(() => undefined);
+        if (text === undefined) {
+          capped = true;
+          continue;
+        }
+        if (loadsRuntimePackage(text)) return { where: path };
       }
     }
     return undefined;
