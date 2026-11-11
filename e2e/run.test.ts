@@ -76,7 +76,22 @@ const MANUAL: Record<string, string[]> = {
  * synthetic projects) are projects that already use the SDK, so installing it or initialising it is
  * a no-op there. Everything else of the runtime recipe is applied.
  */
-const RUNTIME_SKIPPED: Record<string, string[]> = {};
+const INSTALLED = 'install-package:@bugsee/bugsee';
+const INIT_BROWSER = 'add-sdk-init:browser';
+const INIT_NODE = 'add-sdk-init:node';
+const RUNTIME_SKIPPED: Record<string, string[]> = {
+  'react-spa': [INSTALLED, INIT_BROWSER],
+  'vue-spa': [INSTALLED, INIT_BROWSER],
+  'svelte-spa': [INSTALLED, INIT_BROWSER],
+  'vite-object-config': [INSTALLED, INIT_BROWSER],
+  'webpack-sourcemaps': [INSTALLED, INIT_BROWSER],
+  'webpack-object-config': [INSTALLED, INIT_BROWSER],
+  'node-service': [INSTALLED, INIT_NODE],
+  'tsc-build': [INIT_NODE],
+  'esbuild-build': [INIT_NODE],
+  'rollup-build': [INIT_NODE],
+  'rspack-build': [INIT_NODE],
+};
 
 const selected = (
   process.env.BUGSEE_E2E_FIXTURES ?? [...Object.keys(FIXTURES), ...UNAPPROVED_NAMES].join(',')
@@ -333,12 +348,13 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       const res = parseResult(r);
       expect(res.ok, show(r)).toBe(true);
       expect(res.incomplete).toBe(manual.length > 0);
-      expect(res.steps.map((s) => s.id)).toEqual(expectedIds);
-      for (const s of res.steps) {
-        expect(`${s.id}: ${s.outcome}`).toBe(
-          `${s.id}: ${manual.includes(s.id) ? 'manual' : runtimeSkipped.includes(s.id) ? 'skipped' : 'applied'}`,
-        );
-      }
+      // one comparison, so a failure lists every step that differs
+      expect(res.steps.map((s) => `${s.id}: ${s.outcome}`)).toEqual(
+        expectedIds.map(
+          (id) =>
+            `${id}: ${manual.includes(id) ? 'manual' : runtimeSkipped.includes(id) ? 'skipped' : 'applied'}`,
+        ),
+      );
       expect((res.snippets ?? []).length).toBe(manual.length);
 
       // the files the wizard changed are exactly the ones its manifest lists
@@ -568,7 +584,14 @@ for (const name of selected.filter((n) => UNAPPROVED_NAMES.includes(n))) {
       const r = await wizard(dir, ['--non-interactive', '--json', '--token', TOKEN]);
       const res = parseResult(r);
       expect(res.ok, show(r)).toBe(false);
-      expect(res.steps).toEqual([{ id: c.installId, outcome: 'failed' }]);
+      // the SDK install before it needs no approval and succeeds; the failing one rolls it back
+      expect(res.steps.filter((s) => s.outcome === 'failed')).toEqual([
+        { id: c.installId, outcome: 'failed' },
+      ]);
+      const applied = res.steps.filter((s) => s.outcome === 'applied').map((s) => s.id);
+      expect(res.steps.filter((s) => s.outcome === 'rolled-back').map((s) => s.id)).toEqual(
+        [...applied].reverse(),
+      );
       expect(r.stderr + r.stdout).toContain('approve-builds');
       expect(r.stderr + r.stdout).toContain('--yes');
       expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');

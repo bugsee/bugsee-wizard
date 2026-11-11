@@ -146,7 +146,7 @@ export const FIXTURES = {
   },
   'rspack-build': {
     synthetic: true,
-    runtime: 'javascript-browser',
+    runtime: 'javascript-node',
     recipe: 'javascript-rspack',
     route: 'cli',
     outDir: 'dist',
