@@ -51,7 +51,7 @@ describe('add-sdk-init op', () => {
     expect(await step.apply(ctx)).toBeUndefined();
     const after = await read('src/main.js');
     expect(after).toContain("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
-    expect(after).toContain("launch('tok_SECRET_123'); // bugsee-wizard");
+    expect(after).toContain("launch('tok_SECRET_123').catch(() => {}); // bugsee-wizard");
     expect(ctx.entries).toEqual([
       { file: 'src/main.js', action: 'edited', before: MAIN, after, marker: 'bugsee-wizard' },
     ]);
@@ -68,7 +68,7 @@ describe('add-sdk-init op', () => {
     expect(await step.precheck(ctx)).toEqual({ kind: 'pending' });
     await step.apply(ctx);
     const after = await read('src/main.js');
-    expect(after).toContain('launch(import.meta.env.VITE_BUGSEE_APP_TOKEN);');
+    expect(after).toContain(`launch(import.meta.env['VITE_BUGSEE_APP_TOKEN']).catch(() => {});`);
   });
 
   it('a literal token is required: no token is a blocked step', async () => {
@@ -106,7 +106,7 @@ describe('add-sdk-init op', () => {
     await opToStep(node).apply(ctx);
     const cjs = await read('server.js');
     expect(cjs).toContain("const { launch } = require('@bugsee/bugsee'); // bugsee-wizard");
-    expect(cjs).toContain('launch(process.env.BUGSEE_APP_TOKEN);');
+    expect(cjs).toContain(`launch(process.env['BUGSEE_APP_TOKEN']);`);
 
     await put(
       'package.json',
@@ -126,7 +126,7 @@ describe('add-sdk-init op', () => {
     const out = await read('index.ts');
     expect(out).toContain("import { launch } from '@bugsee/bun'; // bugsee-wizard");
     expect(out).toContain(
-      'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN);',
+      `if (process.env['BUGSEE_APP_TOKEN']) launch(process.env['BUGSEE_APP_TOKEN']);`,
     );
   });
 
@@ -274,5 +274,101 @@ describe('add-sdk-init op', () => {
     const ctx = makeCtx(tmp.dir);
     await opToStep(browser).apply(ctx);
     expect(ctx.entries[0]).toMatchObject({ before: MAIN, file: 'src/main.js' });
+  });
+
+  it('a project too big to scan is a manual snippet, never "not integrated" (no second launch is planned)', async () => {
+    await put('index.html', '<script type="module" src="/src/main.js"></script>');
+    await put('src/main.js', MAIN);
+    await mkdir(abs('docs'), { recursive: true });
+    await Promise.all(
+      Array.from({ length: 3100 }, (_, i) =>
+        writeFile(abs(`docs/f${i}.js`), `export const a${i} = 1;\n`),
+      ),
+    );
+    const ctx = makeCtx(tmp.dir);
+    const step = opToStep(browser);
+    expect((await step.precheck(ctx)).kind).toBe('pending');
+    const res = await step.apply(ctx);
+    expect(res?.manual?.code).toMatch(/too many source files/);
+    expect(res?.manual?.code).not.toContain('tok_SECRET');
+    expect(await read('src/main.js')).toBe(MAIN);
+    expect(ctx.entries).toEqual([{ file: 'your entry file', action: 'manual' }]);
+  });
+
+  describe('Node needs something to load .env', () => {
+    const SERVER = "import { createServer } from 'node:http';\ncreateServer().listen(0);\n";
+    const nodePkg = (scripts: object = {}) =>
+      put(
+        'package.json',
+        JSON.stringify({ type: 'module', scripts: { start: 'node server.js', ...scripts } }),
+      );
+
+    it('nothing loads it: the edit is kept but the step is a manual one with the exact instruction', async () => {
+      await nodePkg();
+      await put('server.js', SERVER);
+      const ctx = makeCtx(tmp.dir);
+      const step = opToStep(node);
+      const res = await step.apply(ctx);
+      expect(await read('server.js')).toContain("if (process.env['BUGSEE_APP_TOKEN'])");
+      expect(res?.applied).toBe(true);
+      expect(res?.manual?.file).toBe('package.json');
+      expect(res?.manual?.code).toContain('node --env-file=.env server.js');
+      expect(res?.manual?.code).toMatch(
+        /Bugsee will not start until the token is provided to the process/,
+      );
+      expect(ctx.entries.map((e) => e.action)).toEqual(['edited', 'manual']);
+      // the edit stays rollback-covered
+      await step.rollback(ctx);
+      expect(await read('server.js')).toBe(SERVER);
+    });
+
+    it.each([
+      ['--env-file', { start: 'node --env-file=.env server.js' }],
+      ['--env-file-if-exists', { dev: 'node --env-file-if-exists=.env server.js' }],
+      ['dotenv cli', { start: 'dotenv -e .env -- node server.js' }],
+      ['dotenvx', { start: 'dotenvx run -- node server.js' }],
+      ['-r dotenv/config', { start: 'node -r dotenv/config server.js' }],
+    ])('a script that loads it (%s) is enough', async (_n, scripts) => {
+      await nodePkg(scripts);
+      await put('server.js', SERVER);
+      const res = await opToStep(node).apply(makeCtx(tmp.dir));
+      expect(res).toBeUndefined();
+    });
+
+    it.each([
+      ["import 'dotenv/config';\n"],
+      ["import dotenv from 'dotenv';\ndotenv.config();\n"],
+      ["require('dotenv').config();\n"],
+      ['process.loadEnvFile();\n'],
+    ])('code in the entry that loads it is enough: %s', async (load) => {
+      await nodePkg();
+      await put('server.js', `${load}${SERVER}`);
+      const res = await opToStep(node).apply(makeCtx(tmp.dir));
+      expect(res).toBeUndefined();
+    });
+
+    it('a re-run is still pending while nothing loads it (no second edit)', async () => {
+      await nodePkg();
+      await put('server.js', SERVER);
+      const step = opToStep(node);
+      await step.apply(makeCtx(tmp.dir));
+      const after = await read('server.js');
+      const ctx = makeCtx(tmp.dir);
+      expect((await step.precheck(ctx)).kind).toBe('pending');
+      const res = await step.apply(ctx);
+      expect(res?.manual?.code).toContain('--env-file=.env');
+      expect(res?.applied).toBeUndefined();
+      expect(await read('server.js')).toBe(after);
+    });
+
+    it('Bun loads .env itself, and a literal token needs no loader', async () => {
+      await put('package.json', JSON.stringify({ type: 'module' }));
+      await put('index.ts', 'run();\n');
+      expect(await opToStep(bun).apply(makeCtx(tmp.dir))).toBeUndefined();
+      await put('server.js', SERVER);
+      await nodePkg();
+      const literal: Spec = { op: 'add-sdk-init', runtime: 'node', importFrom: '@bugsee/bugsee' };
+      expect(await opToStep(literal).apply(makeCtx(tmp.dir))).toBeUndefined();
+    });
   });
 });

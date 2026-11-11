@@ -14,6 +14,14 @@ async function put(rel: string, content: string): Promise<void> {
   await writeFile(join(tmp.dir, rel), content);
 }
 const scan = (own = '@bugsee/bugsee') => findExistingIntegration(tmp.dir, own);
+async function many(dir: string, n: number): Promise<void> {
+  await mkdir(join(tmp.dir, dir), { recursive: true });
+  await Promise.all(
+    Array.from({ length: n }, (_, i) =>
+      writeFile(join(tmp.dir, dir, `f${i}.js`), `export const a${i} = ${i};\n`),
+    ),
+  );
+}
 
 describe('findExistingIntegration', () => {
   it('nothing in the project: undefined', async () => {
@@ -100,5 +108,25 @@ describe('findExistingIntegration', () => {
       "import w from '@bugsee/wizard';\nimport n from '@bugsee/react-native';\n",
     );
     expect(await scan()).toBeUndefined();
+  });
+
+  describe('the scan is bounded, and a bound is never "not integrated"', () => {
+    it('likely source directories are read first, so a big other directory cannot hide an integration', async () => {
+      await many('docs', 3100);
+      await put('src/bugsee.js', "import { launch } from '@bugsee/bugsee';\nlaunch('t');\n");
+      expect(await scan()).toEqual({ where: 'src/bugsee.js' });
+    });
+
+    it('hitting the cap without finding anything is "unknown", never undefined', async () => {
+      await many('docs', 3100);
+      expect(await scan()).toBe('unknown');
+    });
+
+    it('assets, static and public directories are not source: they cannot exhaust the bound', async () => {
+      await many('assets', 3100);
+      await many('static', 10);
+      await many('public', 10);
+      expect(await scan()).toBeUndefined();
+    });
   });
 });

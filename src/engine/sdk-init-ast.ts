@@ -178,12 +178,12 @@ function hasCjsSyntax(body: Node[]): boolean {
 /** CommonJS or ESM syntax for the new lines. Browser entries and TypeScript (except .cts) are always ESM. */
 function isCommonJs(spec: SdkInitSpec, body: Node[]): boolean {
   const file = spec.fileName.toLowerCase();
-  if (spec.runtime === 'browser') return false;
   if (file.endsWith('.cjs') || file.endsWith('.cts')) return true;
   if (file.endsWith('.mjs') || file.endsWith('.mts') || isTs(file)) return false;
   if (hasEsmSyntax(body)) return false;
   if (hasCjsSyntax(body)) return true;
-  return spec.packageType !== 'module';
+  // no syntax to go on: a bundled page entry is ESM, a server follows its package type
+  return spec.runtime !== 'browser' && spec.packageType !== 'module';
 }
 
 function literal(value: string): string {
@@ -196,8 +196,19 @@ function literal(value: string): string {
   return `'${escaped}'`;
 }
 
+/**
+ * `process.env.X` as `process.env['X']`: dotted access to an index signature is an error under
+ * `noPropertyAccessFromIndexSignature` (part of strictest configs), bracket access is valid under all.
+ */
+export function memberAccess(expr: string): string {
+  const dot = expr.lastIndexOf('.');
+  return dot === -1 ? expr : `${expr.slice(0, dot)}['${expr.slice(dot + 1)}']`;
+}
+
 function tokenArg(spec: SdkInitSpec, token: string | undefined): string {
-  return spec.tokenExpr ?? literal(token ?? PLACEHOLDER);
+  return spec.tokenExpr === undefined
+    ? literal(token ?? PLACEHOLDER)
+    : memberAccess(spec.tokenExpr);
 }
 
 /**
@@ -215,10 +226,10 @@ function lines(
     ? `const { ${fn === LAUNCH ? LAUNCH : `${LAUNCH}: ${fn}`} } = require('${spec.importFrom}'); // ${MARKER}`
     : `import { ${fn === LAUNCH ? LAUNCH : `${LAUNCH} as ${fn}`} } from '${spec.importFrom}'; // ${MARKER}`;
   const arg = tokenArg(spec, token);
+  // in a page launch() returns a promise: handled, so no lint rule or unhandled rejection objects
+  const run = `${fn}(${arg})${spec.runtime === 'browser' ? '.catch(() => {})' : ''}`;
   const call =
-    spec.tokenExpr === undefined
-      ? `${fn}(${arg}); // ${MARKER}`
-      : `if (${arg}) ${fn}(${arg}); // ${MARKER}`;
+    spec.tokenExpr === undefined ? `${run}; // ${MARKER}` : `if (${arg}) ${run}; // ${MARKER}`;
   return [imp, call];
 }
 
@@ -265,6 +276,20 @@ function lastEnvLoad(body: Node[]): Node | undefined {
     return loads(e?.type === 'AwaitExpression' ? child(e, 'argument') : e);
   });
   return found[found.length - 1];
+}
+
+/** Whether the file itself loads an env file (`import 'dotenv/config'`, `dotenv.config()`, `process.loadEnvFile()`). */
+export function loadsEnvFile(source: string): boolean {
+  const program = programOf(source);
+  if (!program) return false;
+  const sideEffect = program.body.some((s) => {
+    if (s.type === 'ImportDeclaration') return name(child(s, 'source')) === 'dotenv/config';
+    return (
+      requireArg(s.type === 'ExpressionStatement' ? child(s, 'expression') : undefined) ===
+      'dotenv/config'
+    );
+  });
+  return sideEffect || lastEnvLoad(program.body) !== undefined;
 }
 
 function lineStart(source: string, pos: number): number {

@@ -52,6 +52,7 @@ jobs:
           - rollup-build
           # fresh projects with no Bugsee in them: the runtime recipe really inserts the SDK and init
           - vite-fresh
+          - webpack-fresh
           - node-fresh
           # pnpm 11 with the Bugsee install scripts not approved (a known bug, see e2e/run.test.ts)
           - unapproved-builds

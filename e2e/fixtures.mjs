@@ -138,6 +138,13 @@ export const FIXTURES = {
     route: 'plugin',
     outDir: 'dist',
   },
+  'webpack-fresh': {
+    synthetic: true,
+    runtime: 'javascript-browser',
+    recipe: 'javascript-webpack',
+    route: 'plugin',
+    outDir: 'dist',
+  },
   'node-fresh': {
     synthetic: true,
     runtime: 'javascript-node',

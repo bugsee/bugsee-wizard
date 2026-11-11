@@ -12,8 +12,10 @@ import {
   type ManifestEdit,
   revertEdits,
   validEdits,
+  withoutPackages,
 } from './manifest-edits.js';
 import { resolveInside } from './ops/shared.js';
+import { isRuntimeSdkPackage } from './sdk-packages.js';
 import { findWorkspace } from './workspace.js';
 
 /** What ops hand to the recorder. `file` is relative to the wizard's cwd; before/after are file TEXT. */
@@ -460,6 +462,38 @@ async function revertChanged(
   };
 }
 
+/**
+ * package.json while the SDK has to stay (its import could not be taken out): everything else the
+ * wizard added is removed, the SDK packages are kept, and the entry stays in the manifest for a retry.
+ */
+async function revertKeepingSdk(
+  dir: string,
+  root: string,
+  e: ManifestFileEntry,
+  dryRun: boolean,
+): Promise<RollbackResult> {
+  const kept = addedPackages(e.edits).filter((n) => isRuntimeSdkPackage(n));
+  const note = `kept ${kept.length > 0 ? kept.join(', ') : 'the @bugsee SDK packages'}: your code still imports ${kept.length === 1 ? 'it' : 'them'} (remove the import, then run uninstall again)`;
+  let abs: string;
+  try {
+    abs = await resolveInside(root, resolve(dir, e.file));
+  } catch {
+    return manual(e.file, 'resolves outside the project; left untouched');
+  }
+  const current = await readIfExists(abs);
+  if (current === null) return { file: e.file, outcome: 'missing' };
+  if (e.edits === undefined) return manual(e.file, `left untouched. ${note}`);
+  const res = revertEdits(
+    current,
+    withoutPackages(e.edits, (n) => isRuntimeSdkPackage(n)),
+  );
+  if (res.text !== current && !dryRun) await writeFileAtomic(abs, res.text);
+  return manual(
+    e.file,
+    res.manual.length > 0 ? `${note}; by hand: ${res.manual.join('; ')}` : note,
+  );
+}
+
 export async function rollbackFromManifest(ctx: {
   dir: string;
   log: Logger;
@@ -476,11 +510,26 @@ export async function rollbackFromManifest(ctx: {
     isLockfile(e.file) ? [] : addedPackages(e.edits),
   );
   const byIndex = new Map<number, RollbackResult>();
+  // set once the init edit of an entry file could not be taken out: the SDK must then stay installed
+  let keepSdk = false;
   for (const i of order) {
     const e = manifest.entries[i];
     if (e === undefined) continue;
     try {
-      byIndex.set(i, await rollbackEntry(ctx.dir, root, e, ctx.dryRun, packages));
+      let r: RollbackResult;
+      if (keepSdk && basename(e.file) === 'package.json') {
+        r = await revertKeepingSdk(ctx.dir, root, e, ctx.dryRun);
+      } else if (keepSdk && isLockfile(e.file)) {
+        r = manual(
+          e.file,
+          'left untouched: it still describes the @bugsee SDK packages your code imports',
+        );
+      } else {
+        r = await rollbackEntry(ctx.dir, root, e, ctx.dryRun, packages);
+      }
+      if (e.marker === 'bugsee-wizard' && e.action === 'edited' && r.outcome === 'manual')
+        keepSdk = true;
+      byIndex.set(i, r);
     } catch (err) {
       errored.add(i);
       const note = err instanceof Error ? err.message : String(err);

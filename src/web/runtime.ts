@@ -2,9 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { WizardOptions } from '../core/context.js';
 import { findConfigFile } from '../engine/config-ast.js';
+import { scriptsRunAFile } from '../engine/entry-detect.js';
 import { readPackageJson } from '../engine/package-json.js';
 import type { SdkRuntime } from '../engine/sdk-init-ast.js';
-import type { JsDetection } from './detect.js';
+import { type JsDetection, SERVER_DEPS } from './detect.js';
 import type { Prompts } from './prompts.js';
 
 /** The runtime recipe a run applies, or why none is. */
@@ -49,7 +50,15 @@ async function looksLikeLibrary(dir: string, bun: boolean): Promise<boolean> {
     return false;
   }
   const scripts = typeof pkg.scripts === 'object' && pkg.scripts !== null ? pkg.scripts : {};
-  const runs = ['start', 'serve'].some((n) => n in scripts) || pkg.bin !== undefined;
+  const deps =
+    typeof pkg.dependencies === 'object' && pkg.dependencies !== null ? pkg.dependencies : {};
+  // something runs it: a start/serve script, a runner on a file in start/dev/serve, a bin, or a server
+  // framework it depends on (the `npm init -y` + express shape has none of the scripts)
+  const runs =
+    ['start', 'serve'].some((n) => n in scripts) ||
+    scriptsRunAFile(scripts as Record<string, unknown>) ||
+    pkg.bin !== undefined ||
+    SERVER_DEPS.some((d) => d in deps);
   // `bun init` names the app's own entry in `module`: not library evidence on Bun
   const keys = [
     'main',
@@ -91,9 +100,18 @@ export async function chooseRuntime(
   // an explicit choice beats every guess below (unknown runtime, ambiguity, library)
   if (opts.runtime !== undefined) return choose(opts.runtime, det);
   if (det.runtimeUnknown === true) {
-    return {
-      skip: 'nothing in this project says where it runs (no page, server library or entry script was found), so the wizard will not guess: pass --runtime browser, node or bun.',
-    };
+    const reason =
+      'nothing in this project says where it runs (no page, server library or entry script was found), so the wizard will not guess: pass --runtime browser, node or bun.';
+    if (opts.nonInteractive) return { skip: reason };
+    const answer = await prompts.select(
+      'Nothing says where this project runs. Which runtime is it?',
+      [
+        ...SUPPORTED.map((r) => ({ value: r, label: LABEL[r] })),
+        { value: 'skip', label: 'Not now: show me what to add' },
+      ],
+    );
+    const picked = SUPPORTED.find((r) => r === answer);
+    return picked === undefined ? { skip: reason } : choose(picked, det);
   }
   const found = SUPPORTED.filter((r) => det.runtimes.includes(r));
   // a front end built with bun as its package manager reports bun too, but runs in the browser

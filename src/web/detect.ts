@@ -1,4 +1,4 @@
-import { access, readdir } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -76,7 +76,7 @@ const BUNDLERS: ReadonlyArray<{ tool: string; dep: string; config: string }> = [
 ];
 
 const UI_DEPS = ['react', 'react-dom', 'vue', 'svelte', 'solid-js', 'preact', '@angular/core'];
-const SERVER_DEPS = [
+export const SERVER_DEPS = [
   'express',
   'fastify',
   'koa',
@@ -89,6 +89,21 @@ const SERVER_DEPS = [
 const EDGE_DEPS = ['@cloudflare/workers-types', '@vercel/edge', 'wrangler'];
 /** Packages that only run in a page. */
 const BROWSER_SDK_DEPS = ['@bugsee/browser', '@bugsee/replay', '@bugsee/replay-canvas'];
+/** Tooling that only exists to build or serve a page. */
+const PAGE_TOOLING_DEPS = [
+  'html-webpack-plugin',
+  '@rspack/plugin-html',
+  'webpack-dev-server',
+  '@rspack/dev-server',
+  'parcel',
+  'css-loader',
+  'style-loader',
+  'mini-css-extract-plugin',
+  'sass-loader',
+];
+/** What a bundler config says when it builds for a page (read as text, never run). */
+const PAGE_CONFIG_RE =
+  /HtmlWebpackPlugin|HtmlRspackPlugin|html-webpack-plugin|\btarget\s*:\s*['"]web['"]|\bplatform\s*[=:]\s*['"]browser['"]/;
 const BUN_DEPS = ['@types/bun'];
 const EDGE_CONFIGS = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'];
 const BUN_FILES = ['bun.lock', 'bun.lockb', 'bunfig.toml'];
@@ -177,11 +192,21 @@ function engineVersion(pkg: Record<string, unknown>, runtime: string): string | 
 }
 
 /** Any HTML page the project serves: the root, `src/`, `public/` (webpack's and CRA's home), or one level below `src/`/`public/`. */
+async function configBuildsForPage(dir: string, configs: Iterable<string>): Promise<boolean> {
+  for (const name of configs) {
+    const text = await readFile(path.join(dir, name), 'utf8').catch(() => '');
+    if (PAGE_CONFIG_RE.test(text)) return true;
+  }
+  return false;
+}
+
 async function hasHtmlEntry(dir: string): Promise<boolean> {
   const hasHtml = async (d: string): Promise<boolean> =>
     (await readdir(d).catch(() => [] as string[])).some((n) => n.toLowerCase().endsWith('.html'));
-  for (const d of ['.', 'src', 'public']) if (await hasHtml(path.join(dir, d))) return true;
-  for (const d of ['src', 'public']) {
+  for (const d of ['.', 'src', 'public', 'static', 'templates']) {
+    if (await hasHtml(path.join(dir, d))) return true;
+  }
+  for (const d of ['src', 'public', 'static', 'templates']) {
     const sub = await readdir(path.join(dir, d), { withFileTypes: true }).catch(() => []);
     for (const e of sub)
       if (e.isDirectory() && (await hasHtml(path.join(dir, d, e.name)))) return true;
@@ -345,7 +370,11 @@ async function inspectProject(
   const hasHtml = await hasHtmlEntry(cwd);
   const hasUi = UI_DEPS.some((d) => deps.has(d));
   const browser =
-    hasUi || BROWSER_SDK_DEPS.some((d) => deps.has(d)) || (bundler !== undefined && hasHtml);
+    hasUi ||
+    BROWSER_SDK_DEPS.some((d) => deps.has(d)) ||
+    PAGE_TOOLING_DEPS.some((d) => deps.has(d)) ||
+    (bundler !== undefined && hasHtml) ||
+    (await configBuildsForPage(cwd, bundlerConfigs.values()));
   const edgeFile = await firstExisting(cwd, EDGE_CONFIGS);
   const edge = edgeFile !== undefined || EDGE_DEPS.some((d) => deps.has(d));
   const bunFile = await firstExisting(cwd, BUN_FILES);
@@ -367,7 +396,11 @@ async function inspectProject(
       // Server libraries (hono, ...) also run on the edge: with an edge signal they say nothing about node.
       (!edge && SERVER_DEPS.some((d) => deps.has(d))) ||
       // engines.node / "type" only tell us it runs on node when no UI library or edge target claims the project.
-      (!browser && !edge && (engineVersion(pkg, 'node') !== undefined || pkg.type !== undefined));
+      // A bundled project is a page unless it says otherwise: there, these say nothing at all.
+      (!browser &&
+        !edge &&
+        bundler === undefined &&
+        (engineVersion(pkg, 'node') !== undefined || pkg.type !== undefined));
     if (serverSignal) runtimes.add('node');
     if (bun) runtimes.add('bun');
     if (edge) runtimes.add('edge');

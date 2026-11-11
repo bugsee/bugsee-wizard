@@ -699,4 +699,92 @@ describe('detectJavaScript rules (synthetic projects)', () => {
       },
     );
   });
+
+  describe('bundled browser apps are never Node (type / engines.node are not server signals)', () => {
+    const wp = { webpack: '5', 'webpack-cli': '5' };
+
+    it('webpack + html-webpack-plugin + "type": no html file on disk, still a browser app', async () => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': {
+            name: 'a',
+            type: 'module',
+            devDependencies: { ...wp, 'html-webpack-plugin': '5' },
+          },
+          'src/index.ts': 'x();',
+        }),
+      );
+      expect(det?.runtimes).toEqual(['browser']);
+    });
+
+    it('webpack + engines.node + static/index.html: the html under static/ is found', async () => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': { name: 'a', engines: { node: '>=18' }, devDependencies: wp },
+          'static/index.html': '<html></html>',
+        }),
+      );
+      expect(det?.runtimes).toEqual(['browser']);
+    });
+
+    it.each([
+      ['HtmlWebpackPlugin', 'new HtmlWebpackPlugin()', 'webpack.config.js'],
+      ['HtmlRspackPlugin', 'new rspack.HtmlRspackPlugin()', 'rspack.config.js'],
+      ['target web', "target: 'web'", 'webpack.config.js'],
+    ])(
+      'a bundler config that says it builds for a page (%s) is a browser signal',
+      async (_n, text, file) => {
+        const dep = file.startsWith('rspack') ? { '@rspack/core': '1' } : { webpack: '5' };
+        const det = await detectJavaScript(
+          await project({
+            'package.json': { name: 'a', type: 'module', devDependencies: dep },
+            [file]: `export default { plugins: [${text}] };`,
+          }),
+        );
+        expect(det?.runtimes).toEqual(['browser']);
+      },
+    );
+
+    it.each([['webpack-dev-server'], ['parcel'], ['css-loader'], ['mini-css-extract-plugin']])(
+      'a dependency on %s (page tooling) is a browser signal',
+      async (dep) => {
+        const det = await detectJavaScript(
+          await project({
+            'package.json': {
+              name: 'a',
+              type: 'module',
+              devDependencies: { webpack: '5', [dep]: '1' },
+            },
+          }),
+        );
+        expect(det?.runtimes).toEqual(['browser']);
+      },
+    );
+
+    it('a bundler with nothing but "type" or engines.node says nothing: unknown, not node', async () => {
+      for (const extra of [{ type: 'module' }, { engines: { node: '>=20' } }]) {
+        const det = await detectJavaScript(
+          await project({ 'package.json': { name: 'a', ...extra, devDependencies: wp } }),
+        );
+        expect(det?.runtimeUnknown).toBe(true);
+      }
+    });
+
+    it('a real server dependency next to the bundler still means node', async () => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': { name: 'a', dependencies: { express: '4' }, devDependencies: wp },
+        }),
+      );
+      expect(det?.runtimes).toEqual(['node']);
+    });
+
+    it('without a bundler, type / engines.node still mark a Node project', async () => {
+      const det = await detectJavaScript(
+        await project({ 'package.json': { name: 'a', type: 'module', engines: { node: '>=20' } } }),
+      );
+      expect(det?.runtimes).toEqual(['node']);
+      expect(det?.runtimeUnknown).toBeUndefined();
+    });
+  });
 });

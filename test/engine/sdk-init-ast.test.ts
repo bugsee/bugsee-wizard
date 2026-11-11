@@ -60,7 +60,7 @@ describe('addSdkInit (ESM)', () => {
         "import a from 'a';",
         "import b from 'b';",
         "import { launch } from '@bugsee/bugsee'; // bugsee-wizard",
-        "launch('tok_ABC.123'); // bugsee-wizard",
+        "launch('tok_ABC.123').catch(() => {}); // bugsee-wizard",
         '',
         'render(a, b);',
         '',
@@ -79,7 +79,7 @@ describe('addSdkInit (ESM)', () => {
         '  b,',
         "} from 'x'; // keep",
         "import { launch } from '@bugsee/bugsee'; // bugsee-wizard",
-        "launch('tok_ABC.123'); // bugsee-wizard",
+        "launch('tok_ABC.123').catch(() => {}); // bugsee-wizard",
         'run();',
         '',
       ].join('\n'),
@@ -94,7 +94,7 @@ describe('addSdkInit (ESM)', () => {
         '// the app',
         '',
         "import { launch } from '@bugsee/bugsee'; // bugsee-wizard",
-        "launch('tok_ABC.123'); // bugsee-wizard",
+        "launch('tok_ABC.123').catch(() => {}); // bugsee-wizard",
         'console.log(1);',
         '',
       ].join('\n'),
@@ -107,28 +107,28 @@ describe('addSdkInit (ESM)', () => {
     expect(out.split('\n').slice(0, 4)).toEqual([
       "'use strict';",
       "import { launch } from '@bugsee/bugsee'; // bugsee-wizard",
-      "launch('tok_ABC.123'); // bugsee-wizard",
+      "launch('tok_ABC.123').catch(() => {}); // bugsee-wizard",
       'console.log(1);',
     ]);
   });
 
   it('an empty file gets just the two lines', () => {
     expect(code(addSdkInit('', spec()))).toBe(
-      "import { launch } from '@bugsee/bugsee'; // bugsee-wizard\nlaunch('tok_ABC.123'); // bugsee-wizard\n",
+      "import { launch } from '@bugsee/bugsee'; // bugsee-wizard\nlaunch('tok_ABC.123').catch(() => {}); // bugsee-wizard\n",
     );
   });
 
   it('a comments-only file gets the lines appended', () => {
     const out = code(addSdkInit('// todo\n', spec()));
     expect(out).toBe(
-      "// todo\nimport { launch } from '@bugsee/bugsee'; // bugsee-wizard\nlaunch('tok_ABC.123'); // bugsee-wizard\n",
+      "// todo\nimport { launch } from '@bugsee/bugsee'; // bugsee-wizard\nlaunch('tok_ABC.123').catch(() => {}); // bugsee-wizard\n",
     );
   });
 
   it('keeps a shebang line first, and a BOM', () => {
     const out = code(addSdkInit('﻿#!/usr/bin/env node\nimport a from "a";\n', spec()));
     expect(out.startsWith('﻿#!/usr/bin/env node\nimport a from "a";\n')).toBe(true);
-    expect(out).toContain("launch('tok_ABC.123'); // bugsee-wizard");
+    expect(out).toContain("launch('tok_ABC.123').catch(() => {}); // bugsee-wizard");
   });
 
   it('preserves CRLF line endings throughout', () => {
@@ -137,7 +137,7 @@ describe('addSdkInit (ESM)', () => {
       [
         "import a from 'a';",
         "import { launch } from '@bugsee/bugsee'; // bugsee-wizard",
-        "launch('tok_ABC.123'); // bugsee-wizard",
+        "launch('tok_ABC.123').catch(() => {}); // bugsee-wizard",
         'run(a);',
         '',
       ].join('\r\n'),
@@ -148,7 +148,7 @@ describe('addSdkInit (ESM)', () => {
     const src =
       "import { createRoot } from 'react-dom/client';\nimport App from './App';\n\ncreateRoot(document.body).render(<App />);\n";
     const out = code(addSdkInit(src, spec({ fileName: 'main.tsx' })));
-    expect(out).toContain("launch('tok_ABC.123'); // bugsee-wizard");
+    expect(out).toContain("launch('tok_ABC.123').catch(() => {}); // bugsee-wizard");
     expect(out).toContain('render(<App />)');
     expect(reparses(out)).toBe(true);
   });
@@ -168,15 +168,17 @@ describe('addSdkInit (token expression)', () => {
         spec({ tokenExpr: 'import.meta.env.VITE_BUGSEE_APP_TOKEN' }),
       ),
     );
-    expect(out).toContain('launch(import.meta.env.VITE_BUGSEE_APP_TOKEN); // bugsee-wizard');
+    expect(out).toContain(
+      `launch(import.meta.env['VITE_BUGSEE_APP_TOKEN']).catch(() => {}); // bugsee-wizard`,
+    );
     expect(out).not.toContain('tok_ABC');
   });
 
   it('guards an environment token: a missing variable must not make launch() throw (no cast needed)', () => {
     const t = { tokenExpr: 'process.env.BUGSEE_APP_TOKEN' };
     for (const fileName of ['server.ts', 'server.js']) {
-      expect(code(addSdkInit('run();\n', spec({ ...t, fileName })))).toContain(
-        'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
+      expect(code(addSdkInit('run();\n', spec({ ...t, fileName, runtime: 'node' })))).toContain(
+        `if (process.env['BUGSEE_APP_TOKEN']) launch(process.env['BUGSEE_APP_TOKEN']); // bugsee-wizard`,
       );
     }
     expect(code(addSdkInit('run();\n', spec({ ...t, fileName: 'server.ts' })))).not.toContain(
@@ -217,7 +219,7 @@ describe('addSdkInit (token expression)', () => {
 
   it('escapes quotes and backslashes of a literal token', () => {
     const out = code(addSdkInit('run();\n', spec({ token: "a'b\\c" })));
-    expect(out).toContain("launch('a\\'b\\\\c');");
+    expect(out).toContain("launch('a\\'b\\\\c').catch(() => {});");
     expect(reparses(out)).toBe(true);
   });
 });
@@ -284,9 +286,31 @@ describe('addSdkInit (CommonJS)', () => {
     );
   });
 
-  it('browser entries are always ESM', () => {
+  it('a browser entry is ESM unless its own syntax is CommonJS (a webpack entry using require)', () => {
+    expect(code(addSdkInit('run();\n', spec({ fileName: 'a.js', runtime: 'browser' })))).toContain(
+      'import { launch }',
+    );
     expect(
-      code(addSdkInit("const a = require('a');\n", spec({ fileName: 'a.js', runtime: 'browser' }))),
+      code(
+        addSdkInit(
+          "import a from 'a';\nrequire('b');\n",
+          spec({ fileName: 'a.js', runtime: 'browser' }),
+        ),
+      ),
+    ).toContain('import { launch }');
+    const cjs = code(
+      addSdkInit(
+        "const a = require('a');\nmodule.exports = a;\n",
+        spec({ fileName: 'a.js', runtime: 'browser' }),
+      ),
+    );
+    expect(cjs).toContain("const { launch } = require('@bugsee/bugsee'); // bugsee-wizard");
+    expect(code(addSdkInit('run();\n', spec({ fileName: 'a.cjs', runtime: 'browser' })))).toContain(
+      'require(',
+    );
+    // TypeScript is compiled from import syntax
+    expect(
+      code(addSdkInit("const a = require('a');\n", spec({ fileName: 'a.ts', runtime: 'browser' }))),
     ).toContain('import { launch }');
   });
 
@@ -324,7 +348,7 @@ describe('addSdkInit (idempotency and conflicts)', () => {
     expect(out).toContain(
       "import { launch as bugseeLaunch } from '@bugsee/bugsee'; // bugsee-wizard",
     );
-    expect(out).toContain("bugseeLaunch('tok_ABC.123'); // bugsee-wizard");
+    expect(out).toContain("bugseeLaunch('tok_ABC.123').catch(() => {}); // bugsee-wizard");
   });
 
   it('aliases for a local declaration and for CommonJS destructuring', () => {
@@ -374,12 +398,15 @@ describe('addSdkInit (honest failure)', () => {
 describe('sdkInitSnippet', () => {
   it('shows ESM and CJS forms with a placeholder or the expression', () => {
     expect(sdkInitSnippet(spec(), false)).toBe(
-      "import { launch } from '@bugsee/bugsee'; // bugsee-wizard\nlaunch('<your Bugsee app token>'); // bugsee-wizard",
+      "import { launch } from '@bugsee/bugsee'; // bugsee-wizard\nlaunch('<your Bugsee app token>').catch(() => {}); // bugsee-wizard",
     );
     expect(
-      sdkInitSnippet(spec({ tokenExpr: 'process.env.BUGSEE_APP_TOKEN', fileName: 'a.ts' }), true),
+      sdkInitSnippet(
+        spec({ tokenExpr: 'process.env.BUGSEE_APP_TOKEN', fileName: 'a.ts', runtime: 'node' }),
+        true,
+      ),
     ).toBe(
-      "const { launch } = require('@bugsee/bugsee'); // bugsee-wizard\nif (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard",
+      "const { launch } = require('@bugsee/bugsee'); // bugsee-wizard\nif (process.env['BUGSEE_APP_TOKEN']) launch(process.env['BUGSEE_APP_TOKEN']); // bugsee-wizard",
     );
   });
 });
@@ -428,7 +455,7 @@ describe('addSdkInit (review follow-ups)', () => {
       "import express from 'express';",
       'dotenv.config();',
       "import { launch } from '@bugsee/bugsee'; // bugsee-wizard",
-      'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
+      `if (process.env['BUGSEE_APP_TOKEN']) launch(process.env['BUGSEE_APP_TOKEN']); // bugsee-wizard`,
       'express();',
       '',
     ]);
@@ -446,7 +473,7 @@ describe('addSdkInit (review follow-ups)', () => {
       "const express = require('express');",
       "require('dotenv').config();",
       "const { launch } = require('@bugsee/bugsee'); // bugsee-wizard",
-      'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
+      `if (process.env['BUGSEE_APP_TOKEN']) launch(process.env['BUGSEE_APP_TOKEN']); // bugsee-wizard`,
     ]);
   });
 
@@ -458,8 +485,7 @@ describe('addSdkInit (review follow-ups)', () => {
 });
 
 describe('addSdkInit (same-line code, env loading, integration checks)', () => {
-  const G =
-    'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard';
+  const G = `if (process.env['BUGSEE_APP_TOKEN']) launch(process.env['BUGSEE_APP_TOKEN']); // bugsee-wizard`;
   const node = { tokenExpr: 'process.env.BUGSEE_APP_TOKEN', runtime: 'node' as const };
 
   /** The statements of a program, as source text, for comparing programs. */
@@ -494,7 +520,7 @@ describe('addSdkInit (same-line code, env loading, integration checks)', () => {
     expect(out.split('\n').slice(0, 3)).toEqual([
       "import a from 'a'; // keep",
       "import { launch } from '@bugsee/bugsee'; // bugsee-wizard",
-      "launch('tok_ABC.123'); // bugsee-wizard",
+      "launch('tok_ABC.123').catch(() => {}); // bugsee-wizard",
     ]);
   });
 
@@ -572,7 +598,28 @@ describe('addSdkInit (same-line code, env loading, integration checks)', () => {
     const ls = String.fromCharCode(0x2028);
     const ps = String.fromCharCode(0x2029);
     const out = code(addSdkInit('run();\n', spec({ token: `a${ls}b${ps}c` })));
-    expect(out).toContain("launch('a\\u2028b\\u2029c');");
+    expect(out).toContain("launch('a\\u2028b\\u2029c').catch(() => {});");
     expect(out.includes(ls) || out.includes(ps)).toBe(false);
+  });
+
+  describe('browser launch returns a promise', () => {
+    it('a browser call handles it (no floating promise, no unhandled rejection); a server call does not', () => {
+      expect(code(addSdkInit('run();\n', spec()))).toContain(
+        "launch('tok_ABC.123').catch(() => {}); // bugsee-wizard",
+      );
+      expect(
+        code(
+          addSdkInit('run();\n', spec({ tokenExpr: 'import.meta.env.VITE_X', fileName: 'm.js' })),
+        ),
+      ).toContain(
+        "if (import.meta.env['VITE_X']) launch(import.meta.env['VITE_X']).catch(() => {}); // bugsee-wizard",
+      );
+      expect(code(addSdkInit('run();\n', spec({ runtime: 'node', fileName: 'a.mjs' })))).toContain(
+        "launch('tok_ABC.123'); // bugsee-wizard",
+      );
+      expect(
+        code(addSdkInit('run();\n', spec({ runtime: 'bun', fileName: 'a.ts' }))),
+      ).not.toContain('.catch');
+    });
   });
 });

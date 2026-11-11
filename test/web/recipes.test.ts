@@ -208,7 +208,7 @@ const CASES: Case[] = [
     'vite.config.ts',
     runtimeCase('browser-vite', 'npm', 'src/main.tsx', [
       '/// <reference types="vite/client" />',
-      'launch(import.meta.env.VITE_BUGSEE_APP_TOKEN);',
+      `launch(import.meta.env['VITE_BUGSEE_APP_TOKEN']).catch(() => {});`,
     ]),
   ),
   pluginCase(
@@ -218,7 +218,7 @@ const CASES: Case[] = [
     '@bugsee/webpack-plugin',
     'bugseeWebpackPlugin',
     'webpack.config.js',
-    runtimeCase('browser', 'yarn', 'src/index.js', [`launch('${TOKEN}');`]),
+    runtimeCase('browser', 'yarn', 'src/index.js', [`launch('${TOKEN}').catch(() => {});`]),
   ),
   pluginCase(
     'rollup',
@@ -239,7 +239,7 @@ const CASES: Case[] = [
     'tsconfig.json',
     true,
     runtimeCase('node', 'npm', 'src/index.ts', [
-      'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN);',
+      `if (process.env['BUGSEE_APP_TOKEN']) launch(process.env['BUGSEE_APP_TOKEN']);`,
     ]),
   ),
   cliCase(
@@ -248,7 +248,7 @@ const CASES: Case[] = [
     'npm',
     'package.json',
     false,
-    runtimeCase('node', 'npm', 'src/index.js', ['launch(process.env.BUGSEE_APP_TOKEN);']),
+    runtimeCase('node', 'npm', 'src/index.js', [`launch(process.env['BUGSEE_APP_TOKEN']);`]),
   ),
   cliCase(
     'rspack',
@@ -256,7 +256,7 @@ const CASES: Case[] = [
     'pnpm',
     'package.json',
     false,
-    runtimeCase('browser', 'pnpm', 'src/index.js', [`launch('${TOKEN}');`]),
+    runtimeCase('browser', 'pnpm', 'src/index.js', [`launch('${TOKEN}').catch(() => {});`]),
   ),
 ];
 

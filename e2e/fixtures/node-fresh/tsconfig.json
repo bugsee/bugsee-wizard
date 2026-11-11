@@ -7,6 +7,9 @@
     "rootDir": "src",
     "outDir": "lib",
     "strict": true,
+    // part of @tsconfig/strictest: dotted access to process.env would not compile
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedIndexedAccess": true,
     "types": ["node"],
     "skipLibCheck": true,
   },

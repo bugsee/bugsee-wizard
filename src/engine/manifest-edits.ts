@@ -301,11 +301,20 @@ function revertLines(
       })();
     if (!done) {
       const lead = add.map(show).join(', ');
-      manual.push(
-        del.length === 0
-          ? `remove the line${add.length > 1 ? 's' : ''} ${lead}`
-          : `replace ${lead} with ${del.map(show).join(', ')}`,
-      );
+      // a line the wizard split (code that followed an import): the original line has since been edited
+      // by the user, so never offer to put it back over their change; only the wizard's own lines go
+      const own = add.filter((l) => l.includes('bugsee-wizard'));
+      if (del.length > 0 && own.length > 0) {
+        manual.push(
+          `remove the line${own.length > 1 ? 's' : ''} ${own.map(show).join(', ')} (the line they were added to was changed since)`,
+        );
+      } else {
+        manual.push(
+          del.length === 0
+            ? `remove the line${add.length > 1 ? 's' : ''} ${lead}`
+            : `replace ${lead} with ${del.map(show).join(', ')}`,
+        );
+      }
     }
     return text;
   }
@@ -345,6 +354,30 @@ export function addedPackages(edits: readonly ManifestEdit[] | undefined): strin
     else if (e.path.length === 1 && isRecord(e.value)) names.push(...Object.keys(e.value));
   }
   return names;
+}
+
+/**
+ * The edits without the additions of dependencies matching `keep` (an SDK package whose import could
+ * not be taken out must not be removed from package.json under it).
+ */
+export function withoutPackages(
+  edits: readonly ManifestEdit[],
+  keep: (name: string) => boolean,
+): ManifestEdit[] {
+  const out: ManifestEdit[] = [];
+  for (const e of edits) {
+    if (e.kind !== 'json-add' || !DEP_SECTIONS.has(e.path[0] as string)) {
+      out.push(e);
+    } else if (e.path.length === 2) {
+      if (!keep(e.path[1] as string)) out.push(e);
+    } else if (e.path.length === 1 && isRecord(e.value)) {
+      const rest = Object.fromEntries(Object.entries(e.value).filter(([k]) => !keep(k)));
+      if (Object.keys(rest).length > 0) out.push({ ...e, value: rest });
+    } else {
+      out.push(e);
+    }
+  }
+  return out;
 }
 
 const REMOVE_COMMAND: Record<string, string> = {

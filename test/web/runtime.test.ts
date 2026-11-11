@@ -143,6 +143,8 @@ describe('chooseRuntime (libraries)', () => {
       { types: 'x.d.ts' },
       { peerDependencies: { react: '*' } },
       { exports: './x.js', scripts: { dev: 'tsc -w', build: 'tsc' } },
+      { main: 'x.js', devDependencies: { express: '4' }, scripts: { test: 'vitest' } },
+      { main: 'x.js', scripts: { dev: 'rollup -c -w' } },
     ]) {
       expect(await at(pkg)).toEqual({ skip: expect.stringMatching(/library/i) });
     }
@@ -153,6 +155,12 @@ describe('chooseRuntime (libraries)', () => {
       { main: 'a.js', scripts: { start: 'node a.js' } },
       { main: 'a.js', scripts: { serve: 'x' } },
       { main: 'a.js', bin: 'cli.js' },
+      // the commonest tutorial shape: `npm init -y` + express
+      { main: 'index.js', dependencies: { express: '4' } },
+      { main: 'index.js', dependencies: { fastify: '4' }, scripts: { test: 'x' } },
+      { main: 'index.js', scripts: { dev: 'nodemon index.js' } },
+      { main: 'index.js', scripts: { dev: 'tsx watch src/server.ts' } },
+      { main: 'index.js', scripts: { start: 'NODE_ENV=production node --env-file=.env index.js' } },
       {},
     ]) {
       expect(await at(pkg)).toEqual({ runtime: 'node', platform: 'javascript-node' });
@@ -269,5 +277,34 @@ describe('chooseRuntime (unknown runtime, --runtime, Vite env)', () => {
         prompts(),
       ),
     ).toEqual({ runtime: 'browser', platform: 'javascript-browser-vite' });
+  });
+
+  describe('no runtime signal in an interactive run asks, like an ambiguous one', () => {
+    const interactive = baseOpts('/p', { nonInteractive: false });
+    it('uses the answer', async () => {
+      const p = prompts('node');
+      expect(await chooseRuntime(det({ runtimeUnknown: true }), interactive, p)).toEqual({
+        runtime: 'node',
+        platform: 'javascript-node',
+      });
+      expect(vi.mocked(p.select).mock.calls[0]?.[1].map((o) => o.value)).toEqual([
+        'browser',
+        'node',
+        'bun',
+        'skip',
+      ]);
+    });
+    it('"skip" is an unfinished step with the usual reason, never a guess', async () => {
+      expect(
+        await chooseRuntime(det({ runtimeUnknown: true }), interactive, prompts('skip')),
+      ).toEqual({
+        skip: expect.stringContaining('--runtime'),
+      });
+    });
+    it('a non-interactive run does not ask', async () => {
+      const p = prompts('node');
+      await chooseRuntime(det({ runtimeUnknown: true }), opts, p);
+      expect(p.select).not.toHaveBeenCalled();
+    });
   });
 });

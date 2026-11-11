@@ -20,7 +20,7 @@ import {
   type ResolvedRecipe,
   resolveRecipe,
 } from '../engine/recipe-store.js';
-import { sdkInitSnippet } from '../engine/sdk-init-ast.js';
+import { memberAccess, sdkInitSnippet } from '../engine/sdk-init-ast.js';
 import { WIZARD_VERSION } from '../engine/telemetry.js';
 import { selectTokenSource } from '../engine/token.js';
 import { detectJavaScript, type JsDetection } from './detect.js';
@@ -226,7 +226,9 @@ function opDetails(
       return [
         `      ${where}`,
         `      adds import { launch } from "${inline(op.importFrom)}" (as bugseeLaunch if \`launch\` is taken) and ${
-          expr === undefined ? 'launch(your token)' : `if (${inline(expr)}) launch(${inline(expr)})`
+          expr === undefined
+            ? 'launch(your token)'
+            : `if (${inline(memberAccess(expr))}) launch(${inline(memberAccess(expr))})`
         }`,
       ];
     }
@@ -254,8 +256,19 @@ function planText(
   ].join('\n');
 }
 
-function installCommand(pm: DetectedPackageManager | null, pkg: string): string {
-  return `${pm?.name ?? 'npm'} ${(pm?.installArgs([pkg], false) ?? ['install', pkg]).join(' ')}`;
+/** The adapter package(s) and guide of the frameworks, whose init is not automated yet. */
+const FRAMEWORK_GUIDE: Record<string, { name: string; slug: string; packages: string[] }> = {
+  nextjs: { name: 'Next.js', slug: 'nextjs', packages: ['@bugsee/nextjs'] },
+  nuxt: { name: 'Nuxt', slug: 'nuxt', packages: ['@bugsee/nuxt'] },
+  sveltekit: { name: 'SvelteKit', slug: 'sveltekit', packages: ['@bugsee/sveltekit'] },
+  astro: { name: 'Astro', slug: 'astro', packages: ['@bugsee/astro'] },
+  remix: { name: 'Remix / React Router', slug: 'remix', packages: ['@bugsee/remix'] },
+  angular: { name: 'Angular', slug: 'angular', packages: ['@bugsee/bugsee', '@bugsee/angular'] },
+  electron: { name: 'Electron', slug: 'electron', packages: ['@bugsee/electron'] },
+};
+
+function installCommand(pm: DetectedPackageManager | null, ...pkgs: string[]): string {
+  return `${pm?.name ?? 'npm'} ${(pm?.installArgs(pkgs, false) ?? ['install', ...pkgs]).join(' ')}`;
 }
 
 function snippetText(s: ManualSnippet): string {
@@ -425,25 +438,28 @@ export async function runJavaScriptInstall(
       { importFrom: '@bugsee/bugsee', token: '', fileName: 'main.ts', runtime: 'node' },
       cjs,
     );
+  const adapter = det.framework === undefined ? undefined : FRAMEWORK_GUIDE[det.framework];
+  const skipCode = (): string =>
+    adapter !== undefined
+      ? [
+          `// Not applied: ${skipped}`,
+          `// First install the SDK: ${installCommand(packageManager, ...adapter.packages.map((p) => `${p}@beta`))}`,
+          `// Then follow the setup guide for ${adapter.name}: https://docs.bugsee.com/${adapter.slug}`,
+        ].join('\n')
+      : [
+          `// Not applied: ${skipped}`,
+          `// First install the SDK: ${installCommand(packageManager, '@bugsee/bugsee@beta')}`,
+          '',
+          '// ES modules:',
+          snippet(false),
+          '',
+          '// CommonJS:',
+          snippet(true),
+        ].join('\n');
   const skipSnippet: ManualSnippet[] =
     skipped === undefined
       ? []
-      : [
-          {
-            file: 'your entry file',
-            title: 'Initialise Bugsee in your app',
-            code: [
-              `// Not applied: ${skipped}`,
-              `// First install the SDK: ${installCommand(packageManager, '@bugsee/bugsee@beta')}`,
-              '',
-              '// ES modules:',
-              snippet(false),
-              '',
-              '// CommonJS:',
-              snippet(true),
-            ].join('\n'),
-          },
-        ];
+      : [{ file: 'your entry file', title: 'Initialise Bugsee in your app', code: skipCode() }];
   const snippets = [
     ...skipSnippet,
     ...run.results.flatMap((r) => (r.snippet === undefined ? [] : [r.snippet])),

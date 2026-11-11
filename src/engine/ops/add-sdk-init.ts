@@ -9,6 +9,7 @@ import type { OpSpec, RecipeContext } from '../recipe.js';
 import {
   addSdkInit,
   hasSdkIntegration,
+  loadsEnvFile,
   type SdkInitSpec,
   sdkInitSnippet,
 } from '../sdk-init-ast.js';
@@ -27,6 +28,31 @@ async function packageType(dir: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/** A script that loads an env file for the process: `--env-file`, dotenv's CLI or `-r dotenv/config`. */
+const SCRIPT_LOADS_ENV_RE = /--env-file(?:-if-exists)?\b|\bdotenvx?\b/;
+
+async function scriptsLoadEnv(dir: string): Promise<boolean> {
+  try {
+    const scripts = (await readPackageJson(join(dir, 'package.json'))).data.scripts;
+    return (
+      typeof scripts === 'object' &&
+      scripts !== null &&
+      Object.values(scripts).some((c) => typeof c === 'string' && SCRIPT_LOADS_ENV_RE.test(c))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Plain Node does not read `.env`: with a token that comes from `process.env` and nothing that loads
+ * the file (a start script flag, dotenv in the entry), the SDK would silently never start.
+ */
+async function envLoaderMissing(spec: Spec, ctx: RecipeContext, src: string): Promise<boolean> {
+  if (spec.runtime !== 'node' || spec.tokenExpr?.startsWith('process.env.') !== true) return false;
+  return !loadsEnvFile(src) && !(await scriptsLoadEnv(ctx.packageDir));
 }
 
 /**
@@ -58,6 +84,15 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
     };
   };
 
+  /** What a snippet is written for when there is no entry file to look at. */
+  const probeSpec = (): SdkInitSpec => ({
+    importFrom: spec.importFrom,
+    token: '',
+    fileName: spec.runtime === 'browser' ? 'main.ts' : 'index.ts',
+    runtime: spec.runtime,
+    ...(spec.tokenExpr !== undefined ? { tokenExpr: spec.tokenExpr } : {}),
+  });
+
   return {
     id: `add-sdk-init:${spec.runtime}`,
     title: `Initialise the Bugsee SDK in the ${spec.runtime} entry file`,
@@ -65,36 +100,67 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
       if (spec.tokenExpr === undefined && ctx.token === '') {
         return { kind: 'blocked', reason: 'No Bugsee token is available' };
       }
-      const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom);
-      if (existing) {
-        return { kind: 'satisfied', note: `Bugsee is already set up (${existing.where})` };
-      }
       let found: Awaited<ReturnType<typeof locate>>;
       try {
         found = await locate(ctx);
       } catch (err) {
         return { kind: 'blocked', reason: (err as Error).message };
       }
+      const src = found ? ((await readBytes(found.path))?.toString('utf8') ?? '') : '';
+      if (hasBugseeMarker(src)) {
+        // the wizard's own init: done, unless nothing gives Node the token
+        return (await envLoaderMissing(spec, ctx, src))
+          ? { kind: 'pending' }
+          : { kind: 'satisfied' };
+      }
+      const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom);
+      // too big to scan: pending, and apply turns it into a snippet (never "not integrated")
+      if (existing !== undefined && existing !== 'unknown') {
+        return { kind: 'satisfied', note: `Bugsee is already set up (${existing.where})` };
+      }
       if (!found) return { kind: 'pending' }; // apply hands back a manual snippet
-      const src = (await readBytes(found.path))?.toString('utf8') ?? '';
       return hasSdkIntegration(src) ? { kind: 'satisfied' } : { kind: 'pending' };
     },
     async apply(ctx) {
-      if (await findExistingIntegration(ctx.packageDir, spec.importFrom)) return undefined;
       const found = await locate(ctx);
       const manual = (file: string, code: string): { manual: ManualSnippet } => {
         ctx.manifest.record({ file, action: 'manual' });
         const name = file === NO_ENTRY ? NO_ENTRY : basename(file);
         return { manual: { file, title: `Initialise Bugsee in ${name}`, code } };
       };
-      if (!found) {
-        const probe: SdkInitSpec = {
-          importFrom: spec.importFrom,
-          token: '',
-          fileName: spec.runtime === 'browser' ? 'main.ts' : 'index.ts',
-          runtime: spec.runtime,
-          ...(spec.tokenExpr !== undefined ? { tokenExpr: spec.tokenExpr } : {}),
+      const loaderSnippet = (entry: string): { manual: ManualSnippet } => {
+        ctx.manifest.record({ file: 'package.json', action: 'manual' });
+        return {
+          manual: {
+            file: 'package.json',
+            title: 'Give Node the Bugsee token',
+            code: [
+              '// Node does not read .env by itself. Bugsee will not start until the token is provided to the process.',
+              '// Start the app with the env file:',
+              `node --env-file=.env ${entry}`,
+              '// or set BUGSEE_APP_TOKEN in the environment (CI, containers, production).',
+            ].join('\n'),
+          },
         };
+      };
+      // the wizard's own earlier init: nothing to edit, only the token may still be missing
+      if (found) {
+        const present = (await readBytes(found.path))?.toString('utf8') ?? '';
+        if (hasBugseeMarker(present)) {
+          return (await envLoaderMissing(spec, ctx, present))
+            ? loaderSnippet(found.entry.file)
+            : undefined;
+        }
+      }
+      const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom);
+      if (existing !== undefined && existing !== 'unknown') return undefined;
+      if (existing === 'unknown') {
+        const note =
+          '// The project has too many source files to check whether Bugsee is already set up, so nothing was changed.\n// If it is not, add:\n';
+        return manual(NO_ENTRY, `${note}${sdkInitSnippet(probeSpec(), false)}`);
+      }
+      if (!found) {
+        const probe = probeSpec();
         // the module system of an entry nobody found is unknown: a server shows both forms
         const esm = sdkInitSnippet(probe, false);
         return manual(
@@ -127,8 +193,6 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
       if (edit.changed) {
         before = Buffer.from(read, 'utf8');
         editedPath = found.path;
-      }
-      if (edit.changed) {
         ctx.manifest.record({
           file,
           action: 'edited',
@@ -136,6 +200,10 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
           after: edit.after,
           marker: MARKER,
         });
+      }
+      if (hasBugseeMarker(edit.after) && (await envLoaderMissing(spec, ctx, edit.after))) {
+        // the entry edit made in this run stays covered by rollback
+        return { ...loaderSnippet(found.entry.file), ...(edit.changed ? { applied: true } : {}) };
       }
       return undefined;
     },

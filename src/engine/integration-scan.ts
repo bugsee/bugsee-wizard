@@ -28,7 +28,14 @@ const SKIP_DIRS = new Set([
   '.turbo',
   '.angular',
   '.vercel',
+  // not source: media, static files and vendored output can be huge and never hold the app's launch
+  'assets',
+  'static',
+  'public',
+  'vendor',
 ]);
+/** Read first: where an app's own code lives, so the bound cannot hide an integration there. */
+const PRIORITY_DIRS = ['src', 'app', 'lib', 'pages', 'components', 'server', 'client'];
 const SOURCE_EXT_RE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|html)$/i;
 const MAX_FILES = 3000;
 const MAX_BYTES = 512 * 1024;
@@ -64,10 +71,11 @@ async function dependencyIntegration(root: string, own: string): Promise<Integra
 export async function findExistingIntegration(
   root: string,
   ownPackage: string,
-): Promise<Integration | undefined> {
+): Promise<Integration | 'unknown' | undefined> {
   const dep = await dependencyIntegration(root, ownPackage);
   if (dep) return dep;
   let seen = 0;
+  let capped = false;
   const walk = async (dir: string, rel: string): Promise<Integration | undefined> => {
     let entries: import('node:fs').Dirent[];
     try {
@@ -75,14 +83,24 @@ export async function findExistingIntegration(
     } catch {
       return undefined;
     }
-    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const rank = (name: string): number => {
+      const at = PRIORITY_DIRS.indexOf(name);
+      return rel === '' && at !== -1 ? at : PRIORITY_DIRS.length;
+    };
+    for (const e of entries.sort(
+      (a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name),
+    )) {
       const path = rel === '' ? e.name : `${rel}/${e.name}`;
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name)) continue;
         const found = await walk(join(dir, e.name), path);
         if (found) return found;
+        if (capped) return undefined;
       } else if (e.isFile() && SOURCE_EXT_RE.test(e.name) && !e.name.endsWith('.d.ts')) {
-        if (++seen > MAX_FILES) return undefined;
+        if (++seen > MAX_FILES) {
+          capped = true;
+          return undefined;
+        }
         const abs = join(dir, e.name);
         if ((await stat(abs)).size > MAX_BYTES) continue;
         if (loadsRuntimePackage(await readFile(abs, 'utf8'))) return { where: path };
@@ -90,5 +108,8 @@ export async function findExistingIntegration(
     }
     return undefined;
   };
-  return walk(root, '');
+  const found = await walk(root, '');
+  if (found) return found;
+  // an unfinished scan proves nothing: the caller must not act as if the project had no integration
+  return capped ? 'unknown' : undefined;
 }

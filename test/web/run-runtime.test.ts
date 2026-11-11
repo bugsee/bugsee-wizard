@@ -35,8 +35,8 @@ describe.skipIf(process.platform === 'win32')('runtime recipes through the run',
     const cap = captureOutput();
     await runJavaScriptInstall(baseOpts(sb.project), makeDeps(cap, { resolveRecipe: real }));
     const text = cap.lines.join('\n');
-    expect(text).toContain('edits src/index.ts (found via convention)');
-    expect(text).toContain('launch(process.env.BUGSEE_APP_TOKEN)');
+    expect(text).toContain('edits src/index.ts (found via scripts.start)');
+    expect(text).toContain(`launch(process.env['BUGSEE_APP_TOKEN'])`);
     expect(text).toContain('Node does not load .env');
     expect(text).not.toContain(TOKEN);
   });
@@ -60,12 +60,13 @@ describe.skipIf(process.platform === 'win32')('runtime recipes through the run',
     expect(r.incomplete).toBe(true);
     expect(r.steps[0]).toEqual({ id: 'add-sdk-init', outcome: 'manual' });
     expect(r.snippets?.[0]).toMatchObject({ title: 'Initialise Bugsee in your app' });
-    expect(r.snippets?.[0]?.code).toContain("from '@bugsee/bugsee'");
     expect(r.snippets?.[0]?.code).toContain('nextjs');
+    // a framework has its own adapter package and guide, not the plain umbrella's launch()
     expect(r.snippets?.[0]?.code).toMatch(
-      /First install the SDK: npm install @bugsee\/bugsee@beta/,
+      /First install the SDK: npm install @bugsee\/nextjs@beta/,
     );
-    expect(r.snippets?.[0]?.code).toContain('CommonJS');
+    expect(r.snippets?.[0]?.code).toContain('https://docs.bugsee.com/nextjs');
+    expect(r.snippets?.[0]?.code).not.toContain("from '@bugsee/bugsee'");
     expect(r.snippets?.[0]?.code).not.toContain(TOKEN);
     expect(exitCodeFor(r, true)).toBe(3);
   });
@@ -74,7 +75,8 @@ describe.skipIf(process.platform === 'win32')('runtime recipes through the run',
     sb = await sandbox('tsc-node');
     const file = join(sb.project, 'package.json');
     const pkg = JSON.parse(await readFile(file, 'utf8'));
-    await writeFile(file, JSON.stringify({ ...pkg, main: 'lib/index.js' }));
+    const { start: _start, ...scripts } = pkg.scripts;
+    await writeFile(file, JSON.stringify({ ...pkg, scripts, main: 'lib/index.js' }));
     const r = await runJavaScriptInstall(
       baseOpts(sb.project),
       makeDeps(captureOutput(), { resolveRecipe: real }),
@@ -84,6 +86,21 @@ describe.skipIf(process.platform === 'win32')('runtime recipes through the run',
     ]);
     expect(r.incomplete).toBe(true);
     expect(exitCodeFor(r, true)).toBe(3);
+  });
+
+  it('a non-framework skip keeps the generic snippet with both module systems', async () => {
+    sb = await sandbox('tsc-node');
+    const file = join(sb.project, 'package.json');
+    const pkg = JSON.parse(await readFile(file, 'utf8'));
+    const { start: _start, ...scripts } = pkg.scripts;
+    await writeFile(file, JSON.stringify({ ...pkg, scripts, main: 'lib/index.js' }));
+    const r = await runJavaScriptInstall(
+      baseOpts(sb.project),
+      makeDeps(captureOutput(), { resolveRecipe: real }),
+    );
+    const code = r.snippets?.[0]?.code ?? '';
+    expect(code).toMatch(/First install the SDK: npm install @bugsee\/bugsee@beta/);
+    expect(code).toContain('CommonJS');
   });
 
   it('--runtime none leaves the code alone on purpose: not incomplete, no step', async () => {

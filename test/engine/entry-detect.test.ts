@@ -340,6 +340,30 @@ describe('findEntry (review follow-ups)', () => {
       expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('src/b.ts');
     });
 
+    it.each([
+      ['import "./src/app.ts";'],
+      ["import './src/app.ts'"],
+      ["import { start } from '/src/app.ts'; start();"],
+      ['  import  app  from  "./src/app.ts"'],
+    ])('follows an inline module script (%s) to the file it imports', async (body) => {
+      await put('index.html', `<script type="module">${body}</script>`);
+      await put('src/app.ts');
+      await put('src/main.ts');
+      expect(await findEntry(tmp.dir, 'browser')).toEqual({
+        file: 'src/app.ts',
+        via: 'index.html',
+      });
+    });
+
+    it('an inline module script that imports only packages, or nothing local, is not an entry', async () => {
+      await put('index.html', '<script type="module">import "lit"; console.log(1)</script>');
+      await put('src/main.ts');
+      expect(await findEntry(tmp.dir, 'browser')).toEqual({
+        file: 'src/main.ts',
+        via: 'convention',
+      });
+    });
+
     it('skips service-worker and worker registration scripts', async () => {
       await put(
         'index.html',

@@ -71,6 +71,7 @@ const MANUAL: Record<string, string[]> = {
   'rspack-build': [],
   'rollup-build': [],
   'vite-fresh': [],
+  'webpack-fresh': [],
   'node-fresh': [],
 };
 
@@ -300,7 +301,7 @@ const RUN_CHECKS: Record<string, (dir: string) => Promise<void>> = {
     expect(main).toContain('/// <reference types="vite/client" />');
     expect(main).toContain("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
     expect(main).toContain(
-      'if (import.meta.env.VITE_BUGSEE_APP_TOKEN) launch(import.meta.env.VITE_BUGSEE_APP_TOKEN);',
+      `if (import.meta.env['VITE_BUGSEE_APP_TOKEN']) launch(import.meta.env['VITE_BUGSEE_APP_TOKEN']).catch(() => {});`,
     );
     // the token is in .env.local, not in the code, and Vite inlined it into the production bundle
     expect(main).not.toContain(TOKEN);
@@ -311,11 +312,23 @@ const RUN_CHECKS: Record<string, (dir: string) => Promise<void>> = {
       'the token in the bundle',
     ).toBe(true);
   },
+  async 'webpack-fresh'(dir) {
+    // a browser app with no html file on disk and "type"/engines.node set: the browser recipe, not Node's
+    const main = readFileSync(path.join(dir, 'src/index.js'), 'utf8');
+    expect(main).toContain("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
+    expect(main).toContain(`launch('${TOKEN}').catch(() => {}); // bugsee-wizard`);
+    expect(main).not.toContain('process');
+    const bundles = readdirSync(path.join(dir, 'dist')).filter((f) => f.endsWith('.js'));
+    const code = bundles.map((f) => readFileSync(path.join(dir, 'dist', f), 'utf8')).join('\n');
+    expect(code).toContain(TOKEN);
+    // webpack 5 does not polyfill `process`: the bundle must not need it to start
+    expect(code).not.toMatch(/process\.env\.BUGSEE/);
+  },
   async 'node-fresh'(dir) {
     const main = readFileSync(path.join(dir, 'src/index.ts'), 'utf8');
     expect(main).toContain("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
     expect(main).toContain(
-      'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
+      `if (process.env['BUGSEE_APP_TOKEN']) launch(process.env['BUGSEE_APP_TOKEN']); // bugsee-wizard`,
     );
     expect(main).not.toContain(TOKEN);
     // built by `pnpm run build` (tsc type-checked the guarded call), now run: with no token it must

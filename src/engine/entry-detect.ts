@@ -172,6 +172,14 @@ function scriptTokens(command: string): string[] {
   return [];
 }
 
+/** Whether a `start`/`dev`/`serve` script runs a script file with a runner (`nodemon index.js`), i.e. the project is an app. */
+export function scriptsRunAFile(scripts: Record<string, unknown>): boolean {
+  return START_SCRIPTS.some((n) => {
+    const command = scripts[n];
+    return typeof command === 'string' && scriptTokens(command).length > 0;
+  });
+}
+
 async function readPackage(root: string): Promise<Record<string, unknown>> {
   try {
     const data: unknown = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
@@ -224,13 +232,21 @@ async function htmlScript(root: string, htmlRel: string): Promise<string | undef
   } catch {
     return undefined;
   }
-  for (const m of stripHtmlComments(html).matchAll(/<script\b([^>]*)>/gi)) {
+  for (const m of stripHtmlComments(html).matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
     const attrs = m[1] ?? '';
     // a classic script cannot take an import line: only module scripts are entries
     if (!/\btype\s*=\s*["']?module\b/i.test(attrs)) continue;
     const src = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs);
-    const value = (src?.[1] ?? src?.[2] ?? '').split(/[?#]/)[0] ?? '';
-    if (value === '' || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(value)) continue;
+    // an inline module script is followed to the first local file it imports
+    const inline = /^\s*import\s+(?:[^'"]*?\bfrom\s*)?["']([^"']+)["']/m.exec(m[2] ?? '')?.[1];
+    const value =
+      (src?.[1] ?? src?.[2] ?? (src === null ? (inline ?? '') : '')).split(/[?#]/)[0] ?? '';
+    if (
+      value === '' ||
+      (src === null && !/^[./]/.test(value)) ||
+      /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(value)
+    )
+      continue;
     const rel = inside(root, value.startsWith('/') ? root : join(root, dirname(htmlRel)), value);
     if (rel === undefined || WORKER_SCRIPT_RE.test(rel)) continue;
     // generated output is rewritten by the next build: its source is the entry, or there is none
