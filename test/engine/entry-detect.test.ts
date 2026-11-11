@@ -417,4 +417,15 @@ describe('findEntry (review follow-ups)', () => {
     await findEntry(tmp.dir, 'browser');
     expect(Date.now() - t1).toBeLessThan(1500);
   });
+
+  it('a page with characters whose lower case is longer (İ) still finds its module script', async () => {
+    await put(
+      'index.html',
+      '<title>İstanbul İzmir İ İ İ</title><SCRIPT TYPE="module" SRC="/lib2/app.ts"></SCRIPT>',
+    );
+    await put('lib2/app.ts');
+    await put('src/main.ts');
+    await put('src/entry.ts');
+    expect(await findEntry(tmp.dir, 'browser')).toEqual({ file: 'lib2/app.ts', via: 'index.html' });
+  });
 });

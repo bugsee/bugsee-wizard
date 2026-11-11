@@ -222,7 +222,8 @@ async function conventional(root: string, bases: readonly string[]): Promise<str
  * page with thousands of unclosed tags cannot make a pattern rescan the rest of the text each time).
  */
 function* scriptTags(html: string): Generator<{ attrs: string; body: string }> {
-  const lower = html.toLowerCase();
+  // ASCII-only lower case keeps every index valid in `html` (toLowerCase() changes the length of İ)
+  const lower = html.replace(/[A-Z]/g, (c) => c.toLowerCase());
   let at = 0;
   for (;;) {
     const open = lower.indexOf('<script', at);
