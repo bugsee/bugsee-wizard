@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
-    "@commander-js/extra-typings": "^15.0.0",
+    "@commander-js/extra-typings": "^15.1.0",
     "commander": "^15.0.0",
     "detect-indent": "^7.0.1",
     "fast-glob": "^3.3.2",
