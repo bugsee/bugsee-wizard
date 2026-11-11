@@ -381,3 +381,76 @@ describe('sdkInitSnippet', () => {
     );
   });
 });
+
+describe('addSdkInit (review follow-ups)', () => {
+  it.each([
+    ['export default function launch() {}\n'],
+    ['export default class launch {}\n'],
+    ['export function launch() {}\n'],
+    ['type launch = string;\n'],
+    ['interface launch { a: 1 }\n'],
+    ['enum launch { A }\n'],
+    ['export type launch = number;\n'],
+  ])('treats %s as taking the name `launch`', (src) => {
+    const out = code(addSdkInit(src, spec({ fileName: 'a.ts' })));
+    expect(out).toContain('launch as bugseeLaunch');
+  });
+
+  it('a plain top-level assignment is not CommonJS evidence in an ESM package', () => {
+    const src = "globalThis.started = Date.now();\nconsole.log('hi');\n";
+    const out = code(
+      addSdkInit(src, spec({ fileName: 'index.js', packageType: 'module', runtime: 'node' })),
+    );
+    expect(out).toContain("import { launch } from '@bugsee/bugsee'");
+    expect(out).not.toContain('require(');
+  });
+
+  it.each([['module.exports = {};\n'], ['exports.a = 1;\n'], ['module.exports.a = 1;\n']])(
+    'but %s is',
+    (src) => {
+      const out = code(
+        addSdkInit(src, spec({ fileName: 'index.js', packageType: 'module', runtime: 'node' })),
+      );
+      expect(out).toContain("require('@bugsee/bugsee')");
+    },
+  );
+
+  it('with a process.env token, goes after the statement that loads the env file (ESM)', () => {
+    const src =
+      "import dotenv from 'dotenv';\nimport express from 'express';\ndotenv.config();\nexpress();\n";
+    const out = code(
+      addSdkInit(src, spec({ tokenExpr: 'process.env.BUGSEE_APP_TOKEN', runtime: 'node' })),
+    );
+    expect(out.split('\n')).toEqual([
+      "import dotenv from 'dotenv';",
+      "import express from 'express';",
+      'dotenv.config();',
+      "import { launch } from '@bugsee/bugsee'; // bugsee-wizard",
+      'launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
+      'express();',
+      '',
+    ]);
+  });
+
+  it('with a process.env token, goes after a CommonJS dotenv call too', () => {
+    const src = "const express = require('express');\nrequire('dotenv').config();\nexpress();\n";
+    const out = code(
+      addSdkInit(
+        src,
+        spec({ tokenExpr: 'process.env.BUGSEE_APP_TOKEN', runtime: 'node', fileName: 'a.cjs' }),
+      ),
+    );
+    expect(out.split('\n').slice(0, 4)).toEqual([
+      "const express = require('express');",
+      "require('dotenv').config();",
+      "const { launch } = require('@bugsee/bugsee'); // bugsee-wizard",
+      'launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
+    ]);
+  });
+
+  it('dotenv is ignored for other token sources', () => {
+    const src = "import dotenv from 'dotenv';\ndotenv.config();\nrun();\n";
+    const out = code(addSdkInit(src, spec({ tokenExpr: 'import.meta.env.X' })));
+    expect(out.split('\n')[1]).toBe("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
+  });
+});

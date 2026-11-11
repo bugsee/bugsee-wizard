@@ -221,7 +221,7 @@ const CASES: Case[] = [
     '@bugsee/bundler-plugin-core',
     'bugseeRollupPlugin',
     'rollup.config.mjs',
-    runtimeCase('node', 'npm', 'src/index.js', ['launch(process.env.BUGSEE_APP_TOKEN);']),
+    // a library (main, no start script): the runtime recipe is skipped
   ),
   // a framework: no runtime recipe yet, only the build tool's
   cliCase('cli', 'angular-spa', 'npm', 'package.json', false),

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { findEntry } from '../../src/engine/entry-detect.js';
+import { findEntry, hasViteClientTypes } from '../../src/engine/entry-detect.js';
 import { makeTmp } from './helpers.js';
 
 let tmp: Awaited<ReturnType<typeof makeTmp>>;
@@ -34,7 +34,7 @@ describe('findEntry (browser)', () => {
   it('resolves a relative script src against the html file, ignoring remote and inline scripts', async () => {
     await put(
       'src/index.html',
-      '<script src="https://cdn.example.com/a.js"></script><script>inline()</script><script src="./app.js" defer></script>',
+      '<script src="https://cdn.example.com/a.js"></script><script>inline()</script><script type="module" src="./app.js" defer></script>',
     );
     await put('src/app.js');
     expect(await findEntry(tmp.dir, 'browser')).toEqual({
@@ -183,5 +183,65 @@ describe('findEntry (node and bun)', () => {
   it('ignores non-string scripts, main and bin values', async () => {
     await pkg({ scripts: { start: 5 }, main: ['x.js'], bin: { a: 1 } });
     expect(await findEntry(tmp.dir, 'node')).toBeUndefined();
+  });
+});
+
+describe('findEntry (review follow-ups)', () => {
+  it('only a module script of index.html is an entry (a classic script cannot take an import)', async () => {
+    await put('index.html', '<script src="/src/classic.js"></script>');
+    await put('src/classic.js');
+    expect(await findEntry(tmp.dir, 'browser')).toBeUndefined();
+    await put(
+      'index.html',
+      '<script src="/src/classic.js"></script><script type="module" src="/src/app.js"></script>',
+    );
+    await put('src/app.js');
+    expect(await findEntry(tmp.dir, 'browser')).toEqual({ file: 'src/app.js', via: 'index.html' });
+  });
+
+  it('never picks generated output: a build-dir script maps to its source or is skipped', async () => {
+    await put('index.html', '<script type="module" src="dist/bundle.js"></script>');
+    await put('dist/bundle.js');
+    await put('src/index.js');
+    expect(await findEntry(tmp.dir, 'browser')).toEqual({
+      file: 'src/index.js',
+      via: 'convention',
+    });
+    await put('index.html', '<script type="module" src="dist/main.js"></script>');
+    await put('dist/main.js');
+    await put('src/main.ts');
+    expect(await findEntry(tmp.dir, 'browser')).toEqual({ file: 'src/main.ts', via: 'index.html' });
+  });
+
+  it('a flag value is not the entry (--import ./register.mjs)', async () => {
+    await pkg({ scripts: { start: 'node --import ./register.mjs src/app.mjs' } });
+    await put('register.mjs');
+    await put('src/app.mjs');
+    expect((await findEntry(tmp.dir, 'node'))?.file).toBe('src/app.mjs');
+    await pkg({ scripts: { start: 'node -r ./pre.cjs --env-file .env.local server.js' } });
+    await put('pre.cjs');
+    await put('server.js');
+    expect((await findEntry(tmp.dir, 'node'))?.file).toBe('server.js');
+  });
+
+  it('in a chained command the last command is the app', async () => {
+    await pkg({ scripts: { start: 'node scripts/migrate.js && node src/server.js' } });
+    await put('scripts/migrate.js');
+    await put('src/server.js');
+    expect((await findEntry(tmp.dir, 'node'))?.file).toBe('src/server.js');
+    await pkg({ scripts: { start: 'node a.js; node b.js | tee log' } });
+    await put('a.js');
+    await put('b.js');
+    expect((await findEntry(tmp.dir, 'node'))?.file).toBe('b.js');
+  });
+
+  it('Vite client types are found in tsconfig.app.json and other tsconfig.*.json files', async () => {
+    expect(await hasViteClientTypes(tmp.dir)).toBe(false);
+    await put(
+      'tsconfig.json',
+      '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }',
+    );
+    await put('tsconfig.app.json', '{ "compilerOptions": { "types": ["vite/client"] } }');
+    expect(await hasViteClientTypes(tmp.dir)).toBe(true);
   });
 });

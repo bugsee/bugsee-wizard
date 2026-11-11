@@ -87,12 +87,39 @@ async function resolveDeclared(root: string, declared: unknown): Promise<string 
   return (await sourceOf(root, rel)) ?? (await usable(root, rel));
 }
 
-/** Tokens of a shell command that look like a path to a script (`node --env-file=.env src/a.ts`). */
+/** Flags whose next word is their value, not a script to run (`node --import ./register.mjs app.js`). */
+const VALUE_FLAGS = new Set([
+  '-r',
+  '--require',
+  '--import',
+  '--loader',
+  '--experimental-loader',
+  '--env-file',
+  '--watch-path',
+  '--conditions',
+  '-C',
+  '-e',
+  '--eval',
+  '-p',
+  '--print',
+]);
+
+/**
+ * Script paths in a shell command, the last command of a chain first (`migrate && node server.js`
+ * runs the server last). Flag values (`--import ./x.mjs`) and `NAME=value` words are not scripts.
+ */
 function scriptTokens(command: string): string[] {
-  return command
-    .split(/\s+/)
-    .map((t) => t.replace(/^["']|["']$/g, ''))
-    .filter((t) => t !== '' && !t.startsWith('-') && !t.includes('=') && SCRIPT_EXT_RE.test(t));
+  const out: string[] = [];
+  for (const part of command.split(/&&|\|\||[;|]/).reverse()) {
+    const words = part.split(/\s+/).map((t) => t.replace(/^["']|["']$/g, ''));
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i] ?? '';
+      if (VALUE_FLAGS.has(w)) i++;
+      else if (w !== '' && !w.startsWith('-') && !w.includes('=') && SCRIPT_EXT_RE.test(w))
+        out.push(w);
+    }
+  }
+  return out;
 }
 
 async function readPackage(root: string): Promise<Record<string, unknown>> {
@@ -114,7 +141,7 @@ async function conventional(root: string, bases: readonly string[]): Promise<str
   return undefined;
 }
 
-/** The first local `<script src>` of an HTML file that names an existing script. */
+/** The first local module `<script src>` of an HTML file that names an existing script (never build output). */
 async function htmlScript(root: string, htmlRel: string): Promise<string | undefined> {
   let html: string;
   try {
@@ -122,10 +149,21 @@ async function htmlScript(root: string, htmlRel: string): Promise<string | undef
   } catch {
     return undefined;
   }
-  for (const m of html.matchAll(/<script\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) {
-    const src = (m[1] ?? m[2] ?? '').split(/[?#]/)[0] ?? '';
-    if (src === '' || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(src)) continue;
-    const rel = inside(root, src.startsWith('/') ? root : join(root, dirname(htmlRel)), src);
+  for (const m of html.matchAll(/<script\b([^>]*)>/gi)) {
+    const attrs = m[1] ?? '';
+    // a classic script cannot take an import line: only module scripts are entries
+    if (!/\btype\s*=\s*["']?module\b/i.test(attrs)) continue;
+    const src = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs);
+    const value = (src?.[1] ?? src?.[2] ?? '').split(/[?#]/)[0] ?? '';
+    if (value === '' || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(value)) continue;
+    const rel = inside(root, value.startsWith('/') ? root : join(root, dirname(htmlRel)), value);
+    if (rel === undefined) continue;
+    // generated output is rewritten by the next build: its source is the entry, or there is none
+    if (BUILD_DIRS.includes(rel.split('/')[0] ?? '')) {
+      const source = await sourceOf(root, rel);
+      if (source !== undefined) return source;
+      continue;
+    }
     const found = await usable(root, rel);
     if (found !== undefined) return found;
   }
@@ -181,7 +219,10 @@ export async function hasViteClientTypes(root: string): Promise<boolean> {
       (text) => text.includes('vite/client'),
       () => false,
     );
-  if (await mentions('tsconfig.json')) return true;
+  const root_ = await readdir(root).catch(() => [] as string[]);
+  for (const name of root_) {
+    if (/^tsconfig(?:\..+)?\.json$/.test(name) && (await mentions(name))) return true;
+  }
   for (const dir of ['.', 'src']) {
     const names = await readdir(join(root, dir)).catch(() => [] as string[]);
     for (const name of names) {

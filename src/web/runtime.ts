@@ -1,4 +1,6 @@
+import { join } from 'node:path';
 import type { WizardOptions } from '../core/context.js';
+import { readPackageJson } from '../engine/package-json.js';
 import type { SdkRuntime } from '../engine/sdk-init-ast.js';
 import type { JsDetection } from './detect.js';
 import type { Prompts } from './prompts.js';
@@ -18,6 +20,20 @@ function platformFor(runtime: SdkRuntime, det: JsDetection): string {
   return runtime === 'browser' && det.buildTool === 'vite'
     ? 'javascript-browser-vite'
     : `javascript-${runtime}`;
+}
+
+/** A package with an entry point and nothing that starts it: importing it must not start Bugsee. */
+async function looksLikeLibrary(dir: string): Promise<boolean> {
+  let pkg: Record<string, unknown>;
+  try {
+    pkg = (await readPackageJson(join(dir, 'package.json'))).data;
+  } catch {
+    return false;
+  }
+  const scripts = typeof pkg.scripts === 'object' && pkg.scripts !== null ? pkg.scripts : {};
+  const starts = ['start', 'dev', 'serve'].some((n) => n in scripts);
+  const entry = ['main', 'module', 'exports'].some((k) => pkg[k] !== undefined);
+  return entry && !starts && pkg.bin === undefined;
 }
 
 /**
@@ -45,9 +61,15 @@ export async function chooseRuntime(
       skip: `the ${det.runtimes.join(', ')} runtime is not automated yet (only browser, Node.js and Bun are).`,
     };
   }
+  const server = !candidates.includes('browser');
+  if (server && (await looksLikeLibrary(det.packageDir))) {
+    return {
+      skip: 'this package looks like a library (an entry point and nothing that starts it): initialising Bugsee there would run it inside every app that imports the library. Add the SDK to your application instead.',
+    };
+  }
   if (rest.length === 0) return { runtime: first, platform: platformFor(first, det) };
   // a server on Bun reports node as well: bun is the more specific answer
-  if (!candidates.includes('browser') && candidates.includes('bun')) {
+  if (server && candidates.includes('bun')) {
     return { runtime: 'bun', platform: platformFor('bun', det) };
   }
   const names = candidates.map((r) => LABEL[r]).join(' and ');

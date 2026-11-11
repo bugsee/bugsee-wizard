@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JsDetection } from '../../src/web/detect.js';
 import type { Prompts } from '../../src/web/prompts.js';
 import { chooseRuntime } from '../../src/web/runtime.js';
+import { makeTmp } from '../engine/helpers.js';
 import { baseOpts } from './run-helpers.js';
 
 const det = (over: Partial<JsDetection>): JsDetection => ({
@@ -117,5 +120,49 @@ describe('chooseRuntime', () => {
       'node',
       'bun',
     ]);
+  });
+});
+
+describe('chooseRuntime (libraries)', () => {
+  let tmp: Awaited<ReturnType<typeof makeTmp>>;
+  beforeEach(async () => {
+    tmp = await makeTmp();
+  });
+  afterEach(() => tmp.cleanup());
+  const at = async (pkg: object) => {
+    await mkdir(tmp.dir, { recursive: true });
+    await writeFile(join(tmp.dir, 'package.json'), JSON.stringify(pkg));
+    return chooseRuntime(det({ packageDir: tmp.dir, runtimes: ['node'] }), opts, prompts());
+  };
+
+  it('a package with an entry point and nothing that starts it is a library: skipped, with the reason', async () => {
+    for (const pkg of [{ main: 'dist/index.js' }, { module: 'x.js' }, { exports: './x.js' }]) {
+      expect(await at(pkg)).toEqual({ skip: expect.stringMatching(/library/i) });
+    }
+  });
+
+  it('a start/dev/serve script, a bin, or no entry point at all is an app', async () => {
+    for (const pkg of [
+      { main: 'a.js', scripts: { start: 'node a.js' } },
+      { main: 'a.js', scripts: { dev: 'x' } },
+      { main: 'a.js', scripts: { serve: 'x' } },
+      { main: 'a.js', bin: 'cli.js' },
+      {},
+    ]) {
+      expect(await at(pkg)).toEqual({ runtime: 'node', platform: 'javascript-node' });
+    }
+  });
+
+  it('only Node and Bun are judged this way; an unreadable package.json is not a library', async () => {
+    await writeFile(join(tmp.dir, 'package.json'), '{ nope');
+    expect(
+      await chooseRuntime(det({ packageDir: tmp.dir, runtimes: ['node'] }), opts, prompts()),
+    ).toMatchObject({
+      runtime: 'node',
+    });
+    await writeFile(join(tmp.dir, 'package.json'), JSON.stringify({ main: 'x.js' }));
+    expect(
+      await chooseRuntime(det({ packageDir: tmp.dir, runtimes: ['browser'] }), opts, prompts()),
+    ).toMatchObject({ runtime: 'browser' });
   });
 });

@@ -47,6 +47,14 @@ const VITE_REFERENCE = '/// <reference types="vite/client" />';
 /** @bugsee packages that are build tooling, not the runtime SDK. */
 const TOOLING_RE = /^@bugsee\/(?:cli|bugsee-cli|[\w-]*plugin[\w-]*)$/;
 
+const DECLARES_NAME = new Set([
+  'FunctionDeclaration',
+  'ClassDeclaration',
+  'TSTypeAliasDeclaration',
+  'TSInterfaceDeclaration',
+  'TSEnumDeclaration',
+]);
+
 const isTs = (fileName: string): boolean => /\.[cm]?tsx?$/i.test(fileName);
 
 function isSdkPackage(spec: string | undefined): boolean {
@@ -95,7 +103,10 @@ export function hasSdkIntegration(source: string): boolean {
 function boundNames(body: Node[]): Set<string> {
   const out: string[] = [];
   for (const raw of body) {
-    const stmt = raw.type === 'ExportNamedDeclaration' ? (child(raw, 'declaration') ?? raw) : raw;
+    const stmt =
+      raw.type === 'ExportNamedDeclaration' || raw.type === 'ExportDefaultDeclaration'
+        ? (child(raw, 'declaration') ?? raw)
+        : raw;
     if (stmt.type === 'ImportDeclaration') {
       for (const sp of children(stmt, 'specifiers')) {
         const local = name(sp ? child(sp, 'local') : undefined);
@@ -104,7 +115,7 @@ function boundNames(body: Node[]): Set<string> {
     } else if (stmt.type === 'VariableDeclaration') {
       for (const d of children(stmt, 'declarations'))
         collectBoundNames(d ? child(d, 'id') : undefined, out);
-    } else if (stmt.type === 'FunctionDeclaration' || stmt.type === 'ClassDeclaration') {
+    } else if (DECLARES_NAME.has(stmt.type)) {
       const id = name(child(stmt, 'id'));
       if (id !== undefined) out.push(id);
     }
@@ -116,11 +127,25 @@ function hasEsmSyntax(body: Node[]): boolean {
   return body.some((s) => s.type === 'ImportDeclaration' || s.type.startsWith('Export'));
 }
 
+/** `module.exports`, `exports`, or a member of either: the only assignments that mean CommonJS. */
+function exportsTarget(node: Node | undefined): boolean {
+  let cur = node;
+  while (cur?.type === 'MemberExpression') {
+    const obj = child(cur, 'object');
+    if (name(obj) === 'module' && name(child(cur, 'property')) === 'exports') return true;
+    cur = obj;
+  }
+  return cur?.type === 'Identifier' && name(cur) === 'exports';
+}
+
 function hasCjsSyntax(body: Node[]): boolean {
   return body.some((s) => {
     if (isRequireDeclaration(s)) return true;
     const e = s.type === 'ExpressionStatement' ? child(s, 'expression') : undefined;
-    return e?.type === 'AssignmentExpression' || requireArg(e) !== undefined;
+    return (
+      (e?.type === 'AssignmentExpression' && exportsTarget(child(e, 'left'))) ||
+      requireArg(e) !== undefined
+    );
   });
 }
 
@@ -204,7 +229,13 @@ export function addSdkInit(original: string, spec: SdkInitSpec): SdkInitResult {
   const anchors = cjs
     ? body.filter(isRequireDeclaration)
     : body.filter((s) => s.type === 'ImportDeclaration');
-  const anchor = anchors[anchors.length - 1] ?? directives[directives.length - 1];
+  let anchor = anchors[anchors.length - 1] ?? directives[directives.length - 1];
+  // a token read from process.env must be read after the env file is loaded
+  if (spec.tokenExpr?.startsWith('process.env.') === true) {
+    const loads = body.filter((s) => /\bdotenv\b/.test(source.slice(s.start, s.end)));
+    const last = loads[loads.length - 1];
+    if (last !== undefined && (anchor === undefined || last.end > anchor.end)) anchor = last;
+  }
   let code: string;
   if (anchor) {
     const at = lineEndIfCommentTail(source, anchor.end);
