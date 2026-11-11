@@ -80,13 +80,12 @@ const INSTALLED = 'install-package:@bugsee/bugsee';
 const INIT_BROWSER = 'add-sdk-init:browser';
 const INIT_NODE = 'add-sdk-init:node';
 const RUNTIME_SKIPPED: Record<string, string[]> = {
-  'react-spa': [INSTALLED, INIT_BROWSER],
-  'vue-spa': [INSTALLED, INIT_BROWSER],
-  'svelte-spa': [INSTALLED, INIT_BROWSER],
-  'vite-object-config': [INSTALLED, INIT_BROWSER],
-  'webpack-sourcemaps': [INSTALLED, INIT_BROWSER],
-  'webpack-object-config': [INSTALLED, INIT_BROWSER],
-  'node-service': [INSTALLED, INIT_NODE],
+  'react-spa': [INIT_BROWSER],
+  'vue-spa': [INIT_BROWSER],
+  'vite-object-config': [INIT_BROWSER],
+  'webpack-sourcemaps': [INSTALLED],
+  'webpack-object-config': [INSTALLED],
+  'node-service': [INSTALLED, INIT_NODE, 'ensure-gitignore:.env'],
   'tsc-build': [INIT_NODE],
   'esbuild-build': [INIT_NODE],
   'rollup-build': [INIT_NODE],
