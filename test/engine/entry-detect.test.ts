@@ -321,6 +321,24 @@ describe('findEntry (review follow-ups)', () => {
       expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('src/main.ts');
     });
 
+    it('an unterminated comment hides the rest of the page, like a browser', async () => {
+      await put(
+        'index.html',
+        '<script type="module" src="/src/a.ts"></script><!-- <script type="module" src="/src/b.ts"></script>',
+      );
+      await put('src/a.ts');
+      await put('src/b.ts');
+      expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('src/a.ts');
+      await put('index.html', '<!-- never closed <script type="module" src="/src/b.ts"></script>');
+      expect(await findEntry(tmp.dir, 'browser')).toBeUndefined();
+    });
+
+    it('text left over from one comment never forms another (no re-scan of the result)', async () => {
+      await put('index.html', '<!<!-- x -->-- <script type="module" src="/src/b.ts"></script> -->');
+      await put('src/b.ts');
+      expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('src/b.ts');
+    });
+
     it('skips service-worker and worker registration scripts', async () => {
       await put(
         'index.html',

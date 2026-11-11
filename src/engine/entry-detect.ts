@@ -196,6 +196,23 @@ async function conventional(root: string, bases: readonly string[]): Promise<str
   return found.length === 1 ? found[0] : undefined;
 }
 
+/**
+ * The page without its comments, read once from left to right like a browser: an unterminated comment
+ * runs to the end, and what is left of one comment is never re-read as the start of another.
+ */
+function stripHtmlComments(html: string): string {
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const open = html.indexOf('<!--', at);
+    if (open === -1) return out + html.slice(at);
+    out += html.slice(at, open);
+    const close = html.indexOf('-->', open + 4);
+    if (close === -1) return out;
+    at = close + 3;
+  }
+}
+
 /** The first local module `<script src>` of an HTML file that names an existing script (never build output). */
 async function htmlScript(root: string, htmlRel: string): Promise<string | undefined> {
   let html: string;
@@ -204,7 +221,7 @@ async function htmlScript(root: string, htmlRel: string): Promise<string | undef
   } catch {
     return undefined;
   }
-  for (const m of html.replace(/<!--[\s\S]*?-->/g, '').matchAll(/<script\b([^>]*)>/gi)) {
+  for (const m of stripHtmlComments(html).matchAll(/<script\b([^>]*)>/gi)) {
     const attrs = m[1] ?? '';
     // a classic script cannot take an import line: only module scripts are entries
     if (!/\btype\s*=\s*["']?module\b/i.test(attrs)) continue;
