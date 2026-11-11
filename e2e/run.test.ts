@@ -71,6 +71,13 @@ const MANUAL: Record<string, string[]> = {
   'rollup-build': [],
 };
 
+/**
+ * Runtime-recipe steps that find their work already done on the first run: the samples (and the
+ * synthetic projects) are projects that already use the SDK, so installing it or initialising it is
+ * a no-op there. Everything else of the runtime recipe is applied.
+ */
+const RUNTIME_SKIPPED: Record<string, string[]> = {};
+
 const selected = (
   process.env.BUGSEE_E2E_FIXTURES ?? [...Object.keys(FIXTURES), ...UNAPPROVED_NAMES].join(',')
 )
@@ -153,7 +160,7 @@ async function git(dir: string, args: readonly string[]): Promise<string> {
 async function treeState(dir: string): Promise<string> {
   const status = await git(dir, ['status', '--porcelain=v1', '-uall']);
   const diff = await git(dir, ['diff', 'HEAD']);
-  const extra = ['.env.bugsee-build-plugin', '.bugsee/wizard-manifest.json'];
+  const extra = ['.env', '.env.local', '.env.bugsee-build-plugin', '.bugsee/wizard-manifest.json'];
   const untracked = (await git(dir, ['ls-files', '--others', '--exclude-standard']))
     .split('\n')
     .filter(Boolean);
@@ -291,7 +298,11 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
   const inlineSources = jsonKeyOps.some(
     (op) => op.path.join('.') === 'compilerOptions.inlineSources' && op.value === true,
   );
+  const runtimeRecipe = fixture.runtime === null ? undefined : readRecipe(fixture.runtime);
+  const runtimeIds = (runtimeRecipe?.ops ?? []).map((op) => opToStep(op).id);
+  const runtimeSkipped = RUNTIME_SKIPPED[name] ?? [];
   const expectedIds = [
+    ...runtimeIds,
     ...recipe.ops.map((op) => opToStep(op).id),
     opToStep({ op: 'ensure-gitignore', line: '.bugsee/' }).id,
   ];
@@ -325,7 +336,7 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       expect(res.steps.map((s) => s.id)).toEqual(expectedIds);
       for (const s of res.steps) {
         expect(`${s.id}: ${s.outcome}`).toBe(
-          `${s.id}: ${manual.includes(s.id) ? 'manual' : 'applied'}`,
+          `${s.id}: ${manual.includes(s.id) ? 'manual' : runtimeSkipped.includes(s.id) ? 'skipped' : 'applied'}`,
         );
       }
       expect((res.snippets ?? []).length).toBe(manual.length);
@@ -334,7 +345,10 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       const manifest = JSON.parse(
         readFileSync(path.join(dir, '.bugsee/wizard-manifest.json'), 'utf8'),
       );
-      expect(manifest.recipes).toEqual([{ id: fixture.recipe, revision: 'r1' }]);
+      expect(manifest.recipes).toEqual([
+        ...(fixture.runtime === null ? [] : [{ id: fixture.runtime, revision: 'r1' }]),
+        { id: fixture.recipe, revision: 'r1' },
+      ]);
       const entries = manifest.entries as { file: string; action: string }[];
       // a plugin left to the user is recorded as `manual` (uninstall reminds them of it)
       expect(entries.filter((e) => e.action === 'manual').length).toBe(pluginManual ? 1 : 0);
@@ -505,7 +519,13 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
       expect(await git(dir, ['diff', 'HEAD'])).toBe('');
       // git does not show ignored files (and honours a global excludes file): check them directly
-      for (const f of ['.env.bugsee-build-plugin', '.bugsee', 'scripts/bugsee-sourcemaps.mjs']) {
+      for (const f of [
+        '.env',
+        '.env.local',
+        '.env.bugsee-build-plugin',
+        '.bugsee',
+        'scripts/bugsee-sourcemaps.mjs',
+      ]) {
         expect(existsSync(path.join(dir, f)), `${f} left behind`).toBe(false);
       }
       // the tsconfig keys are back to the fixture's own (absent) values, not merely git-clean

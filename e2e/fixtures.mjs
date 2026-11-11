@@ -79,33 +79,85 @@ const TOOLING = new Set([
 /**
  * What the e2e suite expects of each fixture.
  *   recipe  the recipe the wizard must pick (its id)
+ *   runtime the runtime recipe (SDK install + init) it must pick before it; null: none (a framework)
  *   route   'plugin': the bundler plugin uploads at build time; 'cli': the generated script does
  *   outDir  the build output holding the source maps (null: the project has no build)
  *   synthetic  the fixture is e2e/fixtures/<name>/, not a sample
  */
 export const FIXTURES = {
-  'react-spa': { recipe: 'javascript-vite', route: 'plugin', outDir: 'dist' },
-  'webpack-sourcemaps': { recipe: 'javascript-webpack', route: 'plugin', outDir: 'dist' },
-  'vue-spa': { recipe: 'javascript-vite', route: 'plugin', outDir: 'dist' },
-  'svelte-spa': { recipe: 'javascript-vite', route: 'plugin', outDir: 'dist' },
-  'angular-spa': { recipe: 'javascript-cli', route: 'cli', outDir: 'dist' },
-  'node-service': { recipe: 'javascript-tsc', route: 'cli', outDir: null },
+  'react-spa': {
+    runtime: 'javascript-browser-vite',
+    recipe: 'javascript-vite',
+    route: 'plugin',
+    outDir: 'dist',
+  },
+  'webpack-sourcemaps': {
+    runtime: 'javascript-browser',
+    recipe: 'javascript-webpack',
+    route: 'plugin',
+    outDir: 'dist',
+  },
+  'vue-spa': {
+    runtime: 'javascript-browser-vite',
+    recipe: 'javascript-vite',
+    route: 'plugin',
+    outDir: 'dist',
+  },
+  'svelte-spa': {
+    runtime: 'javascript-browser-vite',
+    recipe: 'javascript-vite',
+    route: 'plugin',
+    outDir: 'dist',
+  },
+  'angular-spa': { runtime: null, recipe: 'javascript-cli', route: 'cli', outDir: 'dist' },
+  'node-service': {
+    runtime: 'javascript-node',
+    recipe: 'javascript-tsc',
+    route: 'cli',
+    outDir: null,
+  },
   'vite-object-config': {
     base: 'react-spa',
+    runtime: 'javascript-browser-vite',
     recipe: 'javascript-vite',
     route: 'plugin',
     outDir: 'dist',
   },
   'webpack-object-config': {
     base: 'webpack-sourcemaps',
+    runtime: 'javascript-browser',
     recipe: 'javascript-webpack',
     route: 'plugin',
     outDir: 'dist',
   },
-  'tsc-build': { synthetic: true, recipe: 'javascript-tsc', route: 'cli', outDir: 'lib' },
-  'esbuild-build': { synthetic: true, recipe: 'javascript-esbuild', route: 'cli', outDir: 'dist' },
-  'rspack-build': { synthetic: true, recipe: 'javascript-rspack', route: 'cli', outDir: 'dist' },
-  'rollup-build': { synthetic: true, recipe: 'javascript-rollup', route: 'plugin', outDir: 'dist' },
+  'tsc-build': {
+    synthetic: true,
+    runtime: 'javascript-node',
+    recipe: 'javascript-tsc',
+    route: 'cli',
+    outDir: 'lib',
+  },
+  'esbuild-build': {
+    synthetic: true,
+    runtime: 'javascript-node',
+    recipe: 'javascript-esbuild',
+    route: 'cli',
+    outDir: 'dist',
+  },
+  'rspack-build': {
+    synthetic: true,
+    runtime: 'javascript-browser',
+    recipe: 'javascript-rspack',
+    route: 'cli',
+    outDir: 'dist',
+  },
+  'rollup-build': {
+    synthetic: true,
+    runtime: 'javascript-node',
+    recipe: 'javascript-rollup',
+    route: 'plugin',
+    outDir: 'dist',
+  },
 };
 
 /** The Bugsee packages with an install script (both download the bugsee-cli binary). */
