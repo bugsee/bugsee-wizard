@@ -14,7 +14,7 @@ export function stripJsComments(source: string): string {
   let i = 0;
   let last = ''; // last significant (non-space, non-comment) character emitted
   const n = source.length;
-  const REGEX_AFTER = '(,=:[!&|?{};+-*%<>~^';
+  const REGEX_AFTER = '(,=:[!&|?{};+-*%~^';
   /** A keyword right before a `/` means the slash starts an expression, so it is a pattern. */
   const KEYWORD_BEFORE_RE =
     /(?:^|[^\w$.])(?:return|typeof|case|in|of|yield|await|void|delete|else|do|throw|new)\s*$/;

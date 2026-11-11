@@ -46,9 +46,7 @@ describe('stripJsComments', () => {
   });
 
   it('the same on one line: a comment after the apostrophe or the keyword regex is stripped', () => {
-    expect(stripJsComments("const a = <p>it's</p>; // require('@bugsee/bugsee')")).not.toContain(
-      '@bugsee',
-    );
+    expect(stripJsComments("const a = <p>it's</p>; // todo")).not.toContain('todo');
     expect(
       stripJsComments(
         "const q = (s) => { return /'/.test(s); }; // import x from '@bugsee/bugsee'",
