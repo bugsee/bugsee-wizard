@@ -172,13 +172,15 @@ describe('addSdkInit (token expression)', () => {
     expect(out).not.toContain('tok_ABC');
   });
 
-  it('casts process.env to string in TypeScript only', () => {
+  it('guards an environment token: a missing variable must not make launch() throw (no cast needed)', () => {
     const t = { tokenExpr: 'process.env.BUGSEE_APP_TOKEN' };
-    expect(code(addSdkInit('run();\n', spec({ ...t, fileName: 'server.ts' })))).toContain(
-      'launch(process.env.BUGSEE_APP_TOKEN as string);',
-    );
-    expect(code(addSdkInit('run();\n', spec({ ...t, fileName: 'server.js' })))).toContain(
-      'launch(process.env.BUGSEE_APP_TOKEN);',
+    for (const fileName of ['server.ts', 'server.js']) {
+      expect(code(addSdkInit('run();\n', spec({ ...t, fileName })))).toContain(
+        'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
+      );
+    }
+    expect(code(addSdkInit('run();\n', spec({ ...t, fileName: 'server.ts' })))).not.toContain(
+      ' as string',
     );
   });
 
@@ -377,7 +379,7 @@ describe('sdkInitSnippet', () => {
     expect(
       sdkInitSnippet(spec({ tokenExpr: 'process.env.BUGSEE_APP_TOKEN', fileName: 'a.ts' }), true),
     ).toBe(
-      "const { launch } = require('@bugsee/bugsee'); // bugsee-wizard\nlaunch(process.env.BUGSEE_APP_TOKEN as string); // bugsee-wizard",
+      "const { launch } = require('@bugsee/bugsee'); // bugsee-wizard\nif (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard",
     );
   });
 });
@@ -426,7 +428,7 @@ describe('addSdkInit (review follow-ups)', () => {
       "import express from 'express';",
       'dotenv.config();',
       "import { launch } from '@bugsee/bugsee'; // bugsee-wizard",
-      'launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
+      'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
       'express();',
       '',
     ]);
@@ -444,7 +446,7 @@ describe('addSdkInit (review follow-ups)', () => {
       "const express = require('express');",
       "require('dotenv').config();",
       "const { launch } = require('@bugsee/bugsee'); // bugsee-wizard",
-      'launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
+      'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
     ]);
   });
 
@@ -452,5 +454,123 @@ describe('addSdkInit (review follow-ups)', () => {
     const src = "import dotenv from 'dotenv';\ndotenv.config();\nrun();\n";
     const out = code(addSdkInit(src, spec({ tokenExpr: 'import.meta.env.X' })));
     expect(out.split('\n')[1]).toBe("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
+  });
+});
+
+describe('addSdkInit (same-line code, env loading, integration checks)', () => {
+  const G =
+    'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard';
+  const node = { tokenExpr: 'process.env.BUGSEE_APP_TOKEN', runtime: 'node' as const };
+
+  /** The statements of a program, as source text, for comparing programs. */
+  const statements = (src: string): string[] =>
+    (parseModule(src).$ast as { body: { start: number; end: number }[] }).body.map((n) =>
+      src.slice(n.start, n.end),
+    );
+
+  it.each([
+    ["import a from 'a'; foo();\n", spec(), 'foo();'],
+    [
+      "const a = require('a'); a.start();\n",
+      spec({ fileName: 'a.cjs', runtime: 'node' }),
+      'a.start();',
+    ],
+    ["import {\n  x,\n} from 'x'; /* keep */ const y = 1;\n", spec(), 'const y = 1;'],
+    ["import a from 'a';    foo();\nbar();\n", spec(), 'foo();'],
+  ])('code after the anchor on the same line keeps running: %j', (src, sp, kept) => {
+    const out = code(addSdkInit(src, sp));
+    const before = statements(src);
+    const after = statements(out);
+    // the program minus the two inserted statements is the original program
+    const inserted = (s: string): boolean => s.includes('@bugsee/bugsee') || /^launch\(/.test(s);
+    expect(after.filter((s) => !inserted(s))).toEqual(before);
+    expect(after).toContain(kept);
+    expect(out).not.toMatch(/\/\/ bugsee-wizard[^\n]*(?:foo|a\.start|const y)/);
+    expect(after.some((s) => /launch\(/.test(s))).toBe(true);
+  });
+
+  it('a trailing comment on the anchor line still stays with its statement', () => {
+    const out = code(addSdkInit("import a from 'a'; // keep\nrun();\n", spec()));
+    expect(out.split('\n').slice(0, 3)).toEqual([
+      "import a from 'a'; // keep",
+      "import { launch } from '@bugsee/bugsee'; // bugsee-wizard",
+      "launch('tok_ABC.123'); // bugsee-wizard",
+    ]);
+  });
+
+  it.each([
+    [
+      "import { config } from 'dotenv';\nimport express from 'express';\nconfig();\nexpress();\n",
+      'config();',
+    ],
+    ["import { config as loadEnv } from 'dotenv';\nloadEnv();\nrun();\n", 'loadEnv();'],
+    [
+      "import * as d from 'dotenv';\nd.config({ path: '.env' });\nrun();\n",
+      "d.config({ path: '.env' });",
+    ],
+    ["import 'dotenv/config';\nimport x from 'x';\nrun();\n", "import x from 'x';"],
+    ["import x from 'x';\nprocess.loadEnvFile();\nrun();\n", 'process.loadEnvFile();'],
+  ])('ESM env loading is recognised structurally: %j', (src, loader) => {
+    const out = code(addSdkInit(src, spec({ ...node })));
+    const lines = out.split('\n');
+    const at = lines.indexOf(loader);
+    expect(at).toBeGreaterThan(-1);
+    expect(lines[at + 2]).toBe(G);
+  });
+
+  it.each([
+    [
+      "const express = require('express');\nrequire('dotenv').config();\nrun();\n",
+      "require('dotenv').config();",
+    ],
+    [
+      "const dotenv = require('dotenv');\nconst x = require('x');\ndotenv.config();\nrun();\n",
+      'dotenv.config();',
+    ],
+    ["const { config } = require('dotenv');\nconfig();\nrun();\n", 'config();'],
+    ["const x = require('x');\nrequire('dotenv/config');\nrun();\n", "require('dotenv/config');"],
+  ])('CommonJS env loading is recognised: %j', (src, loader) => {
+    const out = code(addSdkInit(src, spec({ ...node, fileName: 'a.cjs' })));
+    const lines = out.split('\n');
+    const at = lines.indexOf(loader);
+    expect(at).toBeGreaterThan(-1);
+    expect(lines[at + 1]).toContain("require('@bugsee/bugsee')");
+  });
+
+  it('a mention of dotenv that does not load anything does not move the init', () => {
+    const src = "import a from 'a';\nconsole.log('dotenv is optional');\nrun();\n";
+    const out = code(addSdkInit(src, spec({ ...node })));
+    expect(out.split('\n')[1]).toContain("import { launch } from '@bugsee/bugsee'");
+  });
+
+  it('never repeats the vite/client reference', () => {
+    const src = '/// <reference types="vite/client" />\nimport a from "a";\n';
+    const out = code(
+      addSdkInit(
+        src,
+        spec({ tokenExpr: 'import.meta.env.X', fileName: 'main.ts', viteClientTypes: false }),
+      ),
+    );
+    expect(out.match(/vite\/client/g)).toHaveLength(1);
+  });
+
+  it.each([
+    ["import type { X } from '@bugsee/bugsee';\nrun();\n", false],
+    ["import { type X } from 'other';\n", false],
+    ["const m = await import('@bugsee/bugsee');\n", true],
+    ["async function f() { return import('@bugsee/browser'); }\n", true],
+    ["function f() { const { launch } = require('@bugsee/node'); }\n", true],
+    ["import '@bugsee/react';\n", true],
+    ["import { p } from '@bugsee/vite-plugin';\n", false],
+  ])('integration check %j -> %s', (src, expected) => {
+    expect(hasSdkIntegration(src)).toBe(expected);
+  });
+
+  it('escapes the JavaScript line separators in a literal token', () => {
+    const ls = String.fromCharCode(0x2028);
+    const ps = String.fromCharCode(0x2029);
+    const out = code(addSdkInit('run();\n', spec({ token: `a${ls}b${ps}c` })));
+    expect(out).toContain("launch('a\\u2028b\\u2029c');");
+    expect(out.includes(ls) || out.includes(ps)).toBe(false);
   });
 });

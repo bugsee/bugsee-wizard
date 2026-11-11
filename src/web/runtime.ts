@@ -1,12 +1,17 @@
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { WizardOptions } from '../core/context.js';
+import { findConfigFile } from '../engine/config-ast.js';
 import { readPackageJson } from '../engine/package-json.js';
 import type { SdkRuntime } from '../engine/sdk-init-ast.js';
 import type { JsDetection } from './detect.js';
 import type { Prompts } from './prompts.js';
 
 /** The runtime recipe a run applies, or why none is. */
-export type RuntimeChoice = { runtime: SdkRuntime; platform: string } | { skip: string };
+export type RuntimeChoice =
+  | { runtime: SdkRuntime; platform: string; note?: string }
+  /** `silent`: the user asked for it (`--runtime none`), so it is not an unfinished step. */
+  | { skip: string; silent?: true };
 
 const SUPPORTED: readonly SdkRuntime[] = ['browser', 'node', 'bun'];
 const LABEL: Record<SdkRuntime, string> = {
@@ -15,14 +20,27 @@ const LABEL: Record<SdkRuntime, string> = {
   bun: 'Bun',
 };
 
-function platformFor(runtime: SdkRuntime, det: JsDetection): string {
-  // Vite reads VITE_-prefixed variables from .env files, so its browser recipe can keep the token out of the code
-  return runtime === 'browser' && det.buildTool === 'vite'
-    ? 'javascript-browser-vite'
-    : `javascript-${runtime}`;
+async function choose(runtime: SdkRuntime, det: JsDetection): Promise<RuntimeChoice> {
+  if (runtime !== 'browser' || det.buildTool !== 'vite') {
+    return { runtime, platform: `javascript-${runtime}` };
+  }
+  // Vite reads VITE_-prefixed variables from .env files, so its browser recipe keeps the token out of
+  // the code: unless the config moves or renames that lookup, where the variable would be undefined
+  const changed = await viteEnvChanged(det.packageDir);
+  return changed === undefined
+    ? { runtime, platform: 'javascript-browser-vite' }
+    : {
+        runtime,
+        platform: 'javascript-browser',
+        note: `the Vite config sets ${changed}, so import.meta.env.VITE_BUGSEE_APP_TOKEN may not be read from .env.local: the token is written into the init call instead`,
+      };
 }
 
-/** A package with an entry point and nothing that starts it: importing it must not start Bugsee. */
+/**
+ * A package that looks published for others to import: an entry point or type declarations or peer
+ * dependencies, and nothing that runs it (`start`/`serve` script, `bin`). A `dev` script does not
+ * make an app (`tsc -w` is a library's). Importing a library must not start Bugsee in every app.
+ */
 async function looksLikeLibrary(dir: string, bun: boolean): Promise<boolean> {
   let pkg: Record<string, unknown>;
   try {
@@ -31,12 +49,25 @@ async function looksLikeLibrary(dir: string, bun: boolean): Promise<boolean> {
     return false;
   }
   const scripts = typeof pkg.scripts === 'object' && pkg.scripts !== null ? pkg.scripts : {};
-  const starts = ['start', 'dev', 'serve'].some((n) => n in scripts);
+  const runs = ['start', 'serve'].some((n) => n in scripts) || pkg.bin !== undefined;
   // `bun init` names the app's own entry in `module`: not library evidence on Bun
-  const entry = (bun ? ['main', 'exports'] : ['main', 'module', 'exports']).some(
-    (k) => pkg[k] !== undefined,
-  );
-  return entry && !starts && pkg.bin === undefined;
+  const keys = [
+    'main',
+    'exports',
+    'types',
+    'typings',
+    'peerDependencies',
+    ...(bun ? [] : ['module']),
+  ];
+  return keys.some((k) => pkg[k] !== undefined) && !runs;
+}
+
+/** Vite only reads `VITE_*` variables from the package root's .env files: these settings break that. */
+async function viteEnvChanged(dir: string): Promise<string | undefined> {
+  const file = await findConfigFile(dir, 'vite.config');
+  if (file === undefined) return undefined;
+  const text = await readFile(file, 'utf8').catch(() => '');
+  return /\b(?:envDir|envPrefix)\b|\broot\s*:/.exec(text)?.[0].replace(/\s*:$/, '');
 }
 
 /**
@@ -49,9 +80,19 @@ export async function chooseRuntime(
   opts: WizardOptions,
   prompts: Prompts,
 ): Promise<RuntimeChoice> {
+  if (opts.runtime === 'none') {
+    return { skip: 'not initialising the SDK in code (--runtime none).', silent: true };
+  }
   if (det.framework !== undefined) {
     return {
       skip: `${det.framework} projects: installing and initialising the SDK for a framework is not automated yet.`,
+    };
+  }
+  // an explicit choice beats every guess below (unknown runtime, ambiguity, library)
+  if (opts.runtime !== undefined) return choose(opts.runtime, det);
+  if (det.runtimeUnknown === true) {
+    return {
+      skip: 'nothing in this project says where it runs (no page, server library or entry script was found), so the wizard will not guess: pass --runtime browser, node or bun.',
     };
   }
   const found = SUPPORTED.filter((r) => det.runtimes.includes(r));
@@ -67,24 +108,21 @@ export async function chooseRuntime(
   const server = !candidates.includes('browser');
   if (server && (await looksLikeLibrary(det.packageDir, candidates.includes('bun')))) {
     return {
-      skip: 'this package looks like a library (an entry point and nothing that starts it): initialising Bugsee there would run it inside every app that imports the library. Add the SDK to your application instead.',
+      skip: 'this package looks like a library (an entry point or types, and nothing that starts it): initialising Bugsee there would run it inside every app that imports the library. Add the SDK to your application, or pass --runtime if this is an app.',
     };
   }
-  if (rest.length === 0) return { runtime: first, platform: platformFor(first, det) };
+  if (rest.length === 0) return choose(first, det);
   // a server on Bun reports node as well: bun is the more specific answer
-  if (server && candidates.includes('bun')) {
-    return { runtime: 'bun', platform: platformFor('bun', det) };
-  }
+  if (server && candidates.includes('bun')) return choose('bun', det);
   const names = candidates.map((r) => LABEL[r]).join(' and ');
   if (opts.nonInteractive) {
     return {
-      skip: `this project runs in both ${names}; choose one by running the wizard interactively.`,
+      skip: `this project runs in both ${names}; pass --runtime to choose, or run the wizard interactively.`,
     };
   }
   const answer = await prompts.select(
     'This project runs in several runtimes. Which one should the SDK be set up for?',
     candidates.map((r) => ({ value: r, label: LABEL[r] })),
   );
-  const runtime = candidates.find((r) => r === answer) ?? first;
-  return { runtime, platform: platformFor(runtime, det) };
+  return choose(candidates.find((r) => r === answer) ?? first, det);
 }

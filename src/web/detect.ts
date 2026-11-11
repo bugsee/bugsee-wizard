@@ -17,6 +17,8 @@ export interface JsDetection {
   versions: Record<string, string>;
   workspace?: { root: string; packages: { dir: string; name: string }[] };
   needsPackageChoice: boolean;
+  /** True when nothing identified the runtime and `node` is only a default: do not edit code on that guess. */
+  runtimeUnknown?: boolean;
   /** The directory detection was started in, set only when it walked up to `packageDir`. */
   startedIn?: string;
 }
@@ -85,6 +87,8 @@ const SERVER_DEPS = [
   'elysia',
 ];
 const EDGE_DEPS = ['@cloudflare/workers-types', '@vercel/edge', 'wrangler'];
+/** Packages that only run in a page. */
+const BROWSER_SDK_DEPS = ['@bugsee/browser', '@bugsee/replay', '@bugsee/replay-canvas'];
 const BUN_DEPS = ['@types/bun'];
 const EDGE_CONFIGS = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'];
 const BUN_FILES = ['bun.lock', 'bun.lockb', 'bunfig.toml'];
@@ -172,11 +176,17 @@ function engineVersion(pkg: Record<string, unknown>, runtime: string): string | 
   return typeof v === 'string' ? v : undefined;
 }
 
+/** Any HTML page the project serves: the root, `src/`, `public/` (webpack's and CRA's home), or one level below `src/`/`public/`. */
 async function hasHtmlEntry(dir: string): Promise<boolean> {
-  return (
-    (await exists(path.join(dir, 'index.html'))) ||
-    (await exists(path.join(dir, 'src', 'index.html')))
-  );
+  const hasHtml = async (d: string): Promise<boolean> =>
+    (await readdir(d).catch(() => [] as string[])).some((n) => n.toLowerCase().endsWith('.html'));
+  for (const d of ['.', 'src', 'public']) if (await hasHtml(path.join(dir, d))) return true;
+  for (const d of ['src', 'public']) {
+    const sub = await readdir(path.join(dir, d), { withFileTypes: true }).catch(() => []);
+    for (const e of sub)
+      if (e.isDirectory() && (await hasHtml(path.join(dir, d, e.name)))) return true;
+  }
+  return false;
 }
 
 const MAX_WALK = 10;
@@ -331,9 +341,11 @@ async function inspectProject(
 
   // Runtimes.
   const runtimes = new Set<string>();
+  let runtimeUnknown = false;
   const hasHtml = await hasHtmlEntry(cwd);
   const hasUi = UI_DEPS.some((d) => deps.has(d));
-  const browser = hasUi || (bundler !== undefined && hasHtml);
+  const browser =
+    hasUi || BROWSER_SDK_DEPS.some((d) => deps.has(d)) || (bundler !== undefined && hasHtml);
   const edgeFile = await firstExisting(cwd, EDGE_CONFIGS);
   const edge = edgeFile !== undefined || EDGE_DEPS.some((d) => deps.has(d));
   const bunFile = await firstExisting(cwd, BUN_FILES);
@@ -361,7 +373,10 @@ async function inspectProject(
     if (edge) runtimes.add('edge');
     // Bun projects run server-side JS, which also covers node-style code.
     if (bun && !browser && !edge) runtimes.add('node');
-    if (runtimes.size === 0) runtimes.add('node');
+    if (runtimes.size === 0) {
+      runtimes.add('node');
+      runtimeUnknown = true;
+    }
   }
 
   const versions: Record<string, string> = {};
@@ -383,6 +398,7 @@ async function inspectProject(
     versions,
     needsPackageChoice: false,
   };
+  if (runtimeUnknown) detection.runtimeUnknown = true;
   if (framework) detection.framework = framework;
   detection.buildTool = buildTool;
   if (workspace) detection.workspace = workspace;

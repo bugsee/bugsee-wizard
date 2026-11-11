@@ -58,7 +58,7 @@ const DECLARES_NAME = new Set([
 const isTs = (fileName: string): boolean => /\.[cm]?tsx?$/i.test(fileName);
 
 function isSdkPackage(spec: string | undefined): boolean {
-  return spec !== undefined && spec.startsWith('@bugsee/') && !TOOLING_RE.test(spec);
+  return spec?.startsWith('@bugsee/') === true && !TOOLING_RE.test(spec);
 }
 
 function requireArg(call: Node | undefined): string | undefined {
@@ -80,24 +80,51 @@ function programOf(source: string): { body: Node[]; directives: Node[] } | undef
   }
 }
 
-function importsSdk(body: Node[]): boolean {
-  return body.some((stmt) => {
-    if (stmt.type === 'ImportDeclaration') return isSdkPackage(name(child(stmt, 'source')));
-    if (stmt.type === 'ExpressionStatement') {
-      return isSdkPackage(requireArg(child(stmt, 'expression')));
-    }
-    if (stmt.type !== 'VariableDeclaration') return false;
-    return children(stmt, 'declarations').some((d) =>
-      isSdkPackage(requireArg(d ? child(d, 'init') : undefined)),
-    );
-  });
+const SKIP_KEYS = new Set([
+  'loc',
+  'original',
+  'tokens',
+  'comments',
+  'leadingComments',
+  'trailingComments',
+  'innerComments',
+  'extra',
+]);
+
+/** The module specifier a node loads at run time (static import, require, dynamic import), if any. */
+function loadedModule(node: Node): string | undefined {
+  if (node.type === 'ImportDeclaration') {
+    // `import type` is erased: it does not run the SDK
+    return node.importKind === 'type' || node.importKind === 'typeof'
+      ? undefined
+      : name(child(node, 'source'));
+  }
+  if (node.type === 'ImportExpression') return name(child(node, 'source'));
+  if (node.type !== 'CallExpression') return undefined;
+  const callee = child(node, 'callee');
+  if (name(callee) === 'require' || callee?.type === 'Import') {
+    return name(children(node, 'arguments')[0] ?? undefined);
+  }
+  return undefined;
 }
 
-/** True when the wizard's marker comment is in the file, or a Bugsee runtime package is already imported. */
+/** Whether any node under `root` (nested and dynamic loads included) loads a runtime SDK package. */
+function loadsSdk(root: unknown, seen = new Set<unknown>()): boolean {
+  if (typeof root !== 'object' || root === null || seen.has(root)) return false;
+  seen.add(root);
+  if (Array.isArray(root)) return root.some((x) => loadsSdk(x, seen));
+  if (isNode(root) && isSdkPackage(loadedModule(root))) return true;
+  return Object.entries(root).some(([k, v]) => !SKIP_KEYS.has(k) && loadsSdk(v, seen));
+}
+
+/** True when the wizard's marker comment is in the file, or a Bugsee runtime package is already loaded. */
 export function hasSdkIntegration(source: string): boolean {
   if (hasBugseeMarker(source)) return true;
-  const program = programOf(source);
-  return program !== undefined && importsSdk(program.body);
+  try {
+    return loadsSdk(parseModule(source).$ast);
+  } catch {
+    return false;
+  }
 }
 
 function boundNames(body: Node[]): Set<string> {
@@ -171,11 +198,14 @@ function literal(value: string): string {
 }
 
 function tokenArg(spec: SdkInitSpec, token: string | undefined): string {
-  if (spec.tokenExpr === undefined) return literal(token ?? PLACEHOLDER);
-  const cast = isTs(spec.fileName) && spec.tokenExpr.startsWith('process.env.') ? ' as string' : '';
-  return `${spec.tokenExpr}${cast}`;
+  return spec.tokenExpr ?? literal(token ?? PLACEHOLDER);
 }
 
+/**
+ * The import and the call. A token that comes from the environment is guarded: a missing variable
+ * (production, CI, a container without .env) must leave the app running without Bugsee, because
+ * `launch(undefined)` throws.
+ */
 function lines(
   spec: SdkInitSpec,
   cjs: boolean,
@@ -185,12 +215,57 @@ function lines(
   const imp = cjs
     ? `const { ${fn === LAUNCH ? LAUNCH : `${LAUNCH}: ${fn}`} } = require('${spec.importFrom}'); // ${MARKER}`
     : `import { ${fn === LAUNCH ? LAUNCH : `${LAUNCH} as ${fn}`} } from '${spec.importFrom}'; // ${MARKER}`;
-  return [imp, `${fn}(${tokenArg(spec, token)}); // ${MARKER}`];
+  const arg = tokenArg(spec, token);
+  const call =
+    spec.tokenExpr === undefined
+      ? `${fn}(${arg}); // ${MARKER}`
+      : `if (${arg}) ${fn}(${arg}); // ${MARKER}`;
+  return [imp, call];
 }
 
 /** The two lines as the user would type them by hand: a placeholder, never the real token. */
 export function sdkInitSnippet(spec: SdkInitSpec, cjs: boolean): string {
   return lines(spec, cjs, LAUNCH, undefined).join('\n');
+}
+
+/** Local names bound to the `dotenv` package at the top level (ESM imports and CommonJS requires). */
+function dotenvNames(body: Node[]): Set<string> {
+  const out: string[] = [];
+  for (const stmt of body) {
+    if (stmt.type === 'ImportDeclaration' && name(child(stmt, 'source')) === 'dotenv') {
+      for (const sp of children(stmt, 'specifiers')) {
+        const local = name(sp ? child(sp, 'local') : undefined);
+        if (local !== undefined) out.push(local);
+      }
+    } else if (stmt.type === 'VariableDeclaration') {
+      for (const d of children(stmt, 'declarations')) {
+        if (d && requireArg(child(d, 'init')) === 'dotenv') collectBoundNames(child(d, 'id'), out);
+      }
+    }
+  }
+  return new Set(out);
+}
+
+/** The last top-level statement that loads an env file (`dotenv.config()`, `config()`, `process.loadEnvFile()`). */
+function lastEnvLoad(body: Node[]): Node | undefined {
+  const names = dotenvNames(body);
+  const loads = (call: Node | undefined): boolean => {
+    if (call?.type !== 'CallExpression') return false;
+    const callee = child(call, 'callee');
+    if (callee?.type === 'Identifier') return names.has(name(callee) ?? '');
+    if (callee?.type !== 'MemberExpression') return false;
+    const obj = child(callee, 'object');
+    const prop = name(child(callee, 'property'));
+    if (name(obj) === 'process') return prop === 'loadEnvFile';
+    return names.has(name(obj) ?? '') || requireArg(obj) === 'dotenv';
+  };
+  const found = body.filter((s) => {
+    if (s.type !== 'ExpressionStatement') return false;
+    const e = child(s, 'expression');
+    if (requireArg(e) === 'dotenv/config') return true;
+    return loads(e?.type === 'AwaitExpression' ? child(e, 'argument') : e);
+  });
+  return found[found.length - 1];
 }
 
 function lineStart(source: string, pos: number): number {
@@ -232,14 +307,17 @@ export function addSdkInit(original: string, spec: SdkInitSpec): SdkInitResult {
   let anchor = anchors[anchors.length - 1] ?? directives[directives.length - 1];
   // a token read from process.env must be read after the env file is loaded
   if (spec.tokenExpr?.startsWith('process.env.') === true) {
-    const loads = body.filter((s) => /\bdotenv\b/.test(source.slice(s.start, s.end)));
-    const last = loads[loads.length - 1];
-    if (last !== undefined && (anchor === undefined || last.end > anchor.end)) anchor = last;
+    const load = lastEnvLoad(body);
+    if (load !== undefined && (anchor === undefined || load.end > anchor.end)) anchor = load;
   }
   let code: string;
   if (anchor) {
     const at = lineEndIfCommentTail(source, anchor.end);
-    code = `${source.slice(0, at)}\n${importLine}\n${callLine}${source.slice(at)}`;
+    // code that follows the statement on its own line moves below the new lines (never into a comment)
+    const nl = source.indexOf('\n', at);
+    const rest = source.slice(at, nl === -1 ? source.length : nl);
+    const gap = rest.trim() === '' ? '' : '\n';
+    code = `${source.slice(0, at)}\n${importLine}\n${callLine}${gap}${source.slice(at)}`;
   } else if (body[0]) {
     const at = lineStart(source, body[0].start);
     code = `${source.slice(0, at)}${importLine}\n${callLine}\n${source.slice(at)}`;
@@ -252,7 +330,8 @@ export function addSdkInit(original: string, spec: SdkInitSpec): SdkInitResult {
   if (
     isTs(spec.fileName) &&
     spec.tokenExpr?.startsWith('import.meta.env.') === true &&
-    spec.viteClientTypes !== true
+    spec.viteClientTypes !== true &&
+    !/types\s*=\s*["']vite\/client["']/.test(source)
   ) {
     code = `${VITE_REFERENCE}\n${code}`;
   }

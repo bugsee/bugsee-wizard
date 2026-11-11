@@ -136,7 +136,14 @@ describe('chooseRuntime (libraries)', () => {
   };
 
   it('a package with an entry point and nothing that starts it is a library: skipped, with the reason', async () => {
-    for (const pkg of [{ main: 'dist/index.js' }, { module: 'x.js' }, { exports: './x.js' }]) {
+    for (const pkg of [
+      { main: 'dist/index.js' },
+      { module: 'x.js' },
+      { exports: './x.js' },
+      { types: 'x.d.ts' },
+      { peerDependencies: { react: '*' } },
+      { exports: './x.js', scripts: { dev: 'tsc -w', build: 'tsc' } },
+    ]) {
       expect(await at(pkg)).toEqual({ skip: expect.stringMatching(/library/i) });
     }
   });
@@ -144,7 +151,6 @@ describe('chooseRuntime (libraries)', () => {
   it('a start/dev/serve script, a bin, or no entry point at all is an app', async () => {
     for (const pkg of [
       { main: 'a.js', scripts: { start: 'node a.js' } },
-      { main: 'a.js', scripts: { dev: 'x' } },
       { main: 'a.js', scripts: { serve: 'x' } },
       { main: 'a.js', bin: 'cli.js' },
       {},
@@ -183,5 +189,85 @@ describe('chooseRuntime (libraries)', () => {
     ).toEqual({
       skip: expect.stringMatching(/library/i),
     });
+  });
+});
+
+describe('chooseRuntime (unknown runtime, --runtime, Vite env)', () => {
+  let tmp: Awaited<ReturnType<typeof makeTmp>>;
+  beforeEach(async () => {
+    tmp = await makeTmp();
+  });
+  afterEach(() => tmp.cleanup());
+  const withFlag = (runtime: 'browser' | 'node' | 'bun' | 'none') => baseOpts('/p', { runtime });
+
+  it('no runtime signal: skipped (never defaulted to node), pointing at --runtime', async () => {
+    const res = await chooseRuntime(det({ runtimeUnknown: true }), opts, prompts());
+    expect(res).toEqual({ skip: expect.stringContaining('--runtime') });
+    expect('silent' in res).toBe(false);
+  });
+
+  it('--runtime picks the runtime whatever detection said (unknown, ambiguous, library)', async () => {
+    expect(
+      await chooseRuntime(det({ runtimeUnknown: true }), withFlag('browser'), prompts()),
+    ).toEqual({
+      runtime: 'browser',
+      platform: 'javascript-browser',
+    });
+    expect(
+      await chooseRuntime(det({ runtimes: ['browser', 'node'] }), withFlag('node'), prompts()),
+    ).toEqual({ runtime: 'node', platform: 'javascript-node' });
+    await writeFile(join(tmp.dir, 'package.json'), JSON.stringify({ main: 'x.js' }));
+    expect(await chooseRuntime(det({ packageDir: tmp.dir }), withFlag('bun'), prompts())).toEqual({
+      runtime: 'bun',
+      platform: 'javascript-bun',
+    });
+    expect(
+      await chooseRuntime(
+        det({ runtimes: ['browser'], buildTool: 'vite' }),
+        withFlag('browser'),
+        prompts(),
+      ),
+    ).toEqual({ runtime: 'browser', platform: 'javascript-browser-vite' });
+  });
+
+  it('--runtime none is a silent, deliberate skip', async () => {
+    expect(await chooseRuntime(det({}), withFlag('none'), prompts())).toEqual({
+      skip: expect.stringContaining('--runtime none'),
+      silent: true,
+    });
+  });
+
+  it('a framework is skipped even with --runtime (that init is a later wave)', async () => {
+    expect(await chooseRuntime(det({ framework: 'nextjs' }), withFlag('node'), prompts())).toEqual({
+      skip: expect.stringContaining('nextjs'),
+    });
+  });
+
+  it.each([['envDir: "../env"'], ["envPrefix: 'APP_'"], ["root: 'client'"]])(
+    'a Vite config with %s keeps the token out of import.meta.env: literal-token recipe and a note',
+    async (setting) => {
+      await writeFile(join(tmp.dir, 'vite.config.ts'), `export default { ${setting} };\n`);
+      const res = await chooseRuntime(
+        det({ packageDir: tmp.dir, runtimes: ['browser'], buildTool: 'vite' }),
+        opts,
+        prompts(),
+      );
+      expect(res).toEqual({
+        runtime: 'browser',
+        platform: 'javascript-browser',
+        note: expect.stringMatching(/envDir|envPrefix|root/),
+      });
+    },
+  );
+
+  it('an ordinary Vite config keeps the Vite recipe', async () => {
+    await writeFile(join(tmp.dir, 'vite.config.ts'), 'export default { build: { rootDir: 1 } };\n');
+    expect(
+      await chooseRuntime(
+        det({ packageDir: tmp.dir, runtimes: ['browser'], buildTool: 'vite' }),
+        opts,
+        prompts(),
+      ),
+    ).toEqual({ runtime: 'browser', platform: 'javascript-browser-vite' });
   });
 });

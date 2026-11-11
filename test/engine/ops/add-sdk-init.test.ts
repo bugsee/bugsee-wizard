@@ -56,7 +56,7 @@ describe('add-sdk-init op', () => {
       { file: 'src/main.js', action: 'edited', before: MAIN, after, marker: 'bugsee-wizard' },
     ]);
     expect(ctx.logs.join('\n')).not.toContain('tok_SECRET');
-    expect(await step.precheck(ctx)).toEqual({ kind: 'satisfied' });
+    expect((await step.precheck(ctx)).kind).toBe('satisfied');
     await step.rollback(ctx);
     expect(await read('src/main.js')).toBe(MAIN);
   });
@@ -125,7 +125,9 @@ describe('add-sdk-init op', () => {
     await opToStep(bun).apply(makeCtx(tmp.dir));
     const out = await read('index.ts');
     expect(out).toContain("import { launch } from '@bugsee/bun'; // bugsee-wizard");
-    expect(out).toContain('launch(process.env.BUGSEE_APP_TOKEN as string);');
+    expect(out).toContain(
+      'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN);',
+    );
   });
 
   it('is satisfied, and changes nothing, when the user already integrated a Bugsee package', async () => {
@@ -133,7 +135,7 @@ describe('add-sdk-init op', () => {
     await put('src/main.js', mine);
     const ctx = makeCtx(tmp.dir);
     const step = opToStep(browser);
-    expect(await step.precheck(ctx)).toEqual({ kind: 'satisfied' });
+    expect((await step.precheck(ctx)).kind).toBe('satisfied');
     await step.apply(ctx);
     expect(await read('src/main.js')).toBe(mine);
     expect(ctx.entries).toEqual([]);
@@ -225,5 +227,34 @@ describe('add-sdk-init op', () => {
     await recorder.flush();
     await rollbackFromManifest({ dir: tmp.dir, log: makeCtx(tmp.dir).log, dryRun: false });
     expect(await read('src/main.js')).toBe(MAIN);
+  });
+
+  it('an integration elsewhere in the project (the app launches from its own module) is left alone', async () => {
+    await put('index.html', '<script type="module" src="/src/main.js"></script>');
+    await put('src/main.js', "import './bugsee';\nrun();\n");
+    await put(
+      'src/bugsee.js',
+      "import { launch } from '@bugsee/bugsee';\nlaunch('app-token', { appVersion: '1' });\n",
+    );
+    const ctx = makeCtx(tmp.dir);
+    const step = opToStep(browser);
+    const res = await step.precheck(ctx);
+    expect(res).toEqual({ kind: 'satisfied', note: expect.stringContaining('src/bugsee.js') });
+    await step.apply(ctx);
+    expect(await read('src/main.js')).toBe("import './bugsee';\nrun();\n");
+    expect(ctx.entries).toEqual([]);
+  });
+
+  it('a runtime package other than the one being installed counts too (a dependency on @bugsee/node)', async () => {
+    await put('package.json', JSON.stringify({ dependencies: { '@bugsee/node': '1' } }));
+    await put('index.ts', 'run();\n');
+    const res = await opToStep({ ...node, runtime: 'node' }).precheck(makeCtx(tmp.dir));
+    expect(res).toEqual({ kind: 'satisfied', note: expect.stringContaining('@bugsee/node') });
+  });
+
+  it('the SDK package the recipe itself installed does not count as an integration', async () => {
+    await put('package.json', JSON.stringify({ dependencies: { '@bugsee/bugsee': '1' } }));
+    await put('index.ts', 'run();\n');
+    expect((await opToStep(node).precheck(makeCtx(tmp.dir))).kind).toBe('pending');
   });
 });

@@ -61,7 +61,8 @@ const MANUAL: Record<string, string[]> = {
   'webpack-sourcemaps': ['add-bundler-plugin:webpack'],
   'vue-spa': ['add-bundler-plugin:vite'],
   'svelte-spa': ['add-bundler-plugin:vite'],
-  'angular-spa': [],
+  // a framework: the runtime init is not automated yet, which is reported as an unfinished step
+  'angular-spa': ['add-sdk-init'],
   'node-service': ['add-package-script:bugsee:sourcemaps'],
   'vite-object-config': [],
   'webpack-object-config': [],
@@ -69,6 +70,8 @@ const MANUAL: Record<string, string[]> = {
   'esbuild-build': [],
   'rspack-build': [],
   'rollup-build': [],
+  'vite-fresh': [],
+  'node-fresh': [],
 };
 
 /**
@@ -79,17 +82,21 @@ const MANUAL: Record<string, string[]> = {
 const INSTALLED = 'install-package:@bugsee/bugsee';
 const INIT_BROWSER = 'add-sdk-init:browser';
 const INIT_NODE = 'add-sdk-init:node';
+
 const RUNTIME_SKIPPED: Record<string, string[]> = {
+  // fresh projects: nothing is skipped, the SDK is really installed and initialised
   'react-spa': [INIT_BROWSER],
   'vue-spa': [INIT_BROWSER],
+  'svelte-spa': [INIT_BROWSER],
   'vite-object-config': [INIT_BROWSER],
-  'webpack-sourcemaps': [INSTALLED],
-  'webpack-object-config': [INSTALLED],
+  // the app launches from its own module (src/bugsee.ts): a second launch would run first and take over
+  'webpack-sourcemaps': [INSTALLED, INIT_BROWSER],
+  'webpack-object-config': [INSTALLED, INIT_BROWSER],
   'node-service': [INSTALLED, INIT_NODE, 'ensure-gitignore:.env'],
   'tsc-build': [INIT_NODE],
-  'esbuild-build': [INIT_NODE],
-  'rollup-build': [INIT_NODE],
-  'rspack-build': [INIT_NODE],
+  'esbuild-build': [INIT_BROWSER],
+  'rollup-build': [INIT_BROWSER],
+  'rspack-build': [INIT_BROWSER],
 };
 
 const selected = (
@@ -282,6 +289,49 @@ async function startCollector(): Promise<Collector> {
   };
 }
 
+/**
+ * What the freshly initialised projects must do. Both start from a project with no Bugsee in it, so
+ * these are the real insertions: what the wizard wrote is built (and type-checked) by the project's
+ * own build and then used.
+ */
+const RUN_CHECKS: Record<string, (dir: string) => Promise<void>> = {
+  async 'vite-fresh'(dir) {
+    const main = readFileSync(path.join(dir, 'src/main.ts'), 'utf8');
+    expect(main).toContain('/// <reference types="vite/client" />');
+    expect(main).toContain("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
+    expect(main).toContain(
+      'if (import.meta.env.VITE_BUGSEE_APP_TOKEN) launch(import.meta.env.VITE_BUGSEE_APP_TOKEN);',
+    );
+    // the token is in .env.local, not in the code, and Vite inlined it into the production bundle
+    expect(main).not.toContain(TOKEN);
+    const assets = path.join(dir, 'dist', 'assets');
+    const bundles = readdirSync(assets).filter((f) => f.endsWith('.js'));
+    expect(
+      bundles.some((f) => readFileSync(path.join(assets, f), 'utf8').includes(TOKEN)),
+      'the token in the bundle',
+    ).toBe(true);
+  },
+  async 'node-fresh'(dir) {
+    const main = readFileSync(path.join(dir, 'src/index.ts'), 'utf8');
+    expect(main).toContain("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
+    expect(main).toContain(
+      'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN); // bugsee-wizard',
+    );
+    expect(main).not.toContain(TOKEN);
+    // built by `pnpm run build` (tsc type-checked the guarded call), now run: with no token it must
+    // not crash (launch(undefined) throws), and with one it must start and exit normally
+    for (const env of [{}, { BUGSEE_APP_TOKEN: TOKEN, BUGSEE_ENDPOINT: collector.url }]) {
+      const r = await exec(process.execPath, ['lib/index.js'], {
+        cwd: dir,
+        env,
+        timeoutMs: 60_000,
+      });
+      expect(r.code, show(r)).toBe(0);
+      expect(r.stdout).toContain('listening: Hello, e2e!');
+    }
+  },
+};
+
 // ---------------------------------------------------------------- suite
 
 let collector: Collector;
@@ -316,6 +366,7 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
   const runtimeIds = (runtimeRecipe?.ops ?? []).map((op) => opToStep(op).id);
   const runtimeSkipped = RUNTIME_SKIPPED[name] ?? [];
   const expectedIds = [
+    ...(fixture.runtime === null ? ['add-sdk-init'] : []),
     ...runtimeIds,
     ...recipe.ops.map((op) => opToStep(op).id),
     opToStep({ op: 'ensure-gitignore', line: '.bugsee/' }).id,
@@ -443,6 +494,13 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
         [],
       );
     });
+
+    it.runIf(name in RUN_CHECKS)(
+      'the initialised app works: the token is wired and it runs',
+      async () => {
+        await (RUN_CHECKS[name] as (dir: string) => Promise<void>)(dir);
+      },
+    );
 
     it.runIf(fixture.outDir !== null)(
       'bugsee-cli discovers the built source maps (inject and upload, dry run)',

@@ -650,4 +650,53 @@ describe('detectJavaScript rules (synthetic projects)', () => {
     });
     await expect(detectJavaScript(dir)).resolves.toMatchObject({ buildTool: 'vite' });
   });
+
+  describe('runtime signals', () => {
+    it('no signal at all is flagged: node stays the reported runtime but the guess is marked', async () => {
+      const det = await detectJavaScript(await project({ 'package.json': { name: 'x' } }));
+      expect(det?.runtimes).toEqual(['node']);
+      expect(det?.runtimeUnknown).toBe(true);
+    });
+
+    it('a real signal is not flagged', async () => {
+      const det = await detectJavaScript(
+        await project({ 'package.json': { name: 'x', engines: { node: '>=22' } } }),
+      );
+      expect(det?.runtimeUnknown).toBeUndefined();
+    });
+
+    it.each([
+      ['public/index.html'],
+      ['index.html'],
+      ['src/index.html'],
+      ['public/app.html'],
+      ['src/pages/home.html'],
+    ])('a bundled project with %s is a browser app', async (html) => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': { name: 'x', devDependencies: { webpack: '5.0.0' } },
+          [html]: '<html></html>',
+        }),
+      );
+      expect(det?.runtimes).toEqual(['browser']);
+      expect(det?.runtimeUnknown).toBeUndefined();
+    });
+
+    it.each([['@bugsee/browser'], ['@bugsee/replay'], ['@bugsee/replay-canvas']])(
+      'a dependency on %s (a browser-only package) is a browser signal, even with a node dev script',
+      async (dep) => {
+        const det = await detectJavaScript(
+          await project({
+            'package.json': {
+              name: 'x',
+              scripts: { dev: 'node esbuild.config.mjs --watch' },
+              dependencies: { [dep]: 'beta' },
+              devDependencies: { esbuild: '0.20.0' },
+            },
+          }),
+        );
+        expect(det?.runtimes).toEqual(['browser']);
+      },
+    );
+  });
 });

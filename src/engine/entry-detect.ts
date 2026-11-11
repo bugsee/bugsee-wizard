@@ -38,8 +38,26 @@ const BUN_BASES = [
   'src/app',
 ];
 const BROWSER_BASES = ['src/main', 'src/index', 'src/entry', 'main', 'index'];
+/** Service-worker and worker registration scripts: they run beside the app, they are not its entry. */
+const WORKER_SCRIPT_RE =
+  /(?:^|\/)[^/]*(?:service-?worker|register-?sw|\bsw\b|worker)[^/]*\.[cm]?[jt]sx?$/i;
 const START_SCRIPTS = ['start', 'dev', 'serve'];
 const BUILD_DIRS = ['dist', 'build', 'out', 'lib'];
+
+/** Tool configuration, tests and process-manager files: scripts, but never the app. */
+const NOT_APP_FILE_RE =
+  /(?:^|\/)(?:ecosystem\.[^/]*|[^/]*\.(?:config|test|spec|setup|stories)\.[cm]?[jt]sx?)$/i;
+const NOT_APP_DIR_RE = /(?:^|\/)(?:__tests__|__mocks__|tests?|spec|e2e|cypress)\//i;
+
+/** A JavaScript/TypeScript file that can be an app's entry (not a declaration, config or test). */
+function isAppFile(rel: string): boolean {
+  return (
+    SCRIPT_EXT_RE.test(rel) &&
+    !DECLARATION_RE.test(rel) &&
+    !NOT_APP_FILE_RE.test(rel) &&
+    !NOT_APP_DIR_RE.test(rel)
+  );
+}
 
 const posix = (p: string): string => p.split(sep).join('/');
 
@@ -62,7 +80,7 @@ function inside(root: string, fromDir: string, rel: string): string | undefined 
 
 /** `file` when it is a real script inside the package. */
 async function usable(root: string, rel: string | undefined): Promise<string | undefined> {
-  if (rel === undefined || !SCRIPT_EXT_RE.test(rel) || DECLARATION_RE.test(rel)) return undefined;
+  if (rel === undefined || !isAppFile(rel)) return undefined;
   return (await exists(join(root, rel))) ? rel : undefined;
 }
 
@@ -83,7 +101,7 @@ async function sourceOf(root: string, rel: string): Promise<string | undefined> 
 async function resolveDeclared(root: string, declared: unknown): Promise<string | undefined> {
   if (typeof declared !== 'string') return undefined;
   const rel = inside(root, root, declared);
-  if (rel === undefined || !SCRIPT_EXT_RE.test(rel)) return undefined;
+  if (rel === undefined || !isAppFile(rel)) return undefined;
   return (await sourceOf(root, rel)) ?? (await usable(root, rel));
 }
 
@@ -95,30 +113,57 @@ const VALUE_FLAGS = new Set([
   '--loader',
   '--experimental-loader',
   '--env-file',
+  '--env-file-if-exists',
   '--watch-path',
   '--conditions',
   '-C',
-  '-e',
-  '--eval',
+  '-c',
+  '--config',
+  '--tsconfig',
+  '--project',
   '-p',
   '--print',
+  '-e',
+  '--eval',
 ]);
 
 /**
- * Script paths of the last command of a chain that names one (`migrate && node server.js`
- * runs the server last). Flag values (`--import ./x.mjs`) and `NAME=value` words are not scripts.
+ * The programs that run a script file. A command with none of them (rollup, webpack, vite, tsc,
+ * esbuild, jest, pm2, ...) runs a tool, not the app, so the files in it are configuration or input.
+ */
+const RUNNERS = new Set([
+  'node',
+  'tsx',
+  'ts-node',
+  'ts-node-esm',
+  'ts-node-dev',
+  'node-dev',
+  'nodemon',
+  'vite-node',
+  'babel-node',
+  'esno',
+  'jiti',
+  'bun',
+]);
+
+/**
+ * Script paths of the last command of a chain that runs one with a runner (`migrate && node server.js`
+ * runs the server last). Flag values (`--import ./x.mjs`, `-c nodemon.json`), `NAME=value` words and
+ * test runs (`node --test`) are not the app.
  */
 function scriptTokens(command: string): string[] {
   for (const part of command.split(/&&|\|\||[;|]/).reverse()) {
-    const out: string[] = [];
     const words = part.split(/\s+/).map((t) => t.replace(/^["']|["']$/g, ''));
-    for (let i = 0; i < words.length; i++) {
+    const at = words.findIndex((w) => RUNNERS.has(w.replace(/^.*\//, '')));
+    if (at === -1) continue;
+    if (words.some((w) => w === '--test' || w.startsWith('--test-'))) return [];
+    const out: string[] = [];
+    for (let i = at + 1; i < words.length; i++) {
       const w = words[i] ?? '';
       if (VALUE_FLAGS.has(w)) i++;
-      else if (w !== '' && !w.startsWith('-') && !w.includes('=') && SCRIPT_EXT_RE.test(w))
-        out.push(w);
+      else if (w !== '' && !w.startsWith('-') && !w.includes('=') && isAppFile(w)) out.push(w);
     }
-    // only the last command that names a script is the app; an earlier one is a setup step
+    // only the last command that runs a script is the app; an earlier one is a setup step
     if (out.length > 0) return out;
   }
   return [];
@@ -133,14 +178,22 @@ async function readPackage(root: string): Promise<Record<string, unknown>> {
   }
 }
 
+/**
+ * The one conventionally named entry. Different names present at once (`src/index.ts` and
+ * `src/server.ts`) are ambiguous: no guess. The same name in several extensions picks TypeScript.
+ */
 async function conventional(root: string, bases: readonly string[]): Promise<string | undefined> {
+  const found: string[] = [];
   for (const base of bases) {
     for (const ext of EXTENSIONS) {
       const rel = `${base}.${ext}`;
-      if (!DECLARATION_RE.test(rel) && (await exists(join(root, rel)))) return rel;
+      if (isAppFile(rel) && (await exists(join(root, rel)))) {
+        found.push(rel);
+        break;
+      }
     }
   }
-  return undefined;
+  return found.length === 1 ? found[0] : undefined;
 }
 
 /** The first local module `<script src>` of an HTML file that names an existing script (never build output). */
@@ -151,7 +204,7 @@ async function htmlScript(root: string, htmlRel: string): Promise<string | undef
   } catch {
     return undefined;
   }
-  for (const m of html.matchAll(/<script\b([^>]*)>/gi)) {
+  for (const m of html.replace(/<!--[\s\S]*?-->/g, '').matchAll(/<script\b([^>]*)>/gi)) {
     const attrs = m[1] ?? '';
     // a classic script cannot take an import line: only module scripts are entries
     if (!/\btype\s*=\s*["']?module\b/i.test(attrs)) continue;
@@ -159,7 +212,7 @@ async function htmlScript(root: string, htmlRel: string): Promise<string | undef
     const value = (src?.[1] ?? src?.[2] ?? '').split(/[?#]/)[0] ?? '';
     if (value === '' || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(value)) continue;
     const rel = inside(root, value.startsWith('/') ? root : join(root, dirname(htmlRel)), value);
-    if (rel === undefined) continue;
+    if (rel === undefined || WORKER_SCRIPT_RE.test(rel)) continue;
     // generated output is rewritten by the next build: its source is the entry, or there is none
     if (BUILD_DIRS.includes(rel.split('/')[0] ?? '')) {
       const source = await sourceOf(root, rel);

@@ -130,6 +130,21 @@ export const FIXTURES = {
     route: 'plugin',
     outDir: 'dist',
   },
+  // fresh projects with no Bugsee in them: the runtime recipe really inserts the SDK and init
+  'vite-fresh': {
+    synthetic: true,
+    runtime: 'javascript-browser-vite',
+    recipe: 'javascript-vite',
+    route: 'plugin',
+    outDir: 'dist',
+  },
+  'node-fresh': {
+    synthetic: true,
+    runtime: 'javascript-node',
+    recipe: 'javascript-tsc',
+    route: 'cli',
+    outDir: 'lib',
+  },
   'tsc-build': {
     synthetic: true,
     runtime: 'javascript-node',
@@ -139,21 +154,21 @@ export const FIXTURES = {
   },
   'esbuild-build': {
     synthetic: true,
-    runtime: 'javascript-node',
+    runtime: 'javascript-browser',
     recipe: 'javascript-esbuild',
     route: 'cli',
     outDir: 'dist',
   },
   'rspack-build': {
     synthetic: true,
-    runtime: 'javascript-node',
+    runtime: 'javascript-browser',
     recipe: 'javascript-rspack',
     route: 'cli',
     outDir: 'dist',
   },
   'rollup-build': {
     synthetic: true,
-    runtime: 'javascript-node',
+    runtime: 'javascript-browser',
     recipe: 'javascript-rollup',
     route: 'plugin',
     outDir: 'dist',

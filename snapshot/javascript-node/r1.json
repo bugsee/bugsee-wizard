@@ -9,7 +9,7 @@
   "sdk": {
     "range": ">=0.1.0-beta.5"
   },
-  "notes": "Node.js app: the SDK is initialised at the top of the entry file (found from the start script, package.json main/bin, or a conventional name). The token is read from process.env.BUGSEE_APP_TOKEN and written to .env (git-ignored). Node does not load .env by itself: start the app with node --env-file=.env or set BUGSEE_APP_TOKEN in the environment (production, CI, containers).",
+  "notes": "Node.js app: the SDK is initialised at the top of the entry file (found from the start script, package.json main/bin, or a conventional name). The token is read from process.env.BUGSEE_APP_TOKEN and written to .env (git-ignored). Node does not load .env by itself: start the app with node --env-file=.env or set BUGSEE_APP_TOKEN in the environment (production, CI, containers). The init is guarded (`if (process.env.BUGSEE_APP_TOKEN) launch(...)`): without the variable the app starts normally, without Bugsee, because launch() throws on a missing token.",
   "detect": [
     {
       "dependency": "@types/node"

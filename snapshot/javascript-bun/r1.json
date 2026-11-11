@@ -9,7 +9,7 @@
   "sdk": {
     "range": ">=0.1.0-beta.5"
   },
-  "notes": "Bun app: @bugsee/bun is the Bun build of the SDK (the umbrella package also resolves to it). The SDK is initialised at the top of the entry file; the token is read from process.env.BUGSEE_APP_TOKEN, which Bun loads from .env (git-ignored) automatically. Set BUGSEE_APP_TOKEN in the environment in production.",
+  "notes": "Bun app: @bugsee/bun is the Bun build of the SDK (the umbrella package also resolves to it). The SDK is initialised at the top of the entry file; the token is read from process.env.BUGSEE_APP_TOKEN, which Bun loads from .env (git-ignored) automatically. Set BUGSEE_APP_TOKEN in the environment in production. The init is guarded (`if (process.env.BUGSEE_APP_TOKEN) launch(...)`): without the variable the app starts normally, without Bugsee, because launch() throws on a missing token. @bugsee/bun's launch has no performance/OpenTelemetry wiring; the @bugsee/bugsee umbrella's Bun entry does.",
   "detect": [
     {
       "file": "bunfig.toml"

@@ -52,8 +52,7 @@ describe('findEntry (browser)', () => {
     });
   });
 
-  it('prefers src/main over src/index, and ts over js', async () => {
-    await put('src/index.ts');
+  it('prefers ts over js of the same name', async () => {
     await put('src/main.js');
     await put('src/main.ts');
     expect(await findEntry(tmp.dir, 'browser')).toEqual({ file: 'src/main.ts', via: 'convention' });
@@ -152,11 +151,14 @@ describe('findEntry (node and bun)', () => {
     expect(await findEntry(tmp.dir, 'node')).toBeUndefined();
   });
 
-  it('falls back to conventional names; bun prefers a root index.ts, node prefers src/', async () => {
-    await put('src/index.ts');
+  it('conventional names: a single candidate is used; several different ones are ambiguous (no guess)', async () => {
     await put('index.ts');
     expect(await findEntry(tmp.dir, 'bun')).toEqual({ file: 'index.ts', via: 'convention' });
-    expect(await findEntry(tmp.dir, 'node')).toEqual({ file: 'src/index.ts', via: 'convention' });
+    expect(await findEntry(tmp.dir, 'node')).toEqual({ file: 'index.ts', via: 'convention' });
+    await put('src/index.ts');
+    expect(await findEntry(tmp.dir, 'bun')).toBeUndefined();
+    expect(await findEntry(tmp.dir, 'node')).toBeUndefined();
+    expect(await findEntry(tmp.dir, 'browser')).toBeUndefined();
   });
 
   it('server and app names are found after index and main', async () => {
@@ -255,5 +257,79 @@ describe('findEntry (review follow-ups)', () => {
     });
     await put('real.js');
     expect(await findEntry(tmp.dir, 'node')).toEqual({ file: 'real.js', via: 'package.json main' });
+  });
+
+  describe('what is not an app entry', () => {
+    const cases: Array<[string, string[], string | undefined]> = [
+      ['pm2 start ecosystem.config.js', ['ecosystem.config.js'], undefined],
+      ['rollup -c rollup.config.mjs -w', ['rollup.config.mjs'], undefined],
+      ['webpack serve --config webpack.config.js', ['webpack.config.js'], undefined],
+      [
+        'vite-node --config vite.config.ts src/main.ts',
+        ['vite.config.ts', 'src/main.ts'],
+        'src/main.ts',
+      ],
+      ['node --test test/a.test.js', ['test/a.test.js'], undefined],
+      ['node --test-reporter spec --test test/a.test.js', ['test/a.test.js'], undefined],
+      ['node src/server.test.js', ['src/server.test.js'], undefined],
+      ['node tests/run.js', ['tests/run.js'], undefined],
+      ['node __tests__/x.js', ['__tests__/x.js'], undefined],
+      ['jest src/a.spec.ts', ['src/a.spec.ts'], undefined],
+      [
+        'tsc -p tsconfig.json && node dist/index.js',
+        ['dist/index.js', 'src/index.ts'],
+        'src/index.ts',
+      ],
+      // esbuild is a tool, not a runner: the script says nothing, the one conventional file does
+      ['esbuild src/index.ts --bundle --outfile=dist/out.js', ['src/index.ts'], 'src/index.ts'],
+      ['tsx watch --tsconfig tsconfig.dev.json src/index.ts', ['src/index.ts'], 'src/index.ts'],
+      ['npx tsx src/main.ts', ['src/main.ts'], 'src/main.ts'],
+      ['bun run --hot src/main.ts', ['src/main.ts'], 'src/main.ts'],
+      ['nodemon -c nodemon.json src/app.js', ['src/app.js'], 'src/app.js'],
+      // a tool, not a runner: its file arguments are input, not the app (the convention decides)
+      ['esbuild src/other.ts --bundle', ['src/other.ts', 'src/index.ts'], 'src/index.ts'],
+      ['node --test checks/a.js', ['checks/a.js'], undefined],
+    ];
+    it.each(cases)('%s', async (command, files, expected) => {
+      await pkg({ scripts: { start: command } });
+      for (const f of files) await put(f);
+      const found = await findEntry(tmp.dir, 'node');
+      expect(found?.file).toBe(expected);
+    });
+
+    it('package.json main pointing at a config or test file is not an entry either', async () => {
+      await pkg({ main: 'vite.config.ts' });
+      await put('vite.config.ts');
+      expect(await findEntry(tmp.dir, 'node')).toBeUndefined();
+    });
+
+    it('conventional candidates exclude config and test names', async () => {
+      await put('index.config.js');
+      await put('index.test.js');
+      expect(await findEntry(tmp.dir, 'node')).toBeUndefined();
+    });
+  });
+
+  describe('index.html scripts', () => {
+    it('ignores commented-out scripts', async () => {
+      await put(
+        'index.html',
+        '<!-- <script type="module" src="/src/old.ts"></script> --><script type="module" src="/src/main.ts"></script>',
+      );
+      await put('src/old.ts');
+      await put('src/main.ts');
+      expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('src/main.ts');
+    });
+
+    it('skips service-worker and worker registration scripts', async () => {
+      await put(
+        'index.html',
+        '<script type="module" src="/src/register-sw.ts"></script><script type="module" src="/src/registerSW.js"></script><script type="module" src="/src/service-worker.ts"></script><script type="module" src="/src/main.tsx"></script>',
+      );
+      for (const f of ['register-sw.ts', 'registerSW.js', 'service-worker.ts', 'main.tsx']) {
+        await put(`src/${f}`);
+      }
+      expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('src/main.tsx');
+    });
   });
 });

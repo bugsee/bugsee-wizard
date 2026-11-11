@@ -1,6 +1,7 @@
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { exitCodeFor } from '../../src/engine/noninteractive.js';
 import { resolveRecipe } from '../../src/engine/recipe-store.js';
 import { runJavaScriptInstall } from '../../src/web/run.js';
 import { runJavaScriptUninstall } from '../../src/web/uninstall.js';
@@ -47,6 +48,93 @@ describe.skipIf(process.platform === 'win32')('runtime recipes through the run',
     expect(cap.lines.join('\n')).toMatch(/Skipping SDK install and init: nextjs/);
     const platforms = real.mock.calls.map((c) => c[0].platform);
     expect(platforms).toEqual(['javascript-webpack']);
+  });
+
+  it('a skipped runtime is an unfinished step: incomplete, a structured step and a snippet, exit 3', async () => {
+    sb = await sandbox('nextjs-app');
+    const r = await runJavaScriptInstall(
+      baseOpts(sb.project),
+      makeDeps(captureOutput(), { resolveRecipe: real }),
+    );
+    expect(r.ok).toBe(true);
+    expect(r.incomplete).toBe(true);
+    expect(r.steps[0]).toEqual({ id: 'add-sdk-init', outcome: 'manual' });
+    expect(r.snippets?.[0]).toMatchObject({ title: 'Initialise Bugsee in your app' });
+    expect(r.snippets?.[0]?.code).toContain("from '@bugsee/bugsee'");
+    expect(r.snippets?.[0]?.code).toContain('nextjs');
+    expect(r.snippets?.[0]?.code).not.toContain(TOKEN);
+    expect(exitCodeFor(r, true)).toBe(3);
+  });
+
+  it('the skip alone makes the run incomplete (a library, everything else finishes)', async () => {
+    sb = await sandbox('tsc-node');
+    const file = join(sb.project, 'package.json');
+    const pkg = JSON.parse(await readFile(file, 'utf8'));
+    await writeFile(file, JSON.stringify({ ...pkg, main: 'lib/index.js' }));
+    const r = await runJavaScriptInstall(
+      baseOpts(sb.project),
+      makeDeps(captureOutput(), { resolveRecipe: real }),
+    );
+    expect(r.steps.filter((s) => s.outcome === 'manual').map((s) => s.id)).toEqual([
+      'add-sdk-init',
+    ]);
+    expect(r.incomplete).toBe(true);
+    expect(exitCodeFor(r, true)).toBe(3);
+  });
+
+  it('--runtime none leaves the code alone on purpose: not incomplete, no step', async () => {
+    sb = await sandbox('tsc-node');
+    const r = await runJavaScriptInstall(
+      baseOpts(sb.project, { runtime: 'none' }),
+      makeDeps(captureOutput(), { resolveRecipe: real }),
+    );
+    expect(r.incomplete).toBe(false);
+    expect(r.steps.some((s) => s.id.startsWith('add-sdk-init'))).toBe(false);
+    expect(real.mock.calls.map((c) => c[0].platform)).toEqual(['javascript-tsc']);
+  });
+
+  it('no runtime signal: nothing is guessed (incomplete); --runtime browser then initialises the entry', async () => {
+    sb = await sandbox('tsc-node');
+    await writeFile(
+      join(sb.project, 'package.json'),
+      JSON.stringify({ name: 'x', version: '1.0.0' }),
+    );
+    await rm(join(sb.project, 'tsconfig.json'));
+    await rm(join(sb.project, 'src'), { recursive: true });
+    await mkdir(join(sb.project, 'src'), { recursive: true });
+    await writeFile(join(sb.project, 'src/main.js'), 'document.title = "x";\n');
+    const first = await runJavaScriptInstall(
+      baseOpts(sb.project),
+      makeDeps(captureOutput(), { resolveRecipe: real }),
+    );
+    expect(first.incomplete).toBe(true);
+    expect(first.snippets?.[0]?.code).toContain('--runtime');
+    expect(await readFile(join(sb.project, 'src/main.js'), 'utf8')).toBe('document.title = "x";\n');
+    await runJavaScriptUninstall(baseOpts(sb.project, { yes: true }), makeDeps(captureOutput()));
+    const second = await runJavaScriptInstall(
+      baseOpts(sb.project, { runtime: 'browser' }),
+      makeDeps(captureOutput(), { resolveRecipe: real }),
+    );
+    expect(second.steps.find((s) => s.id === 'add-sdk-init:browser')?.outcome).toBe('applied');
+    expect(await readFile(join(sb.project, 'src/main.js'), 'utf8')).toContain(`launch('${TOKEN}')`);
+  });
+
+  it('browser and server together in a non-interactive run: incomplete, naming --runtime', async () => {
+    sb = await sandbox('tsc-node');
+    await writeFile(
+      join(sb.project, 'package.json'),
+      JSON.stringify({
+        name: 'x',
+        scripts: { start: 'node a.js' },
+        dependencies: { react: '18', express: '4' },
+      }),
+    );
+    const r = await runJavaScriptInstall(
+      baseOpts(sb.project),
+      makeDeps(captureOutput(), { resolveRecipe: real }),
+    );
+    expect(r.incomplete).toBe(true);
+    expect(r.snippets?.[0]?.code).toContain('--runtime');
   });
 
   it('no entry file: the init is a manual step (incomplete), the rest applies', async () => {

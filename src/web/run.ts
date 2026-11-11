@@ -20,6 +20,7 @@ import {
   type ResolvedRecipe,
   resolveRecipe,
 } from '../engine/recipe-store.js';
+import { sdkInitSnippet } from '../engine/sdk-init-ast.js';
 import { WIZARD_VERSION } from '../engine/telemetry.js';
 import { selectTokenSource } from '../engine/token.js';
 import { detectJavaScript, type JsDetection } from './detect.js';
@@ -217,14 +218,16 @@ function opDetails(
         `      adds ${inline(`${op.importName}(${op.callArgs})`)} to the ${op.target} plugins, imported from "${inline(op.importFrom)}"`,
       ];
     case 'add-sdk-init': {
-      const token = op.tokenExpr === undefined ? 'your token' : op.tokenExpr;
+      const expr = op.tokenExpr;
       const where =
         entry === undefined
           ? 'no entry file was found: a snippet to paste will be shown instead'
           : `edits ${inline(entry.file)} (found via ${inline(entry.via)})`;
       return [
         `      ${where}`,
-        `      adds import { launch } from "${inline(op.importFrom)}" and launch(${inline(token)})`,
+        `      adds import { launch } from "${inline(op.importFrom)}" (as bugseeLaunch if \`launch\` is taken) and ${
+          expr === undefined ? 'launch(your token)' : `if (${inline(expr)}) launch(${inline(expr)})`
+        }`,
       ];
     }
     case 'set-json-key':
@@ -325,6 +328,7 @@ export async function runJavaScriptInstall(
   if ('skip' in choice) {
     log.info(`Skipping SDK install and init: ${choice.skip}`);
   } else {
+    if (choice.note !== undefined) log.info(choice.note);
     const found = await resolve(choice.platform);
     if ('ok' in found) return found;
     runtimeRecipe = found;
@@ -410,13 +414,34 @@ export async function runJavaScriptInstall(
   }
   for (const w of quarantineWarnings) log.warn(w);
 
-  const snippets = run.results.flatMap((r) => (r.snippet === undefined ? [] : [r.snippet]));
+  // a skipped runtime is an unfinished step (exit 3 non-interactively), unless the user chose it
+  const skipped = 'skip' in choice && choice.silent !== true ? choice.skip : undefined;
+  const skipSnippet: ManualSnippet[] =
+    skipped === undefined
+      ? []
+      : [
+          {
+            file: 'your entry file',
+            title: 'Initialise Bugsee in your app',
+            code: `// Not applied: ${skipped}\n${sdkInitSnippet(
+              { importFrom: '@bugsee/bugsee', token: '', fileName: 'main.ts', runtime: 'browser' },
+              false,
+            )}`,
+          },
+        ];
+  const snippets = [
+    ...skipSnippet,
+    ...run.results.flatMap((r) => (r.snippet === undefined ? [] : [r.snippet])),
+  ];
   for (const s of snippets) log.warn(snippetText(s));
 
   const result: WizardRunResult = {
     ok: !run.failed,
-    incomplete: run.incomplete,
-    steps: run.results.map((r) => ({ id: r.id, outcome: r.outcome })),
+    incomplete: run.incomplete || skipped !== undefined,
+    steps: [
+      ...(skipped === undefined ? [] : [{ id: 'add-sdk-init', outcome: 'manual' as const }]),
+      ...run.results.map((r) => ({ id: r.id, outcome: r.outcome })),
+    ],
     ...(snippets.length > 0
       ? { snippets: snippets.map((s) => ({ file: s.file, title: s.title, code: s.code })) }
       : {}),
@@ -437,6 +462,6 @@ export async function runJavaScriptInstall(
       : {}),
   };
   if (opts.dryRun) log.info('Dry run: nothing was written.');
-  else if (!run.failed) outro(log, packageManager, run.incomplete);
+  else if (!run.failed) outro(log, packageManager, run.incomplete || skipped !== undefined);
   return result;
 }

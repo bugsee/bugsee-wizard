@@ -83,6 +83,8 @@ interface Case {
   contains: [string, string[]][];
   /** The runtime recipe (SDK install + init) that runs first, when the project is a plain runtime. */
   runtime?: Runtime;
+  /** The runtime recipe is skipped (a framework, a library): an unfinished `add-sdk-init` step. */
+  runtimeSkipped?: boolean;
 }
 
 interface Runtime {
@@ -137,12 +139,14 @@ function pluginCase(
   importName: string,
   config: string,
   runtime?: Runtime,
+  runtimeSkipped?: boolean,
 ): Case {
   return {
     id,
     fixture,
     pm,
     ...(runtime ? { runtime } : {}),
+    ...(runtimeSkipped ? { runtimeSkipped } : {}),
     install: [pm === 'npm' ? 'install' : 'add', '-D', `${pkg}@beta`],
     steps: [
       [`install-package:${pkg}`, 'applied', 'skipped'],
@@ -165,12 +169,14 @@ function cliCase(
   file: string,
   tsc: boolean,
   runtime?: Runtime,
+  runtimeSkipped?: boolean,
 ): Case {
   return {
     id,
     fixture,
     pm,
     ...(runtime ? { runtime } : {}),
+    ...(runtimeSkipped ? { runtimeSkipped } : {}),
     install: [pm === 'npm' ? 'install' : 'add', '-D', '@bugsee/cli'],
     steps: [
       ['install-package:@bugsee/cli', 'applied', 'skipped'],
@@ -221,17 +227,20 @@ const CASES: Case[] = [
     '@bugsee/bundler-plugin-core',
     'bugseeRollupPlugin',
     'rollup.config.mjs',
-    // a library (main, no start script): the runtime recipe is skipped
+    undefined,
+    true,
   ),
   // a framework: no runtime recipe yet, only the build tool's
-  cliCase('cli', 'angular-spa', 'npm', 'package.json', false),
+  cliCase('cli', 'angular-spa', 'npm', 'package.json', false, undefined, true),
   cliCase(
     'tsc',
     'tsc-node',
     'npm',
     'tsconfig.json',
     true,
-    runtimeCase('node', 'npm', 'src/index.ts', ['launch(process.env.BUGSEE_APP_TOKEN as string);']),
+    runtimeCase('node', 'npm', 'src/index.ts', [
+      'if (process.env.BUGSEE_APP_TOKEN) launch(process.env.BUGSEE_APP_TOKEN);',
+    ]),
   ),
   cliCase(
     'esbuild',
@@ -272,7 +281,13 @@ describe.skipIf(process.platform === 'win32')('bundled recipes, end to end', () 
       const deps = () => makeDeps(captureOutput(), { resolveRecipe: realStore(platforms) });
 
       const first = await runJavaScriptInstall(baseOpts(sb.project), deps());
-      const steps = [...(c.runtime?.steps ?? []), ...c.steps];
+      const steps: [string, string, string][] = [
+        ...(c.runtimeSkipped
+          ? ([['add-sdk-init', 'manual', 'manual']] as [string, string, string][])
+          : []),
+        ...(c.runtime?.steps ?? []),
+        ...c.steps,
+      ];
       expect(platforms).toEqual([...(c.runtime ? [c.runtime.platform] : []), `javascript-${c.id}`]);
       expect(first.ok).toBe(true);
       expect(outcomes(first)).toEqual(steps.map(([id, o]) => [id, o]));

@@ -3,6 +3,7 @@ import type { ManualSnippet, Step } from '../../core/step.js';
 import { hasBugseeMarker } from '../config-ast.js';
 import { type EntryFile, findEntry, hasViteClientTypes } from '../entry-detect.js';
 import { editTextFile } from '../fs-edit.js';
+import { findExistingIntegration } from '../integration-scan.js';
 import { readPackageJson } from '../package-json.js';
 import type { OpSpec, RecipeContext } from '../recipe.js';
 import {
@@ -64,6 +65,10 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
       if (spec.tokenExpr === undefined && ctx.token === '') {
         return { kind: 'blocked', reason: 'No Bugsee token is available' };
       }
+      const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom);
+      if (existing) {
+        return { kind: 'satisfied', note: `Bugsee is already set up (${existing.where})` };
+      }
       let found: Awaited<ReturnType<typeof locate>>;
       try {
         found = await locate(ctx);
@@ -75,6 +80,7 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
       return hasSdkIntegration(src) ? { kind: 'satisfied' } : { kind: 'pending' };
     },
     async apply(ctx) {
+      if (await findExistingIntegration(ctx.packageDir, spec.importFrom)) return undefined;
       const found = await locate(ctx);
       const manual = (file: string, code: string): { manual: ManualSnippet } => {
         ctx.manifest.record({ file, action: 'manual' });

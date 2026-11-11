@@ -16,6 +16,8 @@ export interface WizardOptions {
   readonly token?: string;
   /** `--sdk-version` / `BUGSEE_WIZARD_SDK_VERSION`: the SDK version recipes are resolved for. */
   readonly sdkVersion?: string;
+  /** `--runtime` / `BUGSEE_WIZARD_RUNTIME`: the runtime to set the SDK up for, or `none` to leave the code alone. */
+  readonly runtime?: 'browser' | 'node' | 'bun' | 'none';
 }
 
 export interface WizardContext extends WizardOptions {

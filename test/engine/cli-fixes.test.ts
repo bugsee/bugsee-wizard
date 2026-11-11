@@ -194,6 +194,34 @@ describe('program definition', () => {
   });
 });
 
+describe('--runtime', () => {
+  const parse = (argv: string[], env: NodeJS.ProcessEnv = {}) => {
+    const p = createBaseProgram().exitOverride();
+    p.parse(argv, { from: 'user' });
+    return buildOptions(p.opts(), env);
+  };
+  it('is absent by default and carried through when given', () => {
+    expect('runtime' in parse([])).toBe(false);
+    for (const r of ['browser', 'node', 'bun', 'none'] as const) {
+      expect(parse(['--runtime', r]).runtime).toBe(r);
+    }
+  });
+  it('reads BUGSEE_WIZARD_RUNTIME, and an explicit flag wins over it', () => {
+    expect(parse([], { BUGSEE_WIZARD_RUNTIME: 'bun' }).runtime).toBe('bun');
+    expect(parse(['--runtime', 'node'], { BUGSEE_WIZARD_RUNTIME: 'bun' }).runtime).toBe('node');
+    expect('runtime' in parse([], { BUGSEE_WIZARD_RUNTIME: '  ' })).toBe(false);
+  });
+  it('rejects anything else, naming the allowed values', () => {
+    expect(() => parse(['--runtime', 'deno'])).toThrow(/browser, node, bun or none/);
+    expect(() => parse([], { BUGSEE_WIZARD_RUNTIME: 'electron' })).toThrow(
+      /browser, node, bun or none/,
+    );
+  });
+  it('is documented with its env var', () => {
+    expect(createBaseProgram().helpInformation()).toMatch(/--runtime[\s\S]*BUGSEE_WIZARD_RUNTIME/);
+  });
+});
+
 describe('reportError (top-level CLI errors)', () => {
   const io = () => {
     const out: string[] = [];
