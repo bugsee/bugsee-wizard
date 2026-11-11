@@ -35,4 +35,53 @@ describe('stripJsComments', () => {
       "x = /[/'\"]/; \nrequire('@bugsee/node')",
     );
   });
+
+  it('an apostrophe in JSX or markup text is not a string: a later commented-out import is stripped', () => {
+    expect(stripJsComments("const a = <p>it's</p>;\n// require('@bugsee/bugsee')\n")).not.toContain(
+      '@bugsee',
+    );
+    expect(stripJsComments('<h1>Don\'t</h1>\n/* import "@bugsee/bugsee" */\nx();')).not.toContain(
+      '@bugsee',
+    );
+  });
+
+  it('the same on one line: a comment after the apostrophe or the keyword regex is stripped', () => {
+    expect(stripJsComments("const a = <p>it's</p>; // require('@bugsee/bugsee')")).not.toContain(
+      '@bugsee',
+    );
+    expect(
+      stripJsComments(
+        "const q = (s) => { return /'/.test(s); }; // import x from '@bugsee/bugsee'",
+      ),
+    ).not.toContain('@bugsee');
+  });
+
+  it('a regular expression after a keyword (return, typeof, case ...) is a pattern', () => {
+    for (const kw of [
+      'return',
+      'typeof',
+      'case',
+      'yield',
+      'await',
+      'void',
+      'delete',
+      'else',
+      'throw',
+    ]) {
+      const src = `function f(s) { ${kw} /'/.test(s); }\n// import x from '@bugsee/bugsee'\n`;
+      expect(stripJsComments(src), kw).not.toContain('@bugsee');
+    }
+  });
+
+  it('a name that merely ends like a keyword is a value, so / is a division', () => {
+    expect(stripJsComments("const x = myreturn / 2; // c 'q\nimport('@bugsee/x');")).toContain(
+      "import('@bugsee/x')",
+    );
+  });
+
+  it('a template literal may span lines, a quoted string may not', () => {
+    expect(stripJsComments('const t = `a\n// not a comment`;\n')).toBe(
+      'const t = `a\n// not a comment`;\n',
+    );
+  });
 });

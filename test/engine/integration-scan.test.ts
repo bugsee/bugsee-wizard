@@ -168,6 +168,24 @@ describe('findExistingIntegration', () => {
       expect(await scan()).toBeUndefined();
     });
 
+    it.each([
+      ["const a = <p>it's</p>;\n// require('@bugsee/bugsee')\n", 'src/a.jsx'],
+      [
+        "const q = (s) => { return /'/.test(s); };\n// import x from '@bugsee/bugsee'\n",
+        'src/a.js',
+      ],
+      [
+        "<template><p>don't</p></template>\n<script>\n// import '@bugsee/bugsee'\n</script>\n",
+        'src/App.vue',
+      ],
+    ])(
+      'a commented-out import after an apostrophe or a keyword regex is still a comment: %j',
+      async (src, file) => {
+        await put(file, src);
+        expect(await scan()).toBeUndefined();
+      },
+    );
+
     it('a load after a comment on the same line, or next to a URL in a string, still counts', async () => {
       await put('src/a.js', "const u = 'https://example.com'; import('@bugsee/bugsee');\n");
       expect(await scan()).toEqual({ where: 'src/a.js' });

@@ -5,7 +5,9 @@
  * static scans of imports and bundler configs.
  *
  * A `/` starts a regular expression when the last significant character before it cannot end an
- * expression (`(,=:[!&|?{};` or the start of the text); anywhere else it is a division.
+ * expression (`(,=:[!&|?{};` or the start of the text) or the word before it is a keyword such as
+ * `return`; anywhere else it is a division. A quote that does not close on its line is treated as
+ * plain text (an apostrophe in JSX, Vue or HTML), so a stray one cannot put the scan out of phase.
  */
 export function stripJsComments(source: string): string {
   let out = '';
@@ -13,6 +15,9 @@ export function stripJsComments(source: string): string {
   let last = ''; // last significant (non-space, non-comment) character emitted
   const n = source.length;
   const REGEX_AFTER = '(,=:[!&|?{};+-*%<>~^';
+  /** A keyword right before a `/` means the slash starts an expression, so it is a pattern. */
+  const KEYWORD_BEFORE_RE =
+    /(?:^|[^\w$.])(?:return|typeof|case|in|of|yield|await|void|delete|else|do|throw|new)\s*$/;
   while (i < n) {
     const c = source.charAt(i);
     const next = source.charAt(i + 1);
@@ -25,11 +30,22 @@ export function stripJsComments(source: string): string {
       out += ' ';
     } else if (c === "'" || c === '"' || c === '`') {
       let j = i + 1;
-      while (j < n && source.charAt(j) !== c) j += source.charAt(j) === '\\' ? 2 : 1;
-      out += source.slice(i, j + 1);
-      i = j + 1;
-      last = c;
-    } else if (c === '/' && (last === '' || REGEX_AFTER.includes(last))) {
+      while (j < n && source.charAt(j) !== c && (c === '`' || source.charAt(j) !== '\n')) {
+        j += source.charAt(j) === '\\' ? 2 : 1;
+      }
+      if (c !== '`' && source.charAt(j) !== c) {
+        // a quote that never closes on its line is text (an apostrophe in JSX or markup), not a string
+        out += c;
+        i++;
+      } else {
+        out += source.slice(i, j + 1);
+        i = j + 1;
+        last = c;
+      }
+    } else if (
+      c === '/' &&
+      (last === '' || REGEX_AFTER.includes(last) || KEYWORD_BEFORE_RE.test(out.slice(-12)))
+    ) {
       // a regular expression literal: to the closing slash, skipping escapes and [classes]
       let j = i + 1;
       let inClass = false;
