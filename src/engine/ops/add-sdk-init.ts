@@ -95,19 +95,39 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
           runtime: spec.runtime,
           ...(spec.tokenExpr !== undefined ? { tokenExpr: spec.tokenExpr } : {}),
         };
-        return manual(NO_ENTRY, sdkInitSnippet(probe, false));
+        // the module system of an entry nobody found is unknown: a server shows both forms
+        const esm = sdkInitSnippet(probe, false);
+        return manual(
+          NO_ENTRY,
+          spec.runtime === 'browser'
+            ? esm
+            : `// ES modules:\n${esm}\n\n// CommonJS:\n${sdkInitSnippet(probe, true)}`,
+        );
       }
       const file = manifestPath(ctx, found.path);
-      const prior = await readBytes(found.path);
-      const src = prior?.toString('utf8') ?? '';
       const sdk = await initSpec(ctx, found.entry);
-      const res = addSdkInit(src, sdk);
-      if ('manual' in res) return manual(file, res.manual);
-      before = prior ?? undefined;
-      editedPath = found.path;
-      const edit = await editTextFile(found.path, () => res.code, {
-        validate: (out) => hasBugseeMarker(out),
-      });
+      // the edit is generated from the text this write replaces (read once, inside the write), so a
+      // change made by someone else in between is never overwritten with output made from older text
+      let snippet: string | undefined;
+      let read = '';
+      const edit = await editTextFile(
+        found.path,
+        (current) => {
+          read = current;
+          const res = addSdkInit(current, sdk);
+          if ('manual' in res) {
+            snippet = res.manual;
+            return current;
+          }
+          return res.code;
+        },
+        { validate: (out) => hasBugseeMarker(out) },
+      );
+      if (snippet !== undefined) return manual(file, snippet);
+      if (edit.changed) {
+        before = Buffer.from(read, 'utf8');
+        editedPath = found.path;
+      }
       if (edit.changed) {
         ctx.manifest.record({
           file,

@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isRuntimeSdkPackage } from './sdk-packages.js';
 
 /**
  * Is the Bugsee SDK already set up somewhere in the project? A second `launch()` added at the entry
@@ -31,8 +32,6 @@ const SKIP_DIRS = new Set([
 const SOURCE_EXT_RE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|html)$/i;
 const MAX_FILES = 3000;
 const MAX_BYTES = 512 * 1024;
-/** Build tooling, not the runtime SDK. */
-const TOOLING_RE = /^@bugsee\/(?:cli|bugsee-cli|[\w-]*plugin[\w-]*)$/;
 
 /** `import type … from '@bugsee/x'` is erased at build time: it does not run the SDK. */
 const TYPE_IMPORT_RE = /\bimport\s+type\b[^;'"]*?from\s*['"][^'"]+['"]/g;
@@ -41,7 +40,7 @@ const LOAD_RE =
 
 function loadsRuntimePackage(text: string): boolean {
   for (const m of text.replace(TYPE_IMPORT_RE, '').matchAll(LOAD_RE)) {
-    if (!TOOLING_RE.test(m[1] ?? '')) return true;
+    if (isRuntimeSdkPackage(m[1])) return true;
   }
   return false;
 }
@@ -56,9 +55,7 @@ async function dependencyIntegration(root: string, own: string): Promise<Integra
   for (const field of ['dependencies', 'devDependencies']) {
     const deps = pkg[field];
     if (typeof deps !== 'object' || deps === null) continue;
-    const name = Object.keys(deps).find(
-      (d) => d.startsWith('@bugsee/') && d !== own && !TOOLING_RE.test(d),
-    );
+    const name = Object.keys(deps).find((d) => d !== own && isRuntimeSdkPackage(d));
     if (name !== undefined) return { where: `package.json (${name})` };
   }
   return undefined;

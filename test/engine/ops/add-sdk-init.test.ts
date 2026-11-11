@@ -257,4 +257,22 @@ describe('add-sdk-init op', () => {
     await put('index.ts', 'run();\n');
     expect((await opToStep(node).precheck(makeCtx(tmp.dir))).kind).toBe('pending');
   });
+
+  it('no entry found: a Node/Bun snippet shows both module systems, a browser one only ESM', async () => {
+    const nodeRes = await opToStep(node).apply(makeCtx(tmp.dir));
+    const code = nodeRes?.manual?.code ?? '';
+    expect(code).toContain("import { launch } from '@bugsee/bugsee'");
+    expect(code).toContain("const { launch } = require('@bugsee/bugsee')");
+    expect(code).toMatch(/CommonJS/);
+    expect(code).not.toMatch(/ as string/);
+    const browserRes = await opToStep(browser).apply(makeCtx(tmp.dir));
+    expect(browserRes?.manual?.code).not.toContain('require(');
+  });
+
+  it('generates the edit from the text it writes over, and records that text as the "before"', async () => {
+    await put('src/main.js', MAIN);
+    const ctx = makeCtx(tmp.dir);
+    await opToStep(browser).apply(ctx);
+    expect(ctx.entries[0]).toMatchObject({ before: MAIN, file: 'src/main.js' });
+  });
 });

@@ -126,10 +126,11 @@ describe('findEntry (node and bun)', () => {
     expect((await findEntry(tmp.dir, 'node'))?.file).toBe('src/nested/x.mts');
   });
 
-  it('keeps a build output when it exists and there is no source for it', async () => {
-    await pkg({ main: 'dist/index.js' });
+  it('never picks generated output, even when it exists and has no source to map to', async () => {
+    await pkg({ main: 'dist/index.js', scripts: { start: 'node build/server.js' } });
     await put('dist/index.js');
-    expect((await findEntry(tmp.dir, 'node'))?.file).toBe('dist/index.js');
+    await put('build/server.js');
+    expect(await findEntry(tmp.dir, 'node')).toBeUndefined();
   });
 
   it('uses bin (string, then object) after main', async () => {
@@ -349,5 +350,13 @@ describe('findEntry (review follow-ups)', () => {
       }
       expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('src/main.tsx');
     });
+  });
+
+  it('the Vite types of tsconfig.node.json (the config files project) say nothing about the app', async () => {
+    await put('tsconfig.json', '{ "files": [], "references": [] }');
+    await put('tsconfig.node.json', '{ "compilerOptions": { "types": ["vite/client"] } }');
+    expect(await hasViteClientTypes(tmp.dir)).toBe(false);
+    await put('tsconfig.app.json', '{ "compilerOptions": { "types": ["vite/client"] } }');
+    expect(await hasViteClientTypes(tmp.dir)).toBe(true);
   });
 });

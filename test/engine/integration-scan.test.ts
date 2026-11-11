@@ -82,4 +82,23 @@ describe('findExistingIntegration', () => {
     await put('package.json', '{ nope');
     expect(await scan()).toBeUndefined();
   });
+
+  it("only runtime SDK packages count: the wizard, CLI binaries and React Native are not this recipe's SDK", async () => {
+    await put(
+      'package.json',
+      JSON.stringify({
+        devDependencies: {
+          '@bugsee/wizard': '1',
+          '@bugsee/cli-darwin-x64': '1',
+          '@bugsee/react-native': '1',
+          '@bugsee/babel-plugin-component-annotate': '1',
+        },
+      }),
+    );
+    await put(
+      'src/a.ts',
+      "import w from '@bugsee/wizard';\nimport n from '@bugsee/react-native';\n",
+    );
+    expect(await scan()).toBeUndefined();
+  });
 });

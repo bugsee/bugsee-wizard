@@ -102,7 +102,10 @@ async function resolveDeclared(root: string, declared: unknown): Promise<string 
   if (typeof declared !== 'string') return undefined;
   const rel = inside(root, root, declared);
   if (rel === undefined || !isAppFile(rel)) return undefined;
-  return (await sourceOf(root, rel)) ?? (await usable(root, rel));
+  const source = await sourceOf(root, rel);
+  if (source !== undefined) return source;
+  // generated output with no source to map back to: it is rewritten by the next build, never edit it
+  return BUILD_DIRS.includes(rel.split('/')[0] ?? '') ? undefined : usable(root, rel);
 }
 
 /** Flags whose next word is their value, not a script to run (`node --import ./register.mjs app.js`). */
@@ -293,7 +296,14 @@ export async function hasViteClientTypes(root: string): Promise<boolean> {
     );
   const root_ = await readdir(root).catch(() => [] as string[]);
   for (const name of root_) {
-    if (/^tsconfig(?:\..+)?\.json$/.test(name) && (await mentions(name))) return true;
+    // tsconfig.node.json belongs to the config files (vite.config.ts), not to the app
+    if (
+      /^tsconfig(?:\..+)?\.json$/.test(name) &&
+      !/\.node\.json$/.test(name) &&
+      (await mentions(name))
+    ) {
+      return true;
+    }
   }
   for (const dir of ['.', 'src']) {
     const names = await readdir(join(root, dir)).catch(() => [] as string[]);

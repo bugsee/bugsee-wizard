@@ -11,6 +11,7 @@ import {
   name,
   parses,
 } from './config-ast.js';
+import { isRuntimeSdkPackage } from './sdk-packages.js';
 
 /**
  * Static (never executed) edit of a project's entry file: add the Bugsee SDK import and a
@@ -44,8 +45,6 @@ const PLACEHOLDER = '<your Bugsee app token>';
 const LAUNCH = 'launch';
 const LAUNCH_ALIAS = 'bugseeLaunch';
 const VITE_REFERENCE = '/// <reference types="vite/client" />';
-/** @bugsee packages that are build tooling, not the runtime SDK. */
-const TOOLING_RE = /^@bugsee\/(?:cli|bugsee-cli|[\w-]*plugin[\w-]*)$/;
 
 const DECLARES_NAME = new Set([
   'FunctionDeclaration',
@@ -58,7 +57,7 @@ const DECLARES_NAME = new Set([
 const isTs = (fileName: string): boolean => /\.[cm]?tsx?$/i.test(fileName);
 
 function isSdkPackage(spec: string | undefined): boolean {
-  return spec?.startsWith('@bugsee/') === true && !TOOLING_RE.test(spec);
+  return isRuntimeSdkPackage(spec);
 }
 
 function requireArg(call: Node | undefined): string | undefined {

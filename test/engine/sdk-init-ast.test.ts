@@ -562,6 +562,8 @@ describe('addSdkInit (same-line code, env loading, integration checks)', () => {
     ["function f() { const { launch } = require('@bugsee/node'); }\n", true],
     ["import '@bugsee/react';\n", true],
     ["import { p } from '@bugsee/vite-plugin';\n", false],
+    ["import w from '@bugsee/wizard';\n", false],
+    ["import n from '@bugsee/react-native';\n", false],
   ])('integration check %j -> %s', (src, expected) => {
     expect(hasSdkIntegration(src)).toBe(expected);
   });

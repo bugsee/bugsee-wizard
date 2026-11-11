@@ -254,6 +254,10 @@ function planText(
   ].join('\n');
 }
 
+function installCommand(pm: DetectedPackageManager | null, pkg: string): string {
+  return `${pm?.name ?? 'npm'} ${(pm?.installArgs([pkg], false) ?? ['install', pkg]).join(' ')}`;
+}
+
 function snippetText(s: ManualSnippet): string {
   return `${s.title} (${s.file}):\n${s.code}`;
 }
@@ -416,6 +420,11 @@ export async function runJavaScriptInstall(
 
   // a skipped runtime is an unfinished step (exit 3 non-interactively), unless the user chose it
   const skipped = 'skip' in choice && choice.silent !== true ? choice.skip : undefined;
+  const snippet = (cjs: boolean): string =>
+    sdkInitSnippet(
+      { importFrom: '@bugsee/bugsee', token: '', fileName: 'main.ts', runtime: 'node' },
+      cjs,
+    );
   const skipSnippet: ManualSnippet[] =
     skipped === undefined
       ? []
@@ -423,10 +432,16 @@ export async function runJavaScriptInstall(
           {
             file: 'your entry file',
             title: 'Initialise Bugsee in your app',
-            code: `// Not applied: ${skipped}\n${sdkInitSnippet(
-              { importFrom: '@bugsee/bugsee', token: '', fileName: 'main.ts', runtime: 'browser' },
-              false,
-            )}`,
+            code: [
+              `// Not applied: ${skipped}`,
+              `// First install the SDK: ${installCommand(packageManager, '@bugsee/bugsee@beta')}`,
+              '',
+              '// ES modules:',
+              snippet(false),
+              '',
+              '// CommonJS:',
+              snippet(true),
+            ].join('\n'),
           },
         ];
   const snippets = [
