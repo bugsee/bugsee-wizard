@@ -157,4 +157,19 @@ describe('dry-run previews agree with the real run', () => {
     );
     expect(withHint.results[0]?.outcome).toBe('manual');
   });
+
+  it('a dry run warns about a skipped large file exactly like the real run', async () => {
+    const { opToStep } = await import('../../../src/engine/ops/index.js');
+    await put('index.html', '<script type="module" src="/src/main.js"></script>');
+    await put('src/main.js', 'run();\n');
+    await put('src/generated/schema.js', `${'x'.repeat(600_000)}\n`);
+    const op: OpSpec = { op: 'add-sdk-init', runtime: 'browser', importFrom: '@bugsee/bugsee' };
+    const dryCtx = makeCtx(tmp.dir, { dryRun: true });
+    await opToStep(op).preview?.(dryCtx);
+    const realCtx = makeCtx(tmp.dir);
+    await opToStep(op).apply(realCtx);
+    const pick = (logs: string[]) => logs.filter((l) => l.includes('schema.js'));
+    expect(pick(dryCtx.logs).length).toBe(1);
+    expect(pick(dryCtx.logs)).toEqual(pick(realCtx.logs));
+  });
 });

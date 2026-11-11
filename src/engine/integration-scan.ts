@@ -55,29 +55,40 @@ const SKIP_DIRS = new Set([
   'vendor',
 ]);
 /** Read first: where an app's own code lives, so the bound cannot hide an integration there. */
+/** Hidden directories that do hold app code. Every other hidden directory is tool state or a copy of the app (.history, worktrees, .open-next). */
+const HIDDEN_APP_DIRS = new Set(['.storybook', '.vitepress', '.vuepress']);
 const PRIORITY_DIRS = ['src', 'app', 'lib', 'pages', 'components', 'server', 'client'];
 const SOURCE_EXT_RE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|html)$/i;
 const MAX_FILES = 3000;
 const MAX_BYTES = 512 * 1024;
 
 /** Type-only loads are erased at build time: they do not run the SDK. */
-const TYPE_ONLY_RE = [
-  /\b(?:import|export)\s+type\b[^;'"]*?from\s*['"][^'"]+['"]/g,
-  // every specifier is `type X` or `type X as Y`: one unambiguous shape, so it cannot backtrack badly
-  /\bimport\s*\{\s*type\s+[\w$]+(?:\s+as\s+[\w$]+)?(?:\s*,\s*type\s+[\w$]+(?:\s+as\s+[\w$]+)?)*[\s,]*\}\s*from\s*['"][^'"]+['"]/g,
-];
+/**
+ * The head of a type-only statement, tested on a short window before a load (never on the whole text,
+ * so nothing can rescan a long file for every `import type` in it): `import type ...`, `export type ...`,
+ * or `import { type A, type B as C }` where every specifier is type-only.
+ */
+const TYPE_STATEMENT_RE = /^(?:import|export)\s+type\b/;
+const ALL_TYPE_SPECIFIERS_RE =
+  /^import\s*\{\s*type\s+[\w$]+(?:\s+as\s+[\w$]+)?(?:\s*,\s*type\s+[\w$]+(?:\s+as\s+[\w$]+)?)*[\s,]*\}\s*$/;
+const WINDOW = 400;
+
+function isTypeOnlyLoad(code: string, at: number): boolean {
+  const window = code.slice(Math.max(0, at - WINDOW), at);
+  const start = Math.max(window.lastIndexOf('import'), window.lastIndexOf('export'));
+  if (start === -1) return false;
+  const head = window.slice(start);
+  return TYPE_STATEMENT_RE.test(head) || ALL_TYPE_SPECIFIERS_RE.test(head);
+}
 const LOAD_RE =
   /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"](@bugsee\/[\w.-]+)(?:\/[^'"]*)?['"]/g;
 
 const MARKUP_RE = /\.(?:vue|svelte|astro|html)$/i;
 
 function loadsRuntimePackage(text: string, markup: boolean): boolean {
-  const code = TYPE_ONLY_RE.reduce(
-    (t, re) => t.replace(re, ''),
-    stripJsComments(markup ? stripHtmlComments(text) : text, { markup }),
-  );
+  const code = stripJsComments(markup ? stripHtmlComments(text) : text, { markup });
   for (const m of code.matchAll(LOAD_RE)) {
-    if (isRuntimeSdkPackage(m[1])) return true;
+    if (isRuntimeSdkPackage(m[1]) && !isTypeOnlyLoad(code, m.index ?? 0)) return true;
   }
   return false;
 }
@@ -115,6 +126,8 @@ export async function findExistingIntegration(
     } catch {
       return undefined;
     }
+    // a directory with its own .git is another repository (a nested clone or a worktree), not this project
+    if (rel !== '' && entries.some((e) => e.name === '.git')) return undefined;
     const rank = (name: string): number => {
       const at = PRIORITY_DIRS.indexOf(name);
       return rel === '' && at !== -1 ? at : PRIORITY_DIRS.length;
@@ -125,7 +138,8 @@ export async function findExistingIntegration(
       const path = rel === '' ? e.name : `${rel}/${e.name}`;
       if (e.isDirectory()) {
         // tool state and caches (.yarn, .cache, .nx, ...) hold no app code, and can hold thousands of files
-        if (SKIP_DIRS.has(e.name)) continue;
+        if (SKIP_DIRS.has(e.name) || (e.name.startsWith('.') && !HIDDEN_APP_DIRS.has(e.name)))
+          continue;
         const found = await walk(join(dir, e.name), path);
         if (found) return found;
         if (capped !== undefined && seen > MAX_FILES) return undefined;

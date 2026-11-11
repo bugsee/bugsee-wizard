@@ -57,8 +57,8 @@ const moduleKey = (p: string): string =>
  *
  * Something runs it when it has a `start`/`serve` script or a `bin`; or, if it is not a published
  * package, a runner on a file in `dev` (`nodemon index.js`) or a server framework dependency (the
- * `npm init -y` + express shape). A published package (not `private`, with `exports`/`types`/`files`/
- * `publishConfig`) is a library whatever its `dev` script or dependencies say, unless that dev script
+ * `npm init -y` + express shape). A published package (not `private`, with `exports`/`files`/
+ * `publishConfig`; `types` alone is not publishing) is a library whatever its `dev` script or dependencies say, unless that dev script
  * runs a file that is not the package's own entry (a playground, an example server).
  */
 async function looksLikeLibrary(dir: string, bun: boolean): Promise<boolean> {
@@ -87,13 +87,13 @@ async function looksLikeLibrary(dir: string, bun: boolean): Promise<boolean> {
     (published ? devElsewhere : scriptsRunAFile(scripts) || SERVER_DEPS.some((d) => d in deps));
   // `bun init` names the app's own entry in `module`: not library evidence on Bun
   const keys = ['main', 'exports', ...(bun ? [] : ['module'])];
-  // peer dependencies are library evidence only for a package that can be published, and `typescript`
-  // alone is what `bun init` writes into every project
+  // peer dependencies are library evidence only for a package that can be published; on Bun a lone
+  // `typescript` peer is what `bun init` writes into every project, so it says nothing there
   const peers =
     pkg.private !== true &&
     typeof pkg.peerDependencies === 'object' &&
     pkg.peerDependencies !== null
-      ? Object.keys(pkg.peerDependencies).filter((p) => p !== 'typescript')
+      ? Object.keys(pkg.peerDependencies).filter((p) => !(bun && p === 'typescript'))
       : [];
   return (keys.some((k) => pkg[k] !== undefined) || peers.length > 0) && !runs;
 }
@@ -153,7 +153,7 @@ export async function chooseRuntime(
   const server = !candidates.includes('browser');
   if (server && (await looksLikeLibrary(det.packageDir, candidates.includes('bun')))) {
     return {
-      skip: 'this package looks like a library (an entry point or types, and nothing that starts it): initialising Bugsee there would run it inside every app that imports the library. Add the SDK to your application, or pass --runtime if this is an app.',
+      skip: 'this package looks like a library (an entry point and nothing that starts it): initialising Bugsee there would run it inside every app that imports the library. Add the SDK to your application, or pass --runtime if this is an app.',
     };
   }
   if (rest.length === 0) return choose(first, det);

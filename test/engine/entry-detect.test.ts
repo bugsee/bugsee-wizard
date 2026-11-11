@@ -428,4 +428,26 @@ describe('findEntry (review follow-ups)', () => {
     await put('src/entry.ts');
     expect(await findEntry(tmp.dir, 'browser')).toEqual({ file: 'lib2/app.ts', via: 'index.html' });
   });
+
+  it('an inline module script with thousands of import lines stays fast', async () => {
+    await put('index.html', `<script type="module">${'import a\n'.repeat(20_000)}</script>`);
+    await put('src/main.ts');
+    const t0 = Date.now();
+    await findEntry(tmp.dir, 'browser');
+    expect(Date.now() - t0).toBeLessThan(1500);
+    await put('index.html', `<script type="module">${'import a '.repeat(50_000)}</script>`);
+    const t1 = Date.now();
+    await findEntry(tmp.dir, 'browser');
+    expect(Date.now() - t1).toBeLessThan(1500);
+  });
+
+  it('an inline module script imports on a later line, after other statements', async () => {
+    await put(
+      'index.html',
+      '<script type="module">\nwindow.x = 1;\n\nimport { start } from "./src/app.ts";\nstart();\n</script>',
+    );
+    await put('src/app.ts');
+    await put('src/main.ts');
+    expect((await findEntry(tmp.dir, 'browser'))?.file).toBe('src/app.ts');
+  });
 });

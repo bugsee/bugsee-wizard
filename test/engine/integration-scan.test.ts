@@ -293,4 +293,53 @@ describe('findExistingIntegration', () => {
       expect(Date.now() - t0).toBeLessThan(1500);
     });
   });
+
+  describe('hidden directories are skipped by default (copies of the app live there)', () => {
+    it.each([
+      ['.history/server_20261101.js'],
+      ['.claude/worktrees/feat/server.js'],
+      ['.worktrees/feat/server.js'],
+      ['.open-next/server.js'],
+      ['.random-tool/x.js'],
+    ])('%s is not read', async (file) => {
+      await put(file, "require('@bugsee/bugsee');\n");
+      await put('src/server.js', 'run();\n');
+      expect(await scan()).toBeUndefined();
+    });
+
+    it.each([['.storybook/preview.js'], ['.vitepress/theme/index.js'], ['.vuepress/config.js']])(
+      'but %s (a real home for app code) is',
+      async (file) => {
+        await put(file, "import '@bugsee/bugsee';\n");
+        expect(await scan()).toEqual({ where: file });
+      },
+    );
+
+    it('a directory that holds its own .git (a nested repository or worktree) is not read', async () => {
+      await put('packages/other/.git/HEAD', 'ref: x\n');
+      await put('packages/other/src/a.js', "import '@bugsee/bugsee';\n");
+      await put('src/server.js', 'run();\n');
+      expect(await scan()).toBeUndefined();
+    });
+
+    it('a worktree cannot push the count past the bound', async () => {
+      await many('.claude/worktrees/feat', 3100);
+      await put('src/a.js', 'run();\n');
+      expect(await scan()).toBeUndefined();
+    });
+  });
+
+  describe('hostile text stays fast (round 5)', () => {
+    it.each([
+      ['20k lines of import type', 'import type a\n'.repeat(20_000)],
+      ['one long line of import type', 'import type a '.repeat(30_000)],
+      ['export type from lines', 'export type { A } from\n'.repeat(20_000)],
+      ['one long export type line', 'export type { A } '.repeat(30_000)],
+    ])('%s', async (_n, text) => {
+      await put('src/a.ts', text);
+      const t0 = Date.now();
+      await scan();
+      expect(Date.now() - t0).toBeLessThan(1500);
+    });
+  });
 });

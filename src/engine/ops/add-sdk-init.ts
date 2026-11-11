@@ -254,7 +254,7 @@ export function addSdkInitStep(spec: Spec): Step<RecipeContext> {
     }
     const notes: string[] = [];
     const existing = await findExistingIntegration(ctx.packageDir, spec.importFrom, notes);
-    if (write) for (const n of notes) ctx.log.warn(n);
+    for (const n of notes) ctx.log.warn(n);
     if (existing !== undefined && !('unknown' in existing)) return undefined;
     if (existing !== undefined && 'unknown' in existing) {
       const note = `// Could not check whether Bugsee is already set up (${existing.unknown}), so nothing was changed.\n// If it is not, add:\n`;

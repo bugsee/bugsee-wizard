@@ -216,7 +216,15 @@ async function conventional(root: string, bases: readonly string[]): Promise<str
   return found.length === 1 ? found[0] : undefined;
 }
 
-/** The first local module `<script src>` of an HTML file that names an existing script (never build output). */
+/** The first module an inline script imports: line by line, with a bounded line length, so no pattern rescans a long text. */
+function firstInlineImport(code: string): string | undefined {
+  for (const line of code.split('\n', 500)) {
+    const m = /^\s*import\s+(?:[\w$*{}\s,]*?\bfrom\s*)?["']([^"']+)["']/.exec(line.slice(0, 400));
+    if (m?.[1] !== undefined) return m[1];
+  }
+  return undefined;
+}
+
 /**
  * The `<script>` elements of a page, found with plain index searches (one pass, no backtracking: a
  * page with thousands of unclosed tags cannot make a pattern rescan the rest of the text each time).
@@ -248,6 +256,7 @@ function* scriptTags(html: string): Generator<{ attrs: string; body: string }> {
   }
 }
 
+/** The first local module `<script>` of an HTML file that names an existing script (never build output). */
 async function htmlScript(root: string, htmlRel: string): Promise<string | undefined> {
   let html: string;
   try {
@@ -261,9 +270,7 @@ async function htmlScript(root: string, htmlRel: string): Promise<string | undef
     if (!/\btype\s*=\s*["']?module\b/i.test(attrs)) continue;
     const src = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs);
     // an inline module script is followed to the first local file it imports
-    const inline = /^\s*import\s+(?:[^'"]*?\bfrom\s*)?["']([^"']+)["']/m.exec(
-      stripJsComments(tag.body),
-    )?.[1];
+    const inline = firstInlineImport(stripJsComments(tag.body));
     const value =
       (src?.[1] ?? src?.[2] ?? (src === null ? (inline ?? '') : '')).split(/[?#]/)[0] ?? '';
     if (

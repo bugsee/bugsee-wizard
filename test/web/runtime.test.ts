@@ -147,6 +147,8 @@ describe('chooseRuntime (libraries)', () => {
       { main: 'x.js', scripts: { dev: 'rollup -c -w' } },
       // a real peer dependency is a library; a lone typescript peer (bun init) is not
       { main: 'x.js', peerDependencies: { react: '*' } },
+      // outside Bun a typescript peer is still a peer: a published package with only that is a library
+      { files: ['dist'], peerDependencies: { typescript: '^5' } },
       // published libraries: a dev runner on their own entry, or a server framework used by a middleware, is not an app
       {
         exports: { '.': { import: './dist/index.js' } },
@@ -180,8 +182,6 @@ describe('chooseRuntime (libraries)', () => {
       { private: true, exports: './dist/index.js', scripts: { dev: 'tsx watch src/index.ts' } },
       { private: true, exports: './x.js', scripts: { dev: 'tsx watch src/server.ts' } },
       { name: 'a', private: true, peerDependencies: { react: '^18' } },
-      // a lone typescript peer says nothing, published or not
-      { name: 'a', peerDependencies: { typescript: '^5' } },
       // main + types + an express app run from src/ is an app: `types` alone is not publishing
       {
         main: 'dist/index.js',
@@ -361,6 +361,25 @@ describe('chooseRuntime (unknown runtime, --runtime, Vite env)', () => {
     ).toEqual({
       runtime: 'bun',
       platform: 'javascript-bun',
+    });
+  });
+
+  it('only the bun init shape ignores a lone typescript peer (Bun), a publishable package under Node does not', async () => {
+    await mkdir(tmp.dir, { recursive: true });
+    await writeFile(
+      join(tmp.dir, 'package.json'),
+      JSON.stringify({ name: 'a', peerDependencies: { typescript: '^5' } }),
+    );
+    expect(
+      await chooseRuntime(det({ packageDir: tmp.dir, runtimes: ['bun'] }), opts, prompts()),
+    ).toEqual({
+      runtime: 'bun',
+      platform: 'javascript-bun',
+    });
+    expect(
+      await chooseRuntime(det({ packageDir: tmp.dir, runtimes: ['node'] }), opts, prompts()),
+    ).toEqual({
+      skip: expect.stringMatching(/library/i),
     });
   });
 });
