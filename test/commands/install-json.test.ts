@@ -36,7 +36,7 @@ const env = vi.hoisted(() => ({ value: {} as NodeJS.ProcessEnv }));
 // The real JavaScript flow, with the network and git replaced; output comes from the command.
 vi.mock('../../src/web/run.js', async (importActual) => {
   const actual = await importActual<typeof import('../../src/web/run.js')>();
-  const { VITE_RECIPE } = await import('../web/run-helpers.js');
+  const { VITE_RECIPE, resolveBuildToolOnly } = await import('../web/run-helpers.js');
   return {
     ...actual,
     runJavaScriptInstall: (
@@ -44,7 +44,7 @@ vi.mock('../../src/web/run.js', async (importActual) => {
       over: Parameters<typeof actual.runJavaScriptInstall>[1] = {},
     ) =>
       actual.runJavaScriptInstall(opts, {
-        resolveRecipe: async () => ({ recipe: VITE_RECIPE, revision: 'r1', source: 'snapshot' }),
+        resolveRecipe: resolveBuildToolOnly(VITE_RECIPE),
         resolveSdkVersion: async () => '0.1.0-beta.5',
         git: async () => git.state,
         env: env.value,

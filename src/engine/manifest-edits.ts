@@ -301,11 +301,20 @@ function revertLines(
       })();
     if (!done) {
       const lead = add.map(show).join(', ');
-      manual.push(
-        del.length === 0
-          ? `remove the line${add.length > 1 ? 's' : ''} ${lead}`
-          : `replace ${lead} with ${del.map(show).join(', ')}`,
-      );
+      // a line the wizard split (code that followed an import): the original line has since been edited
+      // by the user, so never offer to put it back over their change; only the wizard's own lines go
+      const own = add.filter((l) => l.includes('bugsee-wizard'));
+      if (del.length > 0 && own.length > 0) {
+        manual.push(
+          `remove the line${own.length > 1 ? 's' : ''} ${own.map(show).join(', ')} (the line they were added to was changed since)`,
+        );
+      } else {
+        manual.push(
+          del.length === 0
+            ? `remove the line${add.length > 1 ? 's' : ''} ${lead}`
+            : `replace ${lead} with ${del.map(show).join(', ')}`,
+        );
+      }
     }
     return text;
   }
@@ -347,7 +356,31 @@ export function addedPackages(edits: readonly ManifestEdit[] | undefined): strin
   return names;
 }
 
-const REMOVE_COMMAND: Record<string, string> = {
+/**
+ * The edits without the additions of dependencies matching `keep` (an SDK package whose import could
+ * not be taken out must not be removed from package.json under it).
+ */
+export function withoutPackages(
+  edits: readonly ManifestEdit[],
+  keep: (name: string) => boolean,
+): ManifestEdit[] {
+  const out: ManifestEdit[] = [];
+  for (const e of edits) {
+    if (e.kind !== 'json-add' || !DEP_SECTIONS.has(e.path[0] as string)) {
+      out.push(e);
+    } else if (e.path.length === 2) {
+      if (!keep(e.path[1] as string)) out.push(e);
+    } else if (e.path.length === 1 && isRecord(e.value)) {
+      const rest = Object.fromEntries(Object.entries(e.value).filter(([k]) => !keep(k)));
+      if (Object.keys(rest).length > 0) out.push({ ...e, value: rest });
+    } else {
+      out.push(e);
+    }
+  }
+  return out;
+}
+
+export const REMOVE_COMMANDS: Record<string, string> = {
   'package-lock.json': 'npm uninstall',
   'npm-shrinkwrap.json': 'npm uninstall',
   'pnpm-lock.yaml': 'pnpm remove',
@@ -358,7 +391,7 @@ const REMOVE_COMMAND: Record<string, string> = {
 
 /** What to tell the user about a lockfile that changed since the wizard wrote it. */
 export function lockfileNote(file: string, packages: readonly string[]): string {
-  const cmd = REMOVE_COMMAND[basename(file)];
+  const cmd = REMOVE_COMMANDS[basename(file)];
   if (packages.length === 0 || cmd === undefined) {
     return 'changed since the wizard wrote it; left untouched. Remove the Bugsee packages (@bugsee/*) with your package manager so it updates this lockfile';
   }

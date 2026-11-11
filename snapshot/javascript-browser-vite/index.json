@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-browser-vite",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "e9ea2340f401bbc3ca9d177afccbc22921d9ef6202630580e2516630725ca145",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

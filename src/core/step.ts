@@ -12,6 +12,11 @@ export interface Step<Ctx extends WizardContext = WizardContext> {
   // biome-ignore lint/suspicious/noConfusingVoidType: existing steps return nothing; void keeps them assignable.
   apply(ctx: Ctx): Promise<ApplyResult | void>;
   rollback(ctx: Ctx): Promise<void>;
+  /**
+   * Dry runs only: what `apply` would hand back, computed without writing anything, so a plan can say
+   * "manual step" where the real run would (instead of an optimistic `planned`).
+   */
+  preview?(ctx: Ctx): Promise<ApplyResult | undefined>;
 }
 
 /**
@@ -79,7 +84,16 @@ export async function runSteps<Ctx extends WizardContext>(
   };
 
   for (const step of steps) {
-    const status = await step.precheck(ctx);
+    let status: StepStatus;
+    try {
+      status = await step.precheck(ctx);
+    } catch (err) {
+      // a precheck that cannot read what it checks fails the step like any other: nothing stays half done
+      const error = err instanceof Error ? err : new Error(String(err));
+      results.push({ id: step.id, outcome: 'failed', error });
+      ctx.log.error(`${step.title} — failed: ${error.message}`);
+      return stop();
+    }
     if (opts.interrupted?.() === true) return stop();
 
     if (status.kind === 'satisfied') {
@@ -100,8 +114,15 @@ export async function runSteps<Ctx extends WizardContext>(
 
     try {
       if (ctx.dryRun) {
-        ctx.log.step(`${step.title} (dry-run)`);
-        results.push({ id: step.id, outcome: 'planned' });
+        const preview = await step.preview?.(ctx);
+        if (preview?.manual) {
+          incomplete = true;
+          results.push({ id: step.id, outcome: 'manual', snippet: preview.manual });
+          ctx.log.warn(`${step.title} — manual step required (dry-run)`);
+        } else {
+          ctx.log.step(`${step.title} (dry-run)`);
+          results.push({ id: step.id, outcome: 'planned' });
+        }
       } else {
         const res = await step.apply(ctx);
         if (res?.manual) {

@@ -9,7 +9,10 @@ import {
   EXPECTED_DETECT,
   EXPECTED_NOTES,
   EXPECTED_OPS,
+  EXPECTED_RUNTIME_NOTES,
+  EXPECTED_RUNTIME_OPS,
   expectTemplate,
+  RUNTIME_IDS,
   readIndex,
   readRecipeFile,
   SCRIPT_PATH,
@@ -34,7 +37,7 @@ describe('the bundled recipe snapshot', () => {
         .filter((e) => e.isDirectory())
         .map((e) => e.name)
         .sort(),
-    ).toEqual(IDS.map((id) => `javascript-${id}`).sort());
+    ).toEqual([...IDS, ...RUNTIME_IDS].map((id) => `javascript-${id}`).sort());
   });
 
   describe.each(IDS)('javascript-%s', (id) => {
@@ -100,6 +103,55 @@ describe('the bundled recipe snapshot', () => {
       });
       expect(r.source).toBe('snapshot');
       expect(r.revision).toBe('r1');
+      expect(r.recipe.id).toBe(platform);
+    });
+  });
+
+  describe.each(RUNTIME_IDS)('javascript-%s (runtime recipe)', (id) => {
+    const platform = `javascript-${id}`;
+
+    it('is a runtime recipe covering the beta SDK, indexed with a matching hash', async () => {
+      const { bytes, recipe } = await readRecipeFile(platform);
+      expect(recipe).toMatchObject({
+        schema: 1,
+        id: platform,
+        kind: 'runtime',
+        platform,
+        engine: { min: '0.0.0' },
+        sdk: { range: SDK_RANGE },
+      });
+      const index = await readIndex(platform);
+      expect(index.entries).toHaveLength(1);
+      expect(index.entries[0]?.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
+    });
+
+    it('has exactly the expected operations, installing at the beta tag', async () => {
+      const { recipe } = await readRecipeFile(platform);
+      expect(recipe.ops).toEqual(EXPECTED_RUNTIME_OPS[id]);
+    });
+
+    it('git-ignores the token file before writing it, and the token never reaches the code unless it is a literal', async () => {
+      const { recipe } = await readRecipeFile(platform);
+      const ignore = recipe.ops.findIndex((o) => o.op === 'ensure-gitignore');
+      const write = recipe.ops.findIndex((o) => o.op === 'write-env-var');
+      if (write !== -1) expect(ignore).toBeLessThan(write);
+      expect(JSON.stringify(recipe)).not.toContain('{{token}}');
+    });
+
+    it('explains itself in notes', async () => {
+      const { recipe } = await readRecipeFile(platform);
+      for (const re of EXPECTED_RUNTIME_NOTES[id]) expect(recipe.notes).toMatch(re);
+    });
+
+    it('resolves offline from the real snapshot for SDK 0.1.0-beta.5', async () => {
+      const r = await resolveRecipe({
+        platform,
+        sdkVersion: SDK_VERSION,
+        engine: WIZARD_VERSION,
+        baseUrl: 'http://127.0.0.1:9/',
+        fetchImpl: offline,
+      });
+      expect(r.source).toBe('snapshot');
       expect(r.recipe.id).toBe(platform);
     });
   });

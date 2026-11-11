@@ -3,6 +3,8 @@ export interface Fixture {
   base?: string;
   /** The fixture is the committed project e2e/fixtures/<name>/, not a bugsee-javascript sample. */
   synthetic?: boolean;
+  /** The runtime recipe (SDK install + init) that runs first; null for a framework (not covered yet). */
+  runtime: string | null;
   recipe: string;
   route: 'plugin' | 'cli';
   outDir: string | null;

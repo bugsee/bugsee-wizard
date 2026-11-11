@@ -96,6 +96,20 @@ export function addPackageScriptStep(spec: Spec): Step<RecipeContext> {
       }
       return undefined;
     },
+    async preview(ctx) {
+      // the same decision apply makes about the chain target, without writing
+      if (spec.chainInto === undefined) return undefined;
+      const path = pkgPath(ctx);
+      const scripts = scriptsOf((await readPackageJson(path)).data);
+      if (typeof scripts[spec.chainInto] === 'string') return undefined;
+      return {
+        manual: {
+          file: manifestPath(ctx, path),
+          title: `Run "${spec.name}" as part of your "${spec.chainInto}" script`,
+          code: `// package.json has no "${spec.chainInto}" script; chain this into the script that builds your app:\n${runScriptCommand(ctx.packageManager, spec.name)}`,
+        },
+      };
+    },
     async rollback(ctx) {
       if (before === undefined) return;
       await restoreBytes(pkgPath(ctx), before);

@@ -1,0 +1,14 @@
+{
+  // no vite-env.d.ts and no "types": the wizard has to make import.meta.env type-check itself
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src"]
+}

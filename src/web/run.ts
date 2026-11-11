@@ -1,6 +1,7 @@
 import type { WizardOptions } from '../core/context.js';
 import type { Logger } from '../core/logger.js';
 import type { ManualSnippet } from '../core/step.js';
+import { type EntryFile, findEntry } from '../engine/entry-detect.js';
 import { executeRecipe } from '../engine/execute.js';
 import { createManifestRecorder, rollbackFromManifest } from '../engine/manifest.js';
 import {
@@ -19,6 +20,7 @@ import {
   type ResolvedRecipe,
   resolveRecipe,
 } from '../engine/recipe-store.js';
+import { memberAccess, sdkInitSnippet } from '../engine/sdk-init-ast.js';
 import { WIZARD_VERSION } from '../engine/telemetry.js';
 import { selectTokenSource } from '../engine/token.js';
 import { detectJavaScript, type JsDetection } from './detect.js';
@@ -31,6 +33,7 @@ import {
   withoutWizardChanges,
 } from './preconditions.js';
 import { clackPrompts, type Prompts } from './prompts.js';
+import { chooseRuntime, type RuntimeChoice } from './runtime.js';
 import { resolveSdkVersion, type SdkVersionQuery } from './sdk-version.js';
 import { checkSupported, SDK_TAG } from './versions.js';
 
@@ -182,7 +185,11 @@ function preview(text: string): string[] {
 }
 
 /** What a step will actually write or run: the recipe's free-text fields, shown rather than hidden behind a title. */
-function opDetails(op: OpSpec, pm: DetectedPackageManager | null): string[] {
+function opDetails(
+  op: OpSpec,
+  pm: DetectedPackageManager | null,
+  entry: EntryFile | undefined,
+): string[] {
   switch (op.op) {
     case 'install-package': {
       const pkgs = op.packages.map((p) => (op.tag ? `${p}@${op.tag}` : p));
@@ -210,6 +217,21 @@ function opDetails(op: OpSpec, pm: DetectedPackageManager | null): string[] {
       return [
         `      adds ${inline(`${op.importName}(${op.callArgs})`)} to the ${op.target} plugins, imported from "${inline(op.importFrom)}"`,
       ];
+    case 'add-sdk-init': {
+      const expr = op.tokenExpr;
+      const where =
+        entry === undefined
+          ? 'no entry file was found: a snippet to paste will be shown instead'
+          : `edits ${inline(entry.file)} (found via ${inline(entry.via)})`;
+      return [
+        `      ${where}`,
+        `      adds import { launch } from "${inline(op.importFrom)}" (as bugseeLaunch if \`launch\` is taken) and ${
+          expr === undefined
+            ? 'launch(your token)'
+            : `if (${inline(memberAccess(expr))}) launch(${inline(memberAccess(expr))})`
+        }`,
+      ];
+    }
     case 'set-json-key':
       return [
         `      sets ${inline(op.path.join('.'))} in ${inline(op.file)} to ${inline(JSON.stringify(op.value))}`,
@@ -223,11 +245,36 @@ function opDetails(op: OpSpec, pm: DetectedPackageManager | null): string[] {
   }
 }
 
-function planText(recipe: Recipe, pm: DetectedPackageManager | null): string {
+function planText(
+  recipe: Recipe,
+  pm: DetectedPackageManager | null,
+  entry: EntryFile | undefined,
+  setUp: ReadonlyMap<OpSpec, string>,
+): string {
   return [
     'Planned changes:',
-    ...recipe.ops.flatMap((op) => [`  - ${opToStep(op).title}`, ...opDetails(op, pm)]),
+    ...recipe.ops.flatMap((op) => [
+      `  - ${opToStep(op).title}`,
+      ...(setUp.has(op)
+        ? [`      already set up: nothing to change (${inline(setUp.get(op) ?? '')})`]
+        : opDetails(op, pm, entry)),
+    ]),
   ].join('\n');
+}
+
+/** The adapter package(s) and guide of the frameworks, whose init is not automated yet. */
+const FRAMEWORK_GUIDE: Record<string, { name: string; slug: string; packages: string[] }> = {
+  nextjs: { name: 'Next.js', slug: 'nextjs', packages: ['@bugsee/nextjs'] },
+  nuxt: { name: 'Nuxt', slug: 'nuxt', packages: ['@bugsee/nuxt'] },
+  sveltekit: { name: 'SvelteKit', slug: 'sveltekit', packages: ['@bugsee/sveltekit'] },
+  astro: { name: 'Astro', slug: 'astro', packages: ['@bugsee/astro'] },
+  remix: { name: 'Remix / React Router', slug: 'remix', packages: ['@bugsee/remix'] },
+  angular: { name: 'Angular', slug: 'angular', packages: ['@bugsee/bugsee', '@bugsee/angular'] },
+  electron: { name: 'Electron', slug: 'electron', packages: ['@bugsee/electron'] },
+};
+
+function installCommand(pm: DetectedPackageManager | null, ...pkgs: string[]): string {
+  return `${pm?.name ?? 'npm'} ${(pm?.installArgs(pkgs, false) ?? ['install', ...pkgs]).join(' ')}`;
 }
 
 function snippetText(s: ManualSnippet): string {
@@ -286,30 +333,43 @@ export async function runJavaScriptInstall(
   });
   log.debug(`Resolving recipes for SDK ${sdkVersion}.`);
 
-  let resolved: ResolvedRecipe;
-  try {
-    resolved = await deps.resolveRecipe({
-      platform: `javascript-${det.buildTool ?? 'cli'}`,
-      sdkVersion,
-      engine: WIZARD_VERSION,
-    });
-  } catch (err) {
-    if (!(err instanceof RecipeStoreError)) throw err;
-    log.error(err.message);
-    return failed('recipe-unavailable', err.message);
-  }
-  if (resolved.warning !== undefined) log.warn(resolved.warning);
+  const resolve = async (platform: string): Promise<ResolvedRecipe | WizardRunResult> => {
+    try {
+      const found = await deps.resolveRecipe({ platform, sdkVersion, engine: WIZARD_VERSION });
+      if (found.warning !== undefined) log.warn(found.warning);
+      return found;
+    } catch (err) {
+      if (!(err instanceof RecipeStoreError)) throw err;
+      log.error(err.message);
+      return failed('recipe-unavailable', err.message);
+    }
+  };
 
-  const recipe: Recipe = { ...resolved.recipe, ops: [...resolved.recipe.ops, IGNORE_MANIFEST_DIR] };
-  log.info(planText(recipe, packageManager));
-  if (recipe.notes !== undefined) log.info(`Notes:\n${recipe.notes}`);
-  if (!opts.nonInteractive && !opts.yes && !opts.dryRun) {
-    if (!(await deps.prompts.confirm('Apply these changes?'))) throw new CancelledError();
+  // The runtime recipe (SDK install + init) comes first, the build-tool recipe (source maps) after it.
+  const choice: RuntimeChoice = await chooseRuntime(det, opts, deps.prompts);
+  let runtimeRecipe: ResolvedRecipe | undefined;
+  if ('skip' in choice) {
+    log.info(`Skipping SDK install and init: ${choice.skip}`);
+  } else {
+    if (choice.note !== undefined) log.info(choice.note);
+    const found = await resolve(choice.platform);
+    if ('ok' in found) return found;
+    runtimeRecipe = found;
   }
+  const buildTool = await resolve(`javascript-${det.buildTool ?? 'cli'}`);
+  if ('ok' in buildTool) return buildTool;
 
+  const parts = [runtimeRecipe, buildTool].flatMap((r) => (r === undefined ? [] : [r]));
+  const recipe: Recipe = {
+    ...buildTool.recipe,
+    ops: [...parts.flatMap((r) => r.recipe.ops), IGNORE_MANIFEST_DIR],
+  };
   const recorder = createManifestRecorder(
     packageDir,
-    { wizard: WIZARD_VERSION, recipes: [{ id: recipe.id, revision: resolved.revision }] },
+    {
+      wizard: WIZARD_VERSION,
+      recipes: parts.map((r) => ({ id: r.recipe.id, revision: r.revision })),
+    },
     { cwd: packageDir, ignoreInGit: false },
   );
   const ctx: RecipeContext = {
@@ -324,6 +384,26 @@ export async function runJavaScriptInstall(
     manifest: recorder,
     confirm: (m) => deps.prompts.confirm(m),
   };
+  const entry =
+    runtimeRecipe !== undefined && !('skip' in choice)
+      ? await findEntry(packageDir, choice.runtime)
+      : undefined;
+  // an init that is already done (a re-run) must not be promised as an edit in the plan
+  const setUp = new Map<OpSpec, string>();
+  for (const op of recipe.ops) {
+    if (op.op !== 'add-sdk-init') continue;
+    // the plan is advice: a check that cannot run just leaves the plan as it was
+    const status = await opToStep(op)
+      .precheck(ctx)
+      .catch(() => undefined);
+    if (status?.kind === 'satisfied') setUp.set(op, status.note ?? 'Bugsee is already set up');
+  }
+  log.info(planText(recipe, packageManager, entry, setUp));
+  for (const r of parts) if (r.recipe.notes !== undefined) log.info(`Notes:\n${r.recipe.notes}`);
+  if (!opts.nonInteractive && !opts.yes && !opts.dryRun) {
+    if (!(await deps.prompts.confirm('Apply these changes?'))) throw new CancelledError();
+  }
+
   const abort = new AbortController();
   let caught: InterruptSignal | undefined;
   const quarantineWarnings: string[] = [];
@@ -367,13 +447,53 @@ export async function runJavaScriptInstall(
   }
   for (const w of quarantineWarnings) log.warn(w);
 
-  const snippets = run.results.flatMap((r) => (r.snippet === undefined ? [] : [r.snippet]));
+  // a skipped runtime is an unfinished step (exit 3 non-interactively), unless the user chose it
+  const skipped = 'skip' in choice && choice.silent !== true ? choice.skip : undefined;
+  const snippet = (cjs: boolean): string =>
+    sdkInitSnippet(
+      { importFrom: '@bugsee/bugsee', token: '', fileName: 'main.ts', runtime: 'node' },
+      cjs,
+    );
+  const adapter = det.framework === undefined ? undefined : FRAMEWORK_GUIDE[det.framework];
+  const skipCode = (): string =>
+    adapter !== undefined
+      ? [
+          `// Not applied: ${skipped}`,
+          `// First install the SDK: ${installCommand(packageManager, ...adapter.packages.map((p) => `${p}@beta`))}`,
+          `// Then follow the setup guide for ${adapter.name}: https://docs.bugsee.com/${adapter.slug}`,
+        ].join('\n')
+      : [
+          `// Not applied: ${skipped}`,
+          `// First install the SDK: ${installCommand(packageManager, '@bugsee/bugsee@beta')}`,
+          '',
+          '// ES modules:',
+          snippet(false),
+          '',
+          '// CommonJS:',
+          snippet(true),
+        ].join('\n');
+  const skipSnippet: ManualSnippet[] =
+    skipped === undefined
+      ? []
+      : [{ file: 'your entry file', title: 'Initialise Bugsee in your app', code: skipCode() }];
+  // a failed run rolled everything back (unless a rollback itself failed): its snippets describe changes
+  // that are gone, and printing them would send the user to finish work that was undone
+  const snippets =
+    run.failed && run.rollbackFailed !== true
+      ? []
+      : [
+          ...skipSnippet,
+          ...run.results.flatMap((r) => (r.snippet === undefined ? [] : [r.snippet])),
+        ];
   for (const s of snippets) log.warn(snippetText(s));
 
   const result: WizardRunResult = {
     ok: !run.failed,
-    incomplete: run.incomplete,
-    steps: run.results.map((r) => ({ id: r.id, outcome: r.outcome })),
+    incomplete: run.incomplete || skipped !== undefined,
+    steps: [
+      ...(skipped === undefined ? [] : [{ id: 'add-sdk-init', outcome: 'manual' as const }]),
+      ...run.results.map((r) => ({ id: r.id, outcome: r.outcome })),
+    ],
     ...(snippets.length > 0
       ? { snippets: snippets.map((s) => ({ file: s.file, title: s.title, code: s.code })) }
       : {}),
@@ -394,6 +514,6 @@ export async function runJavaScriptInstall(
       : {}),
   };
   if (opts.dryRun) log.info('Dry run: nothing was written.');
-  else if (!run.failed) outro(log, packageManager, run.incomplete);
+  else if (!run.failed) outro(log, packageManager, run.incomplete || skipped !== undefined);
   return result;
 }

@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-bun",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "4c0750efa94da3625ececaebb1e6ea0ea75b260847fde7cd19092d35c8975756",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

@@ -20,6 +20,7 @@ describe('readEnvFlags', () => {
       telemetry: false,
       ignoreGitChanges: false,
       yes: false,
+      envProvided: false,
       package: undefined,
     });
   });
@@ -44,6 +45,7 @@ describe('readEnvFlags', () => {
       telemetry: true,
       ignoreGitChanges: true,
       yes: true,
+      envProvided: false,
       package: 'apps/web',
     });
   });
@@ -63,6 +65,7 @@ describe('buildOptions', () => {
       json: false,
       ignoreGitChanges: false,
       yes: false,
+      envProvided: false,
     });
   });
   it('env used when flag absent', () => {

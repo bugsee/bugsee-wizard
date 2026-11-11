@@ -16,6 +16,10 @@ export interface WizardOptions {
   readonly token?: string;
   /** `--sdk-version` / `BUGSEE_WIZARD_SDK_VERSION`: the SDK version recipes are resolved for. */
   readonly sdkVersion?: string;
+  /** `--runtime` / `BUGSEE_WIZARD_RUNTIME`: the runtime to set the SDK up for, or `none` to leave the code alone. */
+  /** `--env-provided` / `BUGSEE_WIZARD_ENV_PROVIDED`: the token reaches the process another way (Docker, pm2, the platform), so no .env loader is needed. */
+  readonly envProvided?: boolean;
+  readonly runtime?: 'browser' | 'node' | 'bun' | 'none';
 }
 
 export interface WizardContext extends WizardOptions {

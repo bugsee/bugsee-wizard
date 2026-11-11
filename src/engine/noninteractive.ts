@@ -42,6 +42,7 @@ export interface EnvFlags {
   readonly telemetry: boolean;
   readonly ignoreGitChanges: boolean;
   readonly yes: boolean;
+  readonly envProvided: boolean;
   readonly package: string | undefined;
 }
 
@@ -59,6 +60,7 @@ export function readEnvFlags(env: NodeJS.ProcessEnv): EnvFlags {
     telemetry: isTruthy(env.BUGSEE_WIZARD_TELEMETRY),
     ignoreGitChanges: isTruthy(env.BUGSEE_WIZARD_IGNORE_GIT_CHANGES),
     yes: isTruthy(env.BUGSEE_WIZARD_YES),
+    envProvided: isTruthy(env.BUGSEE_WIZARD_ENV_PROVIDED),
     package: pkg === undefined || pkg === '' ? undefined : pkg,
   };
 }
@@ -75,6 +77,8 @@ export interface RawCliOptions {
   readonly ignoreGitChanges?: boolean | undefined;
   readonly yes?: boolean | undefined;
   readonly sdkVersion?: string | undefined;
+  readonly runtime?: string | undefined;
+  readonly envProvided?: boolean | undefined;
 }
 
 export interface BuiltOptions {
@@ -89,7 +93,12 @@ export interface BuiltOptions {
   readonly token?: string;
   /** Pins the SDK version recipes are resolved for (skips the npm registry lookup). */
   readonly sdkVersion?: string;
+  /** The runtime to set the SDK up for (`none`: leave the code alone). */
+  readonly runtime?: 'browser' | 'node' | 'bun' | 'none';
+  readonly envProvided: boolean;
 }
+
+const RUNTIMES: readonly string[] = ['browser', 'node', 'bun', 'none'];
 
 /** Empty or whitespace-only strings count as absent. */
 function present(v: string | undefined): string | undefined {
@@ -111,6 +120,11 @@ export function buildOptions(opts: RawCliOptions, env: NodeJS.ProcessEnv): Built
   if (sdkVersion === null) {
     throw new Error(`Invalid SDK version "${rawSdk}": expected an exact semantic version`);
   }
+  const rawRuntime = present(opts.runtime) ?? present(env.BUGSEE_WIZARD_RUNTIME);
+  const runtime = rawRuntime === undefined ? undefined : rawRuntime.trim().toLowerCase();
+  if (runtime !== undefined && !RUNTIMES.includes(runtime)) {
+    throw new Error(`Invalid runtime "${rawRuntime}": expected browser, node, bun or none`);
+  }
   return {
     cwd: opts.cwd,
     debug: opts.debug,
@@ -119,9 +133,11 @@ export function buildOptions(opts: RawCliOptions, env: NodeJS.ProcessEnv): Built
     json: opts.json ?? e.json,
     ignoreGitChanges: opts.ignoreGitChanges ?? e.ignoreGitChanges,
     yes: opts.yes ?? e.yes,
+    envProvided: opts.envProvided ?? e.envProvided,
     ...(pkg === undefined ? {} : { package: pkg }),
     ...(token === undefined ? {} : { token }),
     ...(sdkVersion === undefined ? {} : { sdkVersion }),
+    ...(runtime === undefined ? {} : { runtime: runtime as NonNullable<BuiltOptions['runtime']> }),
   };
 }
 
