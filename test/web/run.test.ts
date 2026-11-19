@@ -81,7 +81,10 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptInstall', () => {
       expect(gitignore).toContain('.bugsee/');
       const manifest = await loadManifest(sb.project);
       expect(manifest?.wizard).toBe(WIZARD_VERSION);
-      expect(manifest?.recipes).toEqual([{ id: 'javascript-vite', revision: 'r1' }]);
+      expect(manifest?.recipes).toEqual([
+        { id: 'javascript-browser-vite', revision: 'r1' },
+        { id: 'javascript-vite', revision: 'r1' },
+      ]);
       expect(manifest?.entries.map((e) => [e.file, e.action])).toEqual([
         ['package.json', 'edited'],
         ['package-lock.json', 'edited'],
@@ -477,7 +480,7 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptInstall', () => {
     });
 
     it('notes when the project was found above the starting directory', async () => {
-      await mkdir(join(sb.project, 'src'));
+      await mkdir(join(sb.project, 'src'), { recursive: true });
       // a stray lockfile in the starting directory must not pick the package manager
       await writeFile(join(sb.project, 'src', 'yarn.lock'), '');
       const cap = captureOutput();

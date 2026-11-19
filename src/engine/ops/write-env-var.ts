@@ -63,6 +63,27 @@ export function writeEnvVarStep(spec: Spec): Step<RecipeContext> {
       });
       return undefined;
     },
+    async preview(ctx) {
+      // a different value already there is the one thing apply hands back as a manual step
+      const path = await resolveInside(ctx.packageDir, spec.file);
+      const current = await readBytes(path);
+      if (current === null) return undefined;
+      const scratch = await mkdtemp(join(tmpdir(), 'bugsee-env-'));
+      try {
+        const copy = join(scratch, basename(path));
+        await writeFile(copy, current, { mode: 0o600 });
+        if ((await setEnvVar(copy, spec.key, ctx.token)) !== 'conflict') return undefined;
+      } finally {
+        await rm(scratch, { recursive: true, force: true });
+      }
+      return {
+        manual: {
+          file: manifestPath(ctx, path),
+          title: `Set ${spec.key} in ${spec.file}`,
+          code: `${spec.key}=<your Bugsee app token>`,
+        },
+      };
+    },
     async rollback(ctx) {
       if (before === undefined) return;
       await restoreBytes(await resolveInside(ctx.packageDir, spec.file), before);

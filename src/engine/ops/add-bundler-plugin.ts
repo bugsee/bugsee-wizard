@@ -113,6 +113,41 @@ export function addBundlerPluginStep(spec: Spec): Step<RecipeContext> {
       }
       return undefined;
     },
+    async preview(ctx) {
+      // the decision apply makes, on the same text, without writing
+      const path = await find(ctx);
+      const wantHint = spec.ensureSourcemap === true;
+      const hint = wantHint ? sourcemapSnippet(spec) : undefined;
+      if (!path) {
+        const file = `${spec.target}.config.ts`;
+        return {
+          manual: {
+            file,
+            title: `Add the Bugsee plugin to your ${spec.target} config`,
+            code: [pluginSnippet(spec), hint].filter(Boolean).join('\n\n'),
+          },
+        };
+      }
+      const src = await readFile(path, 'utf8');
+      const res = addBundlerPlugin(src, spec.target, plugin);
+      const file = manifestPath(ctx, path);
+      if ('manual' in res) {
+        const hintHere = wantHint && !SOURCEMAP_SET_RE.test(src) ? hint : undefined;
+        return {
+          manual: {
+            file,
+            title: `Add the Bugsee plugin to ${basename(path)}`,
+            code: [res.manual, hintHere].filter(Boolean).join('\n\n'),
+          },
+        };
+      }
+      if (wantHint && !SOURCEMAP_SET_RE.test(res.code)) {
+        return {
+          manual: { file, title: `Enable source maps in ${basename(path)}`, code: hint as string },
+        };
+      }
+      return undefined;
+    },
     async rollback() {
       if (before === undefined || editedPath === undefined) return;
       await restoreBytes(editedPath, before);

@@ -63,7 +63,10 @@ export function installPackageStep(spec: Spec): Step<RecipeContext> {
         if (pm.name === 'pnpm') {
           declined =
             (await decidePnpmBuilds({
-              packages: [...spec.packages, ...(spec.buildScripts ?? [])],
+              packages: [
+                ...(spec.installScripts === false ? [] : spec.packages),
+                ...(spec.buildScripts ?? []),
+              ],
               value: true,
               cwd: ctx.packageDir,
               root: pm.root,

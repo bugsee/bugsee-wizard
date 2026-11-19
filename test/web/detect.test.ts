@@ -650,4 +650,215 @@ describe('detectJavaScript rules (synthetic projects)', () => {
     });
     await expect(detectJavaScript(dir)).resolves.toMatchObject({ buildTool: 'vite' });
   });
+
+  describe('runtime signals', () => {
+    it('no signal at all is flagged: node stays the reported runtime but the guess is marked', async () => {
+      const det = await detectJavaScript(await project({ 'package.json': { name: 'x' } }));
+      expect(det?.runtimes).toEqual(['node']);
+      expect(det?.runtimeUnknown).toBe(true);
+    });
+
+    it('a real signal is not flagged', async () => {
+      const det = await detectJavaScript(
+        await project({ 'package.json': { name: 'x', engines: { node: '>=22' } } }),
+      );
+      expect(det?.runtimeUnknown).toBeUndefined();
+    });
+
+    it.each([
+      ['public/index.html'],
+      ['index.html'],
+      ['src/index.html'],
+      ['public/app.html'],
+      ['src/pages/home.html'],
+    ])('a bundled project with %s is a browser app', async (html) => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': { name: 'x', devDependencies: { webpack: '5.0.0' } },
+          [html]: '<html></html>',
+        }),
+      );
+      expect(det?.runtimes).toEqual(['browser']);
+      expect(det?.runtimeUnknown).toBeUndefined();
+    });
+
+    it.each([['@bugsee/browser'], ['@bugsee/replay'], ['@bugsee/replay-canvas']])(
+      'a dependency on %s (a browser-only package) is a browser signal, even with a node dev script',
+      async (dep) => {
+        const det = await detectJavaScript(
+          await project({
+            'package.json': {
+              name: 'x',
+              scripts: { dev: 'node esbuild.config.mjs --watch' },
+              dependencies: { [dep]: 'beta' },
+              devDependencies: { esbuild: '0.20.0' },
+            },
+          }),
+        );
+        expect(det?.runtimes).toEqual(['browser']);
+      },
+    );
+  });
+
+  describe('bundled browser apps are never Node (type / engines.node are not server signals)', () => {
+    const wp = { webpack: '5', 'webpack-cli': '5' };
+
+    it('webpack + html-webpack-plugin + "type": no html file on disk, still a browser app', async () => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': {
+            name: 'a',
+            type: 'module',
+            devDependencies: { ...wp, 'html-webpack-plugin': '5' },
+          },
+          'src/index.ts': 'x();',
+        }),
+      );
+      expect(det?.runtimes).toEqual(['browser']);
+    });
+
+    it('webpack + engines.node + static/index.html: the html under static/ is found', async () => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': { name: 'a', engines: { node: '>=18' }, devDependencies: wp },
+          'static/index.html': '<html></html>',
+        }),
+      );
+      expect(det?.runtimes).toEqual(['browser']);
+    });
+
+    it.each([
+      ['HtmlWebpackPlugin', 'new HtmlWebpackPlugin()', 'webpack.config.js'],
+      ['HtmlRspackPlugin', 'new rspack.HtmlRspackPlugin()', 'rspack.config.js'],
+      ['target web', "target: 'web'", 'webpack.config.js'],
+    ])(
+      'a bundler config that says it builds for a page (%s) is a browser signal',
+      async (_n, text, file) => {
+        const dep = file.startsWith('rspack') ? { '@rspack/core': '1' } : { webpack: '5' };
+        const det = await detectJavaScript(
+          await project({
+            'package.json': { name: 'a', type: 'module', devDependencies: dep },
+            [file]: `export default { plugins: [${text}] };`,
+          }),
+        );
+        expect(det?.runtimes).toEqual(['browser']);
+      },
+    );
+
+    it.each([['webpack-dev-server'], ['parcel'], ['css-loader'], ['mini-css-extract-plugin']])(
+      'a dependency on %s (page tooling) is a browser signal',
+      async (dep) => {
+        const det = await detectJavaScript(
+          await project({
+            'package.json': {
+              name: 'a',
+              type: 'module',
+              devDependencies: { webpack: '5', [dep]: '1' },
+            },
+          }),
+        );
+        expect(det?.runtimes).toEqual(['browser']);
+      },
+    );
+
+    it('a bundler with nothing but "type" or engines.node says nothing: unknown, not node', async () => {
+      for (const extra of [{ type: 'module' }, { engines: { node: '>=20' } }]) {
+        const det = await detectJavaScript(
+          await project({ 'package.json': { name: 'a', ...extra, devDependencies: wp } }),
+        );
+        expect(det?.runtimeUnknown).toBe(true);
+      }
+    });
+
+    it('a real server dependency next to the bundler still means node', async () => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': { name: 'a', dependencies: { express: '4' }, devDependencies: wp },
+        }),
+      );
+      expect(det?.runtimes).toEqual(['node']);
+    });
+
+    it('without a bundler, type / engines.node still mark a Node project', async () => {
+      const det = await detectJavaScript(
+        await project({ 'package.json': { name: 'a', type: 'module', engines: { node: '>=20' } } }),
+      );
+      expect(det?.runtimes).toEqual(['node']);
+      expect(det?.runtimeUnknown).toBeUndefined();
+    });
+  });
+
+  describe('bundler config and script text (comments and explicit targets)', () => {
+    const cfg = (text: string, scripts: object = {}) =>
+      project({
+        'package.json': {
+          name: 'a',
+          devDependencies: { webpack: '5', esbuild: '0.20.0' },
+          scripts,
+        },
+        'webpack.config.js': text,
+      });
+
+    it('a comment that mentions a page plugin is not a page signal', async () => {
+      for (const text of [
+        "// TODO: add HtmlWebpackPlugin later\nexport default { entry: './x.js' };",
+        "/* new HtmlWebpackPlugin() */ export default { entry: './x.js' };",
+      ]) {
+        const det = await detectJavaScript(await cfg(text));
+        expect(det?.runtimes).not.toContain('browser');
+      }
+    });
+
+    it("an explicit target 'node' is a server signal, even with a page plugin mentioned in a comment", async () => {
+      const det = await detectJavaScript(
+        await cfg(
+          "// HtmlWebpackPlugin is for the other config\nexport default { target: 'node' };",
+        ),
+      );
+      expect(det?.runtimes).toEqual(['node']);
+      expect(det?.runtimeUnknown).toBeUndefined();
+    });
+
+    it('esbuild --platform=browser in a package script is a page, --platform=node a server', async () => {
+      const page = await detectJavaScript(
+        await cfg('export default {};', {
+          build: 'esbuild src/main.js --bundle --platform=browser',
+        }),
+      );
+      expect(page?.runtimes).toEqual(['browser']);
+      const server = await detectJavaScript(
+        await cfg('export default {};', { build: 'esbuild src/main.js --bundle --platform node' }),
+      );
+      expect(server?.runtimes).toEqual(['node']);
+    });
+  });
+
+  describe('an explicit node start command is Node evidence', () => {
+    it('esbuild + type + start: node dist/index.js (no server dependency) is node, not unknown', async () => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': {
+            name: 'a',
+            type: 'module',
+            devDependencies: { esbuild: '0.20.0' },
+            scripts: { start: 'node dist/index.js', build: 'esbuild src/index.js --bundle' },
+          },
+        }),
+      );
+      expect(det?.runtimes).toEqual(['node']);
+      expect(det?.runtimeUnknown).toBeUndefined();
+    });
+    it('a tool command (vite, webpack serve) is not', async () => {
+      const det = await detectJavaScript(
+        await project({
+          'package.json': {
+            name: 'a',
+            devDependencies: { webpack: '5' },
+            scripts: { start: 'webpack serve' },
+          },
+        }),
+      );
+      expect(det?.runtimeUnknown).toBe(true);
+    });
+  });
 });

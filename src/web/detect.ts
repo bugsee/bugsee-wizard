@@ -1,8 +1,10 @@
-import { access, readdir } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { findConfigFile } from '../engine/config-ast.js';
+import { scriptsRunAFile } from '../engine/entry-detect.js';
+import { stripJsComments } from '../engine/js-text.js';
 import { readPackageJson } from '../engine/package-json.js';
 import { detectPackageManager, type PackageManagerName } from '../engine/package-manager.js';
 import { findWorkspace, resolveDependencyVersion } from '../engine/workspace.js';
@@ -17,6 +19,8 @@ export interface JsDetection {
   versions: Record<string, string>;
   workspace?: { root: string; packages: { dir: string; name: string }[] };
   needsPackageChoice: boolean;
+  /** True when nothing identified the runtime and `node` is only a default: do not edit code on that guess. */
+  runtimeUnknown?: boolean;
   /** The directory detection was started in, set only when it walked up to `packageDir`. */
   startedIn?: string;
 }
@@ -74,7 +78,7 @@ const BUNDLERS: ReadonlyArray<{ tool: string; dep: string; config: string }> = [
 ];
 
 const UI_DEPS = ['react', 'react-dom', 'vue', 'svelte', 'solid-js', 'preact', '@angular/core'];
-const SERVER_DEPS = [
+export const SERVER_DEPS = [
   'express',
   'fastify',
   'koa',
@@ -85,6 +89,23 @@ const SERVER_DEPS = [
   'elysia',
 ];
 const EDGE_DEPS = ['@cloudflare/workers-types', '@vercel/edge', 'wrangler'];
+/** Packages that only run in a page. */
+const BROWSER_SDK_DEPS = ['@bugsee/browser', '@bugsee/replay', '@bugsee/replay-canvas'];
+/** Tooling that only exists to build or serve a page. */
+const PAGE_TOOLING_DEPS = [
+  'html-webpack-plugin',
+  '@rspack/plugin-html',
+  'webpack-dev-server',
+  '@rspack/dev-server',
+  'parcel',
+  'css-loader',
+  'style-loader',
+  'mini-css-extract-plugin',
+  'sass-loader',
+];
+/** What a bundler config says when it builds for a page (read as text, never run). */
+const PAGE_CONFIG_RE =
+  /HtmlWebpackPlugin|HtmlRspackPlugin|html-webpack-plugin|\btarget\s*:\s*['"]web['"]|\bplatform\s*[=:]\s*['"]browser['"]/;
 const BUN_DEPS = ['@types/bun'];
 const EDGE_CONFIGS = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'];
 const BUN_FILES = ['bun.lock', 'bun.lockb', 'bunfig.toml'];
@@ -172,11 +193,43 @@ function engineVersion(pkg: Record<string, unknown>, runtime: string): string | 
   return typeof v === 'string' ? v : undefined;
 }
 
+/** Any HTML page the project serves: the root, `src/`, `public/` (webpack's and CRA's home), or one level below `src/`/`public/`. */
+/** What the bundler config and the package scripts say about where the output runs. */
+const SERVER_CONFIG_RE =
+  /\btarget\s*:\s*['"](?:node|async-node|electron-main)\b|\bplatform\s*[=:]\s*['"]?node\b|--platform(?:=|\s+)node\b/;
+const PAGE_SCRIPT_RE = /--platform(?:=|\s+)browser\b/;
+
+async function bundlerTargets(
+  dir: string,
+  configs: Iterable<string>,
+  scripts: unknown,
+): Promise<{ page: boolean; server: boolean }> {
+  const texts: string[] = [];
+  for (const name of configs) {
+    texts.push(stripJsComments(await readFile(path.join(dir, name), 'utf8').catch(() => '')));
+  }
+  if (isRecord(scripts)) {
+    texts.push(...Object.values(scripts).filter((v): v is string => typeof v === 'string'));
+  }
+  const all = texts.join('\n');
+  return {
+    page: PAGE_CONFIG_RE.test(all) || PAGE_SCRIPT_RE.test(all),
+    server: SERVER_CONFIG_RE.test(all),
+  };
+}
+
 async function hasHtmlEntry(dir: string): Promise<boolean> {
-  return (
-    (await exists(path.join(dir, 'index.html'))) ||
-    (await exists(path.join(dir, 'src', 'index.html')))
-  );
+  const hasHtml = async (d: string): Promise<boolean> =>
+    (await readdir(d).catch(() => [] as string[])).some((n) => n.toLowerCase().endsWith('.html'));
+  for (const d of ['.', 'src', 'public', 'static', 'templates']) {
+    if (await hasHtml(path.join(dir, d))) return true;
+  }
+  for (const d of ['src', 'public', 'static', 'templates']) {
+    const sub = await readdir(path.join(dir, d), { withFileTypes: true }).catch(() => []);
+    for (const e of sub)
+      if (e.isDirectory() && (await hasHtml(path.join(dir, d, e.name)))) return true;
+  }
+  return false;
 }
 
 const MAX_WALK = 10;
@@ -331,9 +384,16 @@ async function inspectProject(
 
   // Runtimes.
   const runtimes = new Set<string>();
+  let runtimeUnknown = false;
   const hasHtml = await hasHtmlEntry(cwd);
   const hasUi = UI_DEPS.some((d) => deps.has(d));
-  const browser = hasUi || (bundler !== undefined && hasHtml);
+  const targets = await bundlerTargets(cwd, bundlerConfigs.values(), pkg.scripts);
+  const browser =
+    hasUi ||
+    BROWSER_SDK_DEPS.some((d) => deps.has(d)) ||
+    PAGE_TOOLING_DEPS.some((d) => deps.has(d)) ||
+    (bundler !== undefined && hasHtml) ||
+    (targets.page && !targets.server);
   const edgeFile = await firstExisting(cwd, EDGE_CONFIGS);
   const edge = edgeFile !== undefined || EDGE_DEPS.some((d) => deps.has(d));
   const bunFile = await firstExisting(cwd, BUN_FILES);
@@ -354,14 +414,25 @@ async function inspectProject(
       pkg.bin !== undefined ||
       // Server libraries (hono, ...) also run on the edge: with an edge signal they say nothing about node.
       (!edge && SERVER_DEPS.some((d) => deps.has(d))) ||
+      // a bundle that is built for node says so
+      (!browser &&
+        !edge &&
+        (targets.server || (isRecord(pkg.scripts) && scriptsRunAFile(pkg.scripts)))) ||
       // engines.node / "type" only tell us it runs on node when no UI library or edge target claims the project.
-      (!browser && !edge && (engineVersion(pkg, 'node') !== undefined || pkg.type !== undefined));
+      // A bundled project is a page unless it says otherwise: there, these say nothing at all.
+      (!browser &&
+        !edge &&
+        bundler === undefined &&
+        (engineVersion(pkg, 'node') !== undefined || pkg.type !== undefined));
     if (serverSignal) runtimes.add('node');
     if (bun) runtimes.add('bun');
     if (edge) runtimes.add('edge');
     // Bun projects run server-side JS, which also covers node-style code.
     if (bun && !browser && !edge) runtimes.add('node');
-    if (runtimes.size === 0) runtimes.add('node');
+    if (runtimes.size === 0) {
+      runtimes.add('node');
+      runtimeUnknown = true;
+    }
   }
 
   const versions: Record<string, string> = {};
@@ -383,6 +454,7 @@ async function inspectProject(
     versions,
     needsPackageChoice: false,
   };
+  if (runtimeUnknown) detection.runtimeUnknown = true;
   if (framework) detection.framework = framework;
   detection.buildTool = buildTool;
   if (workspace) detection.workspace = workspace;

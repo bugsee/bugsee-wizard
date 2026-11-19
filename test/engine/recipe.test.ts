@@ -255,6 +255,12 @@ describe('parseRecipe', () => {
       'recipe.ops[0].buildScripts: must be an array of strings',
     ]);
     expect(violations(withOp(op({ buildScripts: [''] })))).toHaveLength(1);
+    expect(parseRecipe(withOp(op({ installScripts: false }))).ops[0]).toMatchObject({
+      installScripts: false,
+    });
+    expect(violations(withOp(op({ installScripts: 'no' })))).toEqual([
+      'recipe.ops[0].installScripts: must be a boolean',
+    ]);
     expect(violations(withOp(op({ tag: '--x' })))).toEqual([
       'recipe.ops[0].tag: is not a valid version or dist-tag',
     ]);
@@ -376,5 +382,66 @@ describe('parseRecipe', () => {
       violations(withOp({ op: 'write-file', path: 'a', template: 'x {{token}}' })),
     ).toHaveLength(1);
     expect(() => parseRecipe(withOp({ op: 'write-file', path: 'a', template: '' }))).not.toThrow();
+  });
+  describe('add-sdk-init', () => {
+    const op = (x: Record<string, unknown> = {}): Record<string, unknown> => ({
+      op: 'add-sdk-init',
+      runtime: 'node',
+      importFrom: '@bugsee/bugsee',
+      tokenExpr: 'process.env.BUGSEE_APP_TOKEN',
+      ...x,
+    });
+
+    it('is accepted with and without a token expression, returned as written', () => {
+      expect(parseRecipe(withOp(op())).ops).toEqual([op()]);
+      const { tokenExpr: _omit, ...literal } = op({ runtime: 'browser' });
+      expect(parseRecipe(withOp(literal)).ops).toEqual([literal]);
+      expect('tokenExpr' in (parseRecipe(withOp(literal)).ops[0] as object)).toBe(false);
+    });
+
+    it.each(['browser', 'node', 'bun'])('accepts the %s runtime', (runtime) => {
+      expect(() => parseRecipe(withOp(op({ runtime })))).not.toThrow();
+    });
+
+    it('rejects an unknown runtime, with the allowed list', () => {
+      expect(violations(withOp(op({ runtime: 'deno' })))).toEqual([
+        'recipe.ops[0].runtime: must be one of browser, node, bun',
+      ]);
+    });
+
+    it('importFrom must be a @bugsee package (a recipe cannot make the wizard import anything else)', () => {
+      for (const importFrom of ['lodash', '@evil/pkg', '@bugsee/', "@bugsee/x'; boom()", '../x']) {
+        expect(violations(withOp(op({ importFrom })))).toEqual([
+          'recipe.ops[0].importFrom: must be a package in the @bugsee scope',
+        ]);
+      }
+      expect(violations(withOp(op({ importFrom: undefined })))).toEqual([
+        'recipe.ops[0].importFrom: is required',
+      ]);
+    });
+
+    it('tokenExpr must be a plain member expression, never code', () => {
+      for (const tokenExpr of [
+        'x',
+        'process.env["A"]',
+        'a.b()',
+        'a.b; evil()',
+        'a..b',
+        '1.a',
+        '',
+      ]) {
+        expect(violations(withOp(op({ tokenExpr }))).length).toBeGreaterThan(0);
+      }
+      expect(violations(withOp(op({ tokenExpr: 'a b' })))).toEqual([
+        'recipe.ops[0].tokenExpr: must be a member expression such as process.env.NAME',
+      ]);
+      expect(() => parseRecipe(withOp(op({ tokenExpr: 'import.meta.env.VITE_X' })))).not.toThrow();
+    });
+
+    it('rejects unknown keys', () => {
+      expect(violations(withOp(op({ token: 'abc' })))).toEqual([
+        'recipe.ops[0].token: unknown key',
+      ]);
+    });
   });
 });

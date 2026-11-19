@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "id": "javascript-bun",
+  "kind": "runtime",
+  "platform": "javascript-bun",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Bun app: @bugsee/bun is the Bun build of the SDK (the umbrella package also resolves to it). The SDK is initialised at the top of the entry file; the token is read from process.env.BUGSEE_APP_TOKEN, which Bun loads from .env (git-ignored) automatically. Set BUGSEE_APP_TOKEN in the environment in production. The init is guarded (`if (process.env.BUGSEE_APP_TOKEN) launch(...)`): without the variable the app starts normally, without Bugsee, because launch() throws on a missing token. @bugsee/bun's launch has no performance/OpenTelemetry wiring; the @bugsee/bugsee umbrella's Bun entry does. launch() runs after the entry's imports have been evaluated (imports are hoisted), before the rest of the entry. Only this package is scanned for an existing integration: a launch in another workspace package is not seen.",
+  "detect": [
+    {
+      "file": "bunfig.toml"
+    }
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/bun"],
+      "tag": "beta",
+      "installScripts": false
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env"
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env",
+      "key": "BUGSEE_APP_TOKEN",
+      "from": "token"
+    },
+    {
+      "op": "add-sdk-init",
+      "runtime": "bun",
+      "importFrom": "@bugsee/bun",
+      "tokenExpr": "process.env.BUGSEE_APP_TOKEN"
+    }
+  ]
+}

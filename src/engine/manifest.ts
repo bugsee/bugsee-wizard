@@ -10,8 +10,10 @@ import {
   isLockfile,
   lockfileNote,
   type ManifestEdit,
+  REMOVE_COMMANDS,
   revertEdits,
   validEdits,
+  withoutPackages,
 } from './manifest-edits.js';
 import { resolveInside } from './ops/shared.js';
 import { findWorkspace } from './workspace.js';
@@ -460,6 +462,42 @@ async function revertChanged(
   };
 }
 
+/**
+ * package.json while the SDK has to stay (its import could not be taken out): everything else the
+ * wizard added is removed, the SDK packages are kept, and the entry stays in the manifest for a retry.
+ */
+async function revertKeepingSdk(
+  dir: string,
+  root: string,
+  e: ManifestFileEntry,
+  dryRun: boolean,
+  removeCommand: string,
+): Promise<RollbackResult> {
+  // every dependency stays: the lockfile is not touched, and a package.json that lost a dependency the
+  // lockfile still lists fails `--frozen-lockfile` installs (pnpm, yarn, bun)
+  const kept = addedPackages(e.edits);
+  const list = kept.length > 0 ? kept.join(' ') : '@bugsee/*';
+  const note = `kept ${kept.length > 0 ? kept.join(', ') : 'the @bugsee packages'}: your code still refers to ${kept.length === 1 ? 'it' : 'them'}. Remove that code, then run \`${removeCommand} ${list}\` (it also updates the lockfile) and uninstall again`;
+  let abs: string;
+  try {
+    abs = await resolveInside(root, resolve(dir, e.file));
+  } catch {
+    return manual(e.file, 'resolves outside the project; left untouched');
+  }
+  const current = await readIfExists(abs);
+  if (current === null) return { file: e.file, outcome: 'missing' };
+  if (e.edits === undefined) return manual(e.file, `left untouched. ${note}`);
+  const res = revertEdits(
+    current,
+    withoutPackages(e.edits, () => true),
+  );
+  if (res.text !== current && !dryRun) await writeFileAtomic(abs, res.text);
+  return manual(
+    e.file,
+    res.manual.length > 0 ? `${note}; by hand: ${res.manual.join('; ')}` : note,
+  );
+}
+
 export async function rollbackFromManifest(ctx: {
   dir: string;
   log: Logger;
@@ -476,13 +514,43 @@ export async function rollbackFromManifest(ctx: {
     isLockfile(e.file) ? [] : addedPackages(e.edits),
   );
   const byIndex = new Map<number, RollbackResult>();
+  // set once an edit of the user's code (the init, a bundler plugin) could not be taken out: the packages it
+  // refers to must then stay installed
+  // Decide BEFORE anything is reverted whether code of the user's still refers to the packages: entries
+  // recorded after the edit (a later install's pnpm-workspace.yaml) are reverted before the loop below
+  // would reach it. A dry run of each such entry says whether it can be taken out cleanly.
+  let keepSdk = false;
+  for (const e of manifest.entries) {
+    if (e.marker?.startsWith('bugsee-wizard') !== true || e.action !== 'edited') continue;
+    const probe = await rollbackEntry(ctx.dir, root, e, true, packages).catch(() => undefined);
+    if (probe === undefined || probe.outcome === 'manual') keepSdk = true;
+  }
+  const lockfile = manifest.entries.find((m) => isLockfile(m.file));
+  const removeCommand = (lockfile && REMOVE_COMMANDS[basename(lockfile.file)]) ?? 'npm uninstall';
   for (const i of order) {
     const e = manifest.entries[i];
     if (e === undefined) continue;
     try {
-      byIndex.set(i, await rollbackEntry(ctx.dir, root, e, ctx.dryRun, packages));
+      let r: RollbackResult;
+      if (keepSdk && basename(e.file) === 'package.json') {
+        r = await revertKeepingSdk(ctx.dir, root, e, ctx.dryRun, removeCommand);
+      } else if (keepSdk && (isLockfile(e.file) || basename(e.file) === 'pnpm-workspace.yaml')) {
+        // the lockfile and pnpm's install-script approvals belong to the dependencies that were kept
+        r = manual(e.file, 'left untouched: it belongs to the dependencies that were kept');
+      } else {
+        r = await rollbackEntry(ctx.dir, root, e, ctx.dryRun, packages);
+      }
+      if (
+        e.marker?.startsWith('bugsee-wizard') === true &&
+        e.action === 'edited' &&
+        r.outcome === 'manual'
+      )
+        keepSdk = true;
+      byIndex.set(i, r);
     } catch (err) {
       errored.add(i);
+      // an edit of the user's code that could not be undone: its packages must stay
+      if (e.marker?.startsWith('bugsee-wizard') === true && e.action === 'edited') keepSdk = true;
       const note = err instanceof Error ? err.message : String(err);
       ctx.log.error(`Could not roll back ${e.file}: ${note}`);
       byIndex.set(i, { file: e.file, outcome: 'skipped', note });

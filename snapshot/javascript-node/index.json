@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-node",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "a37dd0ffdcd52ac45e5a0e867f8ecd617dec2cac7fe014cde0a80425e953d7ea",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

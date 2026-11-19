@@ -2,6 +2,7 @@ import type { Step } from '../../core/step.js';
 import type { OpSpec, RecipeContext } from '../recipe.js';
 import { addBundlerPluginStep } from './add-bundler-plugin.js';
 import { addPackageScriptStep } from './add-package-script.js';
+import { addSdkInitStep } from './add-sdk-init.js';
 import { ensureGitignoreStep } from './ensure-gitignore.js';
 import { installPackageStep } from './install-package.js';
 import { setJsonKeyStep } from './set-json-key.js';
@@ -15,6 +16,8 @@ export function opToStep(spec: OpSpec): Step<RecipeContext> {
       return installPackageStep(spec);
     case 'add-bundler-plugin':
       return addBundlerPluginStep(spec);
+    case 'add-sdk-init':
+      return addSdkInitStep(spec);
     case 'set-json-key':
       return setJsonKeyStep(spec);
     case 'add-package-script':

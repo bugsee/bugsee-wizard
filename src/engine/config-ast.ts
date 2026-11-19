@@ -72,23 +72,23 @@ export function hasBugseeMarker(source: string): boolean {
 
 // ---------------------------------------------------------------- AST access
 
-interface Node {
+export interface Node {
   type: string;
   start: number;
   end: number;
   [key: string]: unknown;
 }
 
-function isNode(v: unknown): v is Node {
+export function isNode(v: unknown): v is Node {
   return typeof v === 'object' && v !== null && typeof (v as { type?: unknown }).type === 'string';
 }
 
-function child(node: Node, key: string): Node | undefined {
+export function child(node: Node, key: string): Node | undefined {
   const v = node[key];
   return isNode(v) ? v : undefined;
 }
 
-function children(node: Node, key: string): Array<Node | null> {
+export function children(node: Node, key: string): Array<Node | null> {
   const v = node[key];
   return Array.isArray(v) ? v.map((x) => (isNode(x) ? x : null)) : [];
 }
@@ -110,7 +110,7 @@ function unwrap(node: Node): Node {
   return cur;
 }
 
-function name(node: Node | undefined): string | undefined {
+export function name(node: Node | undefined): string | undefined {
   if (!node) return undefined;
   if (node.type === 'Identifier') return typeof node.name === 'string' ? node.name : undefined;
   if (node.type === 'StringLiteral') return typeof node.value === 'string' ? node.value : undefined;
@@ -209,7 +209,7 @@ function commaAfter(source: string, pos: number): number {
  * End-of-line index when only whitespace and a comment follow `pos` on its line, else `pos`.
  * New lines go after such a comment so it is never separated from the code it annotates.
  */
-function lineEndIfCommentTail(source: string, pos: number): number {
+export function lineEndIfCommentTail(source: string, pos: number): number {
   const nl = source.indexOf('\n', pos);
   const end = nl === -1 ? source.length : nl;
   return /^[ \t]*(?:\/\/.*|\/\*.*?\*\/[ \t]*)?$/.test(source.slice(pos, end)) ? end : pos;
@@ -311,7 +311,7 @@ function importEdit(
   return { at: 0, remove: 0, text: `${line}${eol}` };
 }
 
-function collectBoundNames(node: Node | undefined, out: string[]): void {
+export function collectBoundNames(node: Node | undefined, out: string[]): void {
   if (!node) return;
   switch (node.type) {
     case 'Identifier':
@@ -398,7 +398,7 @@ function bindingOf(body: Node[], spec: PluginSpec): 'none' | 'exact' | 'conflict
   return exact === 1 ? 'exact' : 'none';
 }
 
-function isRequireDeclaration(stmt: Node): boolean {
+export function isRequireDeclaration(stmt: Node): boolean {
   if (stmt.type !== 'VariableDeclaration') return false;
   return children(stmt, 'declarations').some((d) => {
     const init = d ? child(d, 'init') : undefined;
@@ -413,7 +413,7 @@ function snippet(target: PluginTarget, spec: PluginSpec, cjs: boolean): string {
   return `${line}\n\n// Add to the "plugins" array of your ${target} config:\n${spec.importName}(${spec.callArgs})`;
 }
 
-function parses(code: string): boolean {
+export function parses(code: string): boolean {
   try {
     parseModule(code);
     return true;

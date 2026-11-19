@@ -1,0 +1,3 @@
+# esbuild (a dependency of vite) has an install script; pnpm 11 fails unapproved ones
+allowBuilds:
+  esbuild: true

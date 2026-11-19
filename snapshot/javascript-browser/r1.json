@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "javascript-browser",
+  "kind": "runtime",
+  "platform": "javascript-browser",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Browser app without a build-time env mechanism the wizard can rely on (webpack, Rollup, esbuild, Rspack, tsc, no bundler): the app token is written into the init call in the entry file. The Bugsee app token is not a secret on the developer's machine, and it ships in the client bundle either way. launch() runs after the entry's imports have been evaluated (imports are hoisted), before the rest of the entry. Only this package is scanned for an existing integration: a launch in another workspace package is not seen.",
+  "detect": [],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/bugsee"],
+      "tag": "beta",
+      "installScripts": false
+    },
+    {
+      "op": "add-sdk-init",
+      "runtime": "browser",
+      "importFrom": "@bugsee/bugsee"
+    }
+  ]
+}

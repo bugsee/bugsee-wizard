@@ -5,6 +5,7 @@ import {
   baseOpts,
   captureOutput,
   makeDeps,
+  resolveBuildToolOnly,
   type Sandbox,
   sandbox,
   VITE_RECIPE,
@@ -28,7 +29,7 @@ describe.skipIf(process.platform === 'win32')('the plan shows what will be writt
     await runJavaScriptInstall(
       baseOpts(sb.project, { dryRun: true, ...over }),
       makeDeps(cap, {
-        resolveRecipe: vi.fn(async () => ({ recipe, revision: 'r', source: 'snapshot' as const })),
+        resolveRecipe: vi.fn(resolveBuildToolOnly(recipe, 'r')),
       }),
     );
     return cap.lines.find((l) => l.startsWith('Planned changes:')) ?? '';

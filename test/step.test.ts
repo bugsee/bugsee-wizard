@@ -109,6 +109,45 @@ describe('runSteps', () => {
   });
 });
 
+describe('runSteps (precheck failures and dry-run previews)', () => {
+  it('a precheck that throws fails the step and rolls back what was applied (never aborts with edits left)', async () => {
+    const trace: Trace = { calls: [] };
+    const a = makeStep('a', trace);
+    const b = makeStep('b', trace, {
+      precheck: async () => {
+        throw new Error('EISDIR');
+      },
+    });
+    const result = await runSteps([a, b], makeContext());
+    expect(result.failed).toBe(true);
+    expect(trace.calls).toEqual(['apply:a', 'rollback:a']);
+    expect(result.results.find((r) => r.id === 'b')).toMatchObject({ outcome: 'failed' });
+    expect(result.results.find((r) => r.id === 'b')?.error?.message).toBe('EISDIR');
+  });
+
+  it('a dry run asks a step that can preview for the outcome the real run would have', async () => {
+    const trace: Trace = { calls: [] };
+    const snippet = { file: 'f', title: 't', code: 'c' };
+    const manual = makeStep('m', trace, { preview: async () => ({ manual: snippet }) });
+    const plain = makeStep('p', trace, { preview: async () => undefined });
+    const result = await runSteps([manual, plain], makeContext({ dryRun: true }));
+    expect(result.results).toEqual([
+      { id: 'm', outcome: 'manual', snippet },
+      { id: 'p', outcome: 'planned' },
+    ]);
+    expect(result.incomplete).toBe(true);
+    expect(result.failed).toBe(false);
+    expect(trace.calls).toEqual([]);
+  });
+
+  it('a real run never calls preview', async () => {
+    const trace: Trace = { calls: [] };
+    const preview = vi.fn(async () => undefined);
+    await runSteps([makeStep('a', trace, { preview })], makeContext());
+    expect(preview).not.toHaveBeenCalled();
+  });
+});
+
 describe('runSteps manual outcome', () => {
   const snippet = { file: 'App.tsx', title: 'Add init', code: 'Bugsee.launch()' };
 

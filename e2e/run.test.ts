@@ -61,7 +61,8 @@ const MANUAL: Record<string, string[]> = {
   'webpack-sourcemaps': ['add-bundler-plugin:webpack'],
   'vue-spa': ['add-bundler-plugin:vite'],
   'svelte-spa': ['add-bundler-plugin:vite'],
-  'angular-spa': [],
+  // a framework: the runtime init is not automated yet, which is reported as an unfinished step
+  'angular-spa': ['add-sdk-init'],
   'node-service': ['add-package-script:bugsee:sourcemaps'],
   'vite-object-config': [],
   'webpack-object-config': [],
@@ -69,6 +70,34 @@ const MANUAL: Record<string, string[]> = {
   'esbuild-build': [],
   'rspack-build': [],
   'rollup-build': [],
+  'vite-fresh': [],
+  'webpack-fresh': [],
+  'node-fresh': [],
+};
+
+/**
+ * Runtime-recipe steps that find their work already done on the first run: the samples (and the
+ * synthetic projects) are projects that already use the SDK, so installing it or initialising it is
+ * a no-op there. Everything else of the runtime recipe is applied.
+ */
+const INSTALLED = 'install-package:@bugsee/bugsee';
+const INIT_BROWSER = 'add-sdk-init:browser';
+const INIT_NODE = 'add-sdk-init:node';
+
+const RUNTIME_SKIPPED: Record<string, string[]> = {
+  // fresh projects: nothing is skipped, the SDK is really installed and initialised
+  'react-spa': [INIT_BROWSER],
+  'vue-spa': [INIT_BROWSER],
+  'svelte-spa': [INIT_BROWSER],
+  'vite-object-config': [INIT_BROWSER],
+  // the app launches from its own module (src/bugsee.ts): a second launch would run first and take over
+  'webpack-sourcemaps': [INSTALLED, INIT_BROWSER],
+  'webpack-object-config': [INSTALLED, INIT_BROWSER],
+  'node-service': [INSTALLED, INIT_NODE, 'ensure-gitignore:.env'],
+  'tsc-build': [INIT_NODE],
+  'esbuild-build': [INIT_BROWSER],
+  'rollup-build': [INIT_BROWSER],
+  'rspack-build': [INIT_BROWSER],
 };
 
 const selected = (
@@ -153,7 +182,7 @@ async function git(dir: string, args: readonly string[]): Promise<string> {
 async function treeState(dir: string): Promise<string> {
   const status = await git(dir, ['status', '--porcelain=v1', '-uall']);
   const diff = await git(dir, ['diff', 'HEAD']);
-  const extra = ['.env.bugsee-build-plugin', '.bugsee/wizard-manifest.json'];
+  const extra = ['.env', '.env.local', '.env.bugsee-build-plugin', '.bugsee/wizard-manifest.json'];
   const untracked = (await git(dir, ['ls-files', '--others', '--exclude-standard']))
     .split('\n')
     .filter(Boolean);
@@ -261,6 +290,61 @@ async function startCollector(): Promise<Collector> {
   };
 }
 
+/**
+ * What the freshly initialised projects must do. Both start from a project with no Bugsee in it, so
+ * these are the real insertions: what the wizard wrote is built (and type-checked) by the project's
+ * own build and then used.
+ */
+const RUN_CHECKS: Record<string, (dir: string) => Promise<void>> = {
+  async 'vite-fresh'(dir) {
+    const main = readFileSync(path.join(dir, 'src/main.ts'), 'utf8');
+    expect(main).toContain('/// <reference types="vite/client" />');
+    expect(main).toContain("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
+    expect(main).toContain(
+      `if (import.meta.env['VITE_BUGSEE_APP_TOKEN']) launch(import.meta.env['VITE_BUGSEE_APP_TOKEN']).catch(() => {});`,
+    );
+    // the token is in .env.local, not in the code, and Vite inlined it into the production bundle
+    expect(main).not.toContain(TOKEN);
+    const assets = path.join(dir, 'dist', 'assets');
+    const bundles = readdirSync(assets).filter((f) => f.endsWith('.js'));
+    expect(
+      bundles.some((f) => readFileSync(path.join(assets, f), 'utf8').includes(TOKEN)),
+      'the token in the bundle',
+    ).toBe(true);
+  },
+  async 'webpack-fresh'(dir) {
+    // a browser app with no html file on disk and "type"/engines.node set: the browser recipe, not Node's
+    const main = readFileSync(path.join(dir, 'src/index.js'), 'utf8');
+    expect(main).toContain("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
+    expect(main).toContain(`launch('${TOKEN}').catch(() => {}); // bugsee-wizard`);
+    expect(main).not.toContain('process');
+    const bundles = readdirSync(path.join(dir, 'dist')).filter((f) => f.endsWith('.js'));
+    const code = bundles.map((f) => readFileSync(path.join(dir, 'dist', f), 'utf8')).join('\n');
+    expect(code).toContain(TOKEN);
+    // webpack 5 does not polyfill `process`: the bundle must not need it to start
+    expect(code).not.toMatch(/process\.env\.BUGSEE/);
+  },
+  async 'node-fresh'(dir) {
+    const main = readFileSync(path.join(dir, 'src/index.ts'), 'utf8');
+    expect(main).toContain("import { launch } from '@bugsee/bugsee'; // bugsee-wizard");
+    expect(main).toContain(
+      `if (process.env['BUGSEE_APP_TOKEN']) launch(process.env['BUGSEE_APP_TOKEN']); // bugsee-wizard`,
+    );
+    expect(main).not.toContain(TOKEN);
+    // built by `pnpm run build` (tsc type-checked the guarded call), now run: with no token it must
+    // not crash (launch(undefined) throws), and with one it must start and exit normally
+    for (const env of [{}, { BUGSEE_APP_TOKEN: TOKEN, BUGSEE_ENDPOINT: collector.url }]) {
+      const r = await exec(process.execPath, ['lib/index.js'], {
+        cwd: dir,
+        env,
+        timeoutMs: 60_000,
+      });
+      expect(r.code, show(r)).toBe(0);
+      expect(r.stdout).toContain('listening: Hello, e2e!');
+    }
+  },
+};
+
 // ---------------------------------------------------------------- suite
 
 let collector: Collector;
@@ -291,7 +375,12 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
   const inlineSources = jsonKeyOps.some(
     (op) => op.path.join('.') === 'compilerOptions.inlineSources' && op.value === true,
   );
+  const runtimeRecipe = fixture.runtime === null ? undefined : readRecipe(fixture.runtime);
+  const runtimeIds = (runtimeRecipe?.ops ?? []).map((op) => opToStep(op).id);
+  const runtimeSkipped = RUNTIME_SKIPPED[name] ?? [];
   const expectedIds = [
+    ...(fixture.runtime === null ? ['add-sdk-init'] : []),
+    ...runtimeIds,
     ...recipe.ops.map((op) => opToStep(op).id),
     opToStep({ op: 'ensure-gitignore', line: '.bugsee/' }).id,
   ];
@@ -322,19 +411,23 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       const res = parseResult(r);
       expect(res.ok, show(r)).toBe(true);
       expect(res.incomplete).toBe(manual.length > 0);
-      expect(res.steps.map((s) => s.id)).toEqual(expectedIds);
-      for (const s of res.steps) {
-        expect(`${s.id}: ${s.outcome}`).toBe(
-          `${s.id}: ${manual.includes(s.id) ? 'manual' : 'applied'}`,
-        );
-      }
+      // one comparison, so a failure lists every step that differs
+      expect(res.steps.map((s) => `${s.id}: ${s.outcome}`)).toEqual(
+        expectedIds.map(
+          (id) =>
+            `${id}: ${manual.includes(id) ? 'manual' : runtimeSkipped.includes(id) ? 'skipped' : 'applied'}`,
+        ),
+      );
       expect((res.snippets ?? []).length).toBe(manual.length);
 
       // the files the wizard changed are exactly the ones its manifest lists
       const manifest = JSON.parse(
         readFileSync(path.join(dir, '.bugsee/wizard-manifest.json'), 'utf8'),
       );
-      expect(manifest.recipes).toEqual([{ id: fixture.recipe, revision: 'r1' }]);
+      expect(manifest.recipes).toEqual([
+        ...(fixture.runtime === null ? [] : [{ id: fixture.runtime, revision: 'r1' }]),
+        { id: fixture.recipe, revision: 'r1' },
+      ]);
       const entries = manifest.entries as { file: string; action: string }[];
       // a plugin left to the user is recorded as `manual` (uninstall reminds them of it)
       expect(entries.filter((e) => e.action === 'manual').length).toBe(pluginManual ? 1 : 0);
@@ -414,6 +507,13 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
         [],
       );
     });
+
+    it.runIf(name in RUN_CHECKS)(
+      'the initialised app works: the token is wired and it runs',
+      async () => {
+        await (RUN_CHECKS[name] as (dir: string) => Promise<void>)(dir);
+      },
+    );
 
     it.runIf(fixture.outDir !== null)(
       'bugsee-cli discovers the built source maps (inject and upload, dry run)',
@@ -505,7 +605,13 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
       expect(await git(dir, ['diff', 'HEAD'])).toBe('');
       // git does not show ignored files (and honours a global excludes file): check them directly
-      for (const f of ['.env.bugsee-build-plugin', '.bugsee', 'scripts/bugsee-sourcemaps.mjs']) {
+      for (const f of [
+        '.env',
+        '.env.local',
+        '.env.bugsee-build-plugin',
+        '.bugsee',
+        'scripts/bugsee-sourcemaps.mjs',
+      ]) {
         expect(existsSync(path.join(dir, f)), `${f} left behind`).toBe(false);
       }
       // the tsconfig keys are back to the fixture's own (absent) values, not merely git-clean
@@ -548,7 +654,14 @@ for (const name of selected.filter((n) => UNAPPROVED_NAMES.includes(n))) {
       const r = await wizard(dir, ['--non-interactive', '--json', '--token', TOKEN]);
       const res = parseResult(r);
       expect(res.ok, show(r)).toBe(false);
-      expect(res.steps).toEqual([{ id: c.installId, outcome: 'failed' }]);
+      // the SDK install before it needs no approval and succeeds; the failing one rolls it back
+      expect(res.steps.filter((s) => s.outcome === 'failed')).toEqual([
+        { id: c.installId, outcome: 'failed' },
+      ]);
+      const applied = res.steps.filter((s) => s.outcome === 'applied').map((s) => s.id);
+      expect(res.steps.filter((s) => s.outcome === 'rolled-back').map((s) => s.id)).toEqual(
+        [...applied].reverse(),
+      );
       expect(r.stderr + r.stdout).toContain('approve-builds');
       expect(r.stderr + r.stdout).toContain('--yes');
       expect(await git(dir, ['status', '--porcelain=v1', '-uall'])).toBe('');
