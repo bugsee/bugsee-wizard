@@ -279,9 +279,8 @@ export async function runAndroidRecipe(input: AndroidRecipeInput): Promise<Recip
     steps.push(injectManifestPlaceholderStep);
   }
   steps.push(injectManifestMetaStep);
-  if (providerProcessOverride !== null) {
-    steps.push(injectProviderOverrideStep);
-  }
+  // Always listed: with no override wanted it only removes one an earlier run added.
+  steps.push(injectProviderOverrideStep);
 
   const result = await runSteps(steps, ctx);
 
