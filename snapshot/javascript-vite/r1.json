@@ -22,7 +22,7 @@
     {
       "op": "install-package",
       "packages": ["@bugsee/vite-plugin"],
-      "buildScripts": ["@bugsee/bugsee-cli"],
+      "buildScripts": ["@bugsee/cli", "@bugsee/bugsee-cli"],
       "dev": true,
       "tag": "beta"
     },

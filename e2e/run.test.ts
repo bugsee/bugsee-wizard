@@ -13,9 +13,18 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseJsonc } from 'jsonc-parser';
@@ -45,7 +54,7 @@ const UNAPPROVED_CASES: Record<
   'unapproved-plugin': {
     base: 'react-spa',
     installId: 'install-package:@bugsee/vite-plugin',
-    approved: ['@bugsee/vite-plugin', '@bugsee/bugsee-cli'],
+    approved: ['@bugsee/vite-plugin', '@bugsee/cli', '@bugsee/bugsee-cli'],
     transitiveCli: true,
   },
 };
@@ -520,15 +529,26 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       async () => {
         const out = path.join(dir, fixture.outDir as string);
         if (fixture.route === 'plugin' && !pluginManual) {
-          // the plugin deletes the maps once uploaded: build again with no token, which turns the
-          // plugin off (nothing must upload), and check bugsee-cli finds exactly what it uploaded
+          // the plugin deletes the maps once uploaded: build again to get maps back. The plugin reads
+          // the token from the .env.bugsee-build-plugin file the wizard wrote (SDK 0.1.0-beta.7+), with
+          // no token in the environment: that build uploads, which is the contract the wizard relies on
           collector.reset();
-          const r = await exec('pnpm', ['run', 'build'], {
-            cwd: dir,
-            env: { BUGSEE_ENDPOINT: collector.url, BUGSEE_REGISTER_BUILD: 'false' },
-          });
-          expect(r.code, show(r)).toBe(0);
-          expect(collector.requests).toEqual([]);
+          const buildEnv = { BUGSEE_ENDPOINT: collector.url, BUGSEE_REGISTER_BUILD: 'false' };
+          const viaFile = await exec('pnpm', ['run', 'build'], { cwd: dir, env: buildEnv });
+          expect(viaFile.code, show(viaFile)).toBe(0);
+          expect(collector.requests.length, 'the token came from the env file').toBeGreaterThan(0);
+          // with the file out of the way there is no token anywhere: the plugin is off, nothing uploads,
+          // and the maps stay for bugsee-cli to discover
+          const envFile = path.join(dir, '.env.bugsee-build-plugin');
+          renameSync(envFile, `${envFile}.off`);
+          try {
+            collector.reset();
+            const r = await exec('pnpm', ['run', 'build'], { cwd: dir, env: buildEnv });
+            expect(r.code, show(r)).toBe(0);
+            expect(collector.requests).toEqual([]);
+          } finally {
+            renameSync(`${envFile}.off`, envFile);
+          }
         }
         const maps = jsMaps(out);
         expect(maps.length, `source maps in ${out}`).toBeGreaterThan(0);
@@ -544,8 +564,11 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
         // CLI route: the generated script ran inside the build, so the output is injected already
         const injected = fixture.route === 'cli';
         const { cmd, pre } = bugseeCli();
+        // run `npx` from a neutral directory: in the project it finds the @bugsee/cli the plugin depends on
+        // (SDK 0.1.0-beta.7+), skips installing it, and its bin is not linked at the root under pnpm
+        const neutral = mkdtempSync(path.join(tmpdir(), 'bugsee-cli-'));
         const inject = await exec(cmd, [...pre, 'sourcemaps', 'inject', out, '--dry-run'], {
-          cwd: dir,
+          cwd: neutral,
         });
         expect(inject.code, show(inject)).toBe(0);
         const log = inject.stdout + inject.stderr;
@@ -572,7 +595,7 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
             '--build',
             '0',
           ],
-          { cwd: dir, env: { BUGSEE_APP_TOKEN: TOKEN } },
+          { cwd: neutral, env: { BUGSEE_APP_TOKEN: TOKEN } },
         );
         expect(upload.code, show(upload)).toBe(0);
         const processed = (upload.stdout + upload.stderr).match(/processing source map/g) ?? [];
@@ -688,11 +711,18 @@ for (const name of selected.filter((n) => UNAPPROVED_NAMES.includes(n))) {
       let cmd = ['npx', '--no-install', 'bugsee-cli', '--version'];
       if (c.transitiveCli) {
         const store = path.join(dir, 'node_modules', '.pnpm');
-        const pkg = readdirSync(store).find((d) => d.startsWith('@bugsee+bugsee-cli@'));
-        expect(pkg, 'bugsee-cli in the pnpm store').toBeDefined();
+        // @bugsee/cli from 0.1.0-beta.7 (its bin is bin/bugsee-cli.js), @bugsee/bugsee-cli before it
+        const pkg = readdirSync(store).find(
+          (d) => d.startsWith('@bugsee+cli@') || d.startsWith('@bugsee+bugsee-cli@'),
+        );
+        expect(pkg, 'the Bugsee CLI in the pnpm store').toBeDefined();
+        const cliPkg = (pkg as string).startsWith('@bugsee+cli@')
+          ? '@bugsee/cli'
+          : '@bugsee/bugsee-cli';
+        const bin = cliPkg === '@bugsee/cli' ? 'bin/bugsee-cli.js' : 'run-bugsee-cli.js';
         cmd = [
           process.execPath,
-          path.join(store, pkg as string, 'node_modules/@bugsee/bugsee-cli/run-bugsee-cli.js'),
+          path.join(store, pkg as string, 'node_modules', cliPkg, bin),
           '--version',
         ];
       }

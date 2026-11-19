@@ -24,11 +24,12 @@ function pluginOps(
   importName: string,
 ): OpSpec[] {
   return [
-    // the plugins' @bugsee/bugsee-cli dependency has the install script pnpm 11 wants decided
+    // the plugins' CLI dependency has the install script pnpm 11 wants decided: @bugsee/cli from 0.1.0-beta.7,
+    // @bugsee/bugsee-cli before it (the recipe range covers both)
     {
       op: 'install-package',
       packages: [pkg],
-      buildScripts: ['@bugsee/bugsee-cli'],
+      buildScripts: ['@bugsee/cli', '@bugsee/bugsee-cli'],
       dev: true,
       tag: 'beta',
     },

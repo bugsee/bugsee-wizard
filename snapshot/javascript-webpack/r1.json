@@ -19,7 +19,7 @@
     {
       "op": "install-package",
       "packages": ["@bugsee/webpack-plugin"],
-      "buildScripts": ["@bugsee/bugsee-cli"],
+      "buildScripts": ["@bugsee/cli", "@bugsee/bugsee-cli"],
       "dev": true,
       "tag": "beta"
     },
