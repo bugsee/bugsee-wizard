@@ -216,8 +216,9 @@ function tokenArg(spec: SdkInitSpec, token: string | undefined): string {
 
 /**
  * The import and the call. A token that comes from the environment is guarded: a missing variable
- * (production, CI, a container without .env) must leave the app running without Bugsee, because
- * `launch(undefined)` throws.
+ * (production, CI, a container without .env) must leave the app running without Bugsee: `launch(undefined)`
+ * throws on SDK builds before 0.1.0-beta.7, and since then reports an internal error and returns a disabled
+ * client (the guard keeps that error from being reported on every start).
  */
 function lines(
   spec: SdkInitSpec,

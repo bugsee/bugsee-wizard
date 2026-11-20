@@ -24,11 +24,12 @@ function pluginOps(
   importName: string,
 ): OpSpec[] {
   return [
-    // the plugins' @bugsee/bugsee-cli dependency has the install script pnpm 11 wants decided
+    // the plugins' CLI dependency has the install script pnpm 11 wants decided: @bugsee/cli from 0.1.0-beta.7,
+    // @bugsee/bugsee-cli before it (the recipe range covers both)
     {
       op: 'install-package',
       packages: [pkg],
-      buildScripts: ['@bugsee/bugsee-cli'],
+      buildScripts: ['@bugsee/cli', '@bugsee/bugsee-cli'],
       dev: true,
       tag: 'beta',
     },
@@ -100,9 +101,9 @@ export const EXPECTED_DETECT: Record<RecipeKey, unknown[]> = {
 
 /** What every recipe's notes must mention. */
 export const EXPECTED_NOTES: Record<RecipeKey, RegExp[]> = {
-  vite: [/#182/, /BUGSEE_APP_TOKEN/],
-  webpack: [/#182/, /BUGSEE_APP_TOKEN/],
-  rollup: [/#182/, /BUGSEE_APP_TOKEN/],
+  vite: [/\.env\.bugsee-build-plugin/, /0\.1\.0-beta\.7/, /BUGSEE_APP_TOKEN/, /allowBuilds/],
+  webpack: [/\.env\.bugsee-build-plugin/, /0\.1\.0-beta\.7/, /BUGSEE_APP_TOKEN/, /allowBuilds/],
+  rollup: [/\.env\.bugsee-build-plugin/, /0\.1\.0-beta\.7/, /BUGSEE_APP_TOKEN/, /allowBuilds/],
   tsc: [/bugsee-cli/, /outDir|output directory/i],
   esbuild: [/#184/, /bugsee-cli/],
   rspack: [/#184/, /bugsee-cli/],
