@@ -34,7 +34,7 @@ const logSink = () => {
 describe('versions table', () => {
   it('installs the beta dist-tag and keeps one fallback version', () => {
     expect(SDK_TAG).toBe('beta');
-    expect(SDK_FALLBACK_VERSION).toBe('0.1.0-beta.5');
+    expect(SDK_FALLBACK_VERSION).toBe('0.1.0-beta.8');
   });
 });
 
