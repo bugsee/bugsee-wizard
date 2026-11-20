@@ -9,7 +9,7 @@
   "sdk": {
     "range": ">=0.1.0-beta.5"
   },
-  "notes": "Bundler-plugin route: bugseeWebpackPlugin from @bugsee/webpack-plugin injects debug ids and uploads source maps at build time. Source maps must be enabled (devtool: 'source-map'); the wizard only reports that switch, it never edits it. The plugin reads the app token from BUGSEE_APP_TOKEN. Reading .env.bugsee-build-plugin itself only lands with JS issue #182: until then, export BUGSEE_APP_TOKEN in CI (and locally to upload from a local build).",
+  "notes": "Bundler-plugin route: bugseeWebpackPlugin from @bugsee/webpack-plugin injects debug ids and uploads source maps at build time. Source maps must be enabled (devtool: 'source-map'); the wizard only reports that switch, it never edits it. The plugin reads the app token from BUGSEE_APP_TOKEN. From SDK 0.1.0-beta.7 the plugin also reads the token from .env.bugsee-build-plugin (the file the wizard writes); older SDKs need BUGSEE_APP_TOKEN exported. In CI, export BUGSEE_APP_TOKEN. pnpm 11 approvals: the install script of the plugin's CLI dependency must be approved, and its name depends on the SDK (@bugsee/cli from 0.1.0-beta.7, @bugsee/bugsee-cli before), so both are written to allowBuilds; the one the project does not use is a harmless pre-approval and is removed again by uninstall.",
   "detect": [
     {
       "dependency": "webpack"

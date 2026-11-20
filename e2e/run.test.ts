@@ -248,9 +248,11 @@ function jsonKey(dir: string, op: JsonKeyOp): unknown {
 
 const showKey = (op: JsonKeyOp): string => `${op.file} ${op.path.join('.')}`;
 
-function bugseeCli(): { cmd: string; pre: string[] } {
+function bugseeCli(projectDir: string): { cmd: string; pre: string[] } {
   const bin = process.env.BUGSEE_CLI_BIN;
-  if (bin) return { cmd: bin, pre: [] };
+  // a path-like override (./node_modules/.bin/bugsee-cli) is relative to the project, not to the neutral
+  // directory the checks run from; a bare command (`bugsee-cli`) stays PATH-resolved
+  if (bin) return { cmd: /[\\/]/.test(bin) ? path.resolve(projectDir, bin) : bin, pre: [] };
   return { cmd: 'npx', pre: ['--yes', '-p', '@bugsee/cli', 'bugsee-cli'] };
 }
 
@@ -361,8 +363,15 @@ beforeAll(async () => {
   if (!existsSync(CLI)) throw new Error(`${CLI} is missing: run \`npm run build\` first`);
   collector = await startCollector();
 });
+/** One empty directory for the whole file: where `npx` runs the CLI checks from (see its use). */
+let neutralDir: string | undefined;
+function neutralCwd(): string {
+  neutralDir ??= mkdtempSync(path.join(tmpdir(), 'bugsee-cli-'));
+  return neutralDir;
+}
 afterAll(async () => {
   await collector?.close();
+  if (neutralDir) rmSync(neutralDir, { recursive: true, force: true });
 });
 
 const workDir = defaultWorkDir();
@@ -563,10 +572,10 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
         if (!pluginManual) expect(uploaded).toBe(maps.length);
         // CLI route: the generated script ran inside the build, so the output is injected already
         const injected = fixture.route === 'cli';
-        const { cmd, pre } = bugseeCli();
+        const { cmd, pre } = bugseeCli(dir);
         // run `npx` from a neutral directory: in the project it finds the @bugsee/cli the plugin depends on
         // (SDK 0.1.0-beta.7+), skips installing it, and its bin is not linked at the root under pnpm
-        const neutral = mkdtempSync(path.join(tmpdir(), 'bugsee-cli-'));
+        const neutral = neutralCwd();
         const inject = await exec(cmd, [...pre, 'sourcemaps', 'inject', out, '--dry-run'], {
           cwd: neutral,
         });
