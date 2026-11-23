@@ -30,7 +30,12 @@ export function showSnippetStep(spec: Spec): Step<RecipeContext> {
       return { kind: 'pending' };
     },
     async apply(ctx) {
-      ctx.manifest.record({ file: spec.file, action: 'manual' });
+      // uninstall removes the adapter package: say what the user's paste needs removed first
+      ctx.manifest.record({
+        file: spec.file,
+        action: 'manual',
+        note: `if you pasted the Bugsee wiring (${spec.title}) here, remove it: it needs the package that is being uninstalled`,
+      });
       return manual();
     },
     async preview() {

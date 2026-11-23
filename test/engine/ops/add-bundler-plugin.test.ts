@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { executeRecipe } from '../../../src/engine/execute.js';
@@ -173,6 +173,77 @@ describe('add-bundler-plugin op', () => {
       expect(await step.apply(ctx)).toBeUndefined();
       expect(await readFile(cfg('esbuild.config.mjs'), 'utf8')).toBe(done);
       expect(ctx.entries).toEqual([]);
+    });
+
+    it('no esbuild.config file: the module system is unknown, so both import and require forms are shown', async () => {
+      const code = (await opToStep(esb).apply(makeCtx(tmp.dir)))?.manual?.code ?? '';
+      expect(code).toContain('// ES modules:');
+      expect(code).toContain(
+        "import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core'; // bugsee-wizard",
+      );
+      expect(code).toContain('// CommonJS:');
+      expect(code).toContain(
+        "const { bugseeEsbuildPlugin } = require('@bugsee/bundler-plugin-core'); // bugsee-wizard",
+      );
+      expect(code).toContain(
+        'plugins: [bugseeEsbuildPlugin({ appToken: process.env.BUGSEE_APP_TOKEN })]',
+      );
+      // the dry run shows the same
+      expect(await opToStep(esb).preview?.(makeCtx(tmp.dir))).toEqual(
+        await opToStep(esb).apply(makeCtx(tmp.dir)),
+      );
+    });
+
+    describe('a build script that is not called esbuild.config.*', () => {
+      const WIRED =
+        "import { build } from 'esbuild';\nimport { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core';\nawait build({ plugins: [bugseeEsbuildPlugin({})] });\n";
+      const pkg = (scripts: Record<string, string>) =>
+        writeFile(join(tmp.dir, 'package.json'), JSON.stringify({ scripts }));
+      const script = async (name: string, text: string) => {
+        await mkdir(join(tmp.dir, 'scripts'), { recursive: true });
+        await writeFile(join(tmp.dir, name), text);
+      };
+
+      it('is satisfied when the script named in package.json has the import and the call, with or without the marker comment', async () => {
+        await pkg({ build: 'node scripts/build.mjs --prod' });
+        await script('scripts/build.mjs', WIRED);
+        const ctx = makeCtx(tmp.dir);
+        const step = opToStep(esb);
+        expect(await step.precheck(ctx)).toEqual({ kind: 'satisfied' });
+        expect(ctx.entries).toEqual([]);
+      });
+
+      it('stays pending while that script lacks the plugin (an import alone is not enough)', async () => {
+        await pkg({ build: 'node scripts/build.mjs' });
+        await script(
+          'scripts/build.mjs',
+          "import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core';\nawait build({});\n",
+        );
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+        await script('scripts/build.mjs', BUILD);
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+      });
+
+      it('ignores scripts that are missing, outside the project, or not JavaScript', async () => {
+        await pkg({
+          a: 'node scripts/missing.mjs',
+          b: 'node ../outside.mjs',
+          c: 'tsc -p tsconfig.json',
+        });
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+      });
+
+      it('an unreadable or non-object package.json is not a reason to fail', async () => {
+        await writeFile(join(tmp.dir, 'package.json'), '{ nope');
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+        await writeFile(join(tmp.dir, 'package.json'), JSON.stringify({ scripts: 'x' }));
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+      });
+
+      it('an esbuild.config.mjs wired by hand without the marker comment is satisfied too', async () => {
+        await writeFile(cfg('esbuild.config.mjs'), WIRED);
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'satisfied' });
+      });
     });
 
     it('the plugin sets the source-map option itself, so no source-map hint is added', async () => {

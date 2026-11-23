@@ -196,6 +196,9 @@ const PLUGIN_NOTES = [
   /deleteMaps: false/,
   /does nothing without an app token/,
   /Subresource Integrity/,
+  // the guard only sees hashes pinned in emitted HTML: the note must not promise more
+  /in its emitted HTML/,
+  /not detected/,
 ];
 const CLI_NOTES = [/bugsee-cli/, /does not delete the \.map files/];
 
@@ -445,7 +448,8 @@ export const EXPECTED_FRAMEWORK_OPS: Record<FrameworkKey, OpSpec[]> = {
         '',
         "export { handleError } from '@bugsee/remix';",
       ].join('\n'),
-      doneWhen: { files: files('app/entry.server', ENTRY_EXTS), contains: '@bugsee/remix' },
+      // the call, not the import: an import alone leaves the server unregistered
+      doneWhen: { files: files('app/entry.server', ENTRY_EXTS), contains: 'registerServer(' },
     },
     {
       op: 'show-snippet',
@@ -456,10 +460,19 @@ export const EXPECTED_FRAMEWORK_OPS: Record<FrameworkKey, OpSpec[]> = {
         '',
         'registerClient(import.meta.env.VITE_BUGSEE_TOKEN);',
         '',
-        '// pass the handler to the router:',
+        '// React Router framework mode: pass the handler to the router:',
         'hydrateRoot(document, <HydratedRouter onError={bugseeOnError} />);',
+        '',
+        '// Remix v2: keep your <RemixBrowser /> hydration as it is, and report from your root',
+        '// ErrorBoundary (app/root.tsx) instead:',
+        "// import { captureRemixErrorBoundaryError } from '@bugsee/remix/client';",
+        '// export function ErrorBoundary() {',
+        '//   const error = useRouteError();',
+        '//   captureRemixErrorBoundaryError(error);',
+        '//   return <YourErrorPage />;',
+        '// }',
       ].join('\n'),
-      doneWhen: { files: files('app/entry.client', ENTRY_EXTS), contains: '@bugsee/remix' },
+      doneWhen: { files: files('app/entry.client', ENTRY_EXTS), contains: 'registerClient(' },
     },
   ],
 };
@@ -485,6 +498,7 @@ export const EXPECTED_FRAMEWORK_NOTES: Record<FrameworkKey, RegExp[]> = {
     /@bugsee\/remix/,
     /VITE_BUGSEE_TOKEN/,
     /react-router reveal/,
+    /remix reveal/,
     /captureRemixErrorBoundaryError/,
     /not a secret/,
   ],

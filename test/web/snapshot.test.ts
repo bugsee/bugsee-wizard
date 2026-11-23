@@ -125,6 +125,17 @@ describe('the bundled recipe snapshot', () => {
       }
     });
 
+    it.runIf(id === 'nextjs')(
+      'verifies with the package build script (which uploads the maps), not a bare next build',
+      async () => {
+        const { recipe } = await readRecipeFile(platform);
+        const verify = (recipe.verify ?? []).join('\n');
+        expect(verify).toMatch(/package build script/);
+        expect(verify).toMatch(/next start/);
+        expect(verify).not.toMatch(/next build/);
+      },
+    );
+
     it.runIf(isTwoRevisions(id))(
       'r1 stays the CLI route for the SDKs whose plugin cannot upload yet',
       async () => {

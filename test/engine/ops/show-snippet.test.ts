@@ -37,7 +37,14 @@ describe('show-snippet op', () => {
         code: "modules: ['@bugsee/nuxt'],",
       },
     });
-    expect(ctx.entries).toEqual([{ file: 'nuxt.config.ts', action: 'manual' }]);
+    // the note is what uninstall prints: the user's paste is theirs to remove
+    expect(ctx.entries).toEqual([
+      {
+        file: 'nuxt.config.ts',
+        action: 'manual',
+        note: 'if you pasted the Bugsee wiring (Register the Bugsee module) here, remove it: it needs the package that is being uninstalled',
+      },
+    ]);
   });
 
   it('a dry run predicts the same manual step', async () => {

@@ -6,14 +6,14 @@
       "range": ">=0.1.0-beta.5 <0.1.0-beta.7",
       "revision": "r1",
       "url": "r1.json",
-      "sha256": "1352af5baf5923c0987f2800fa0a0ef25e493fa3d85afb2dfdb158fcadd7e043",
+      "sha256": "51de655519c6fc2cb5e40635b703d7411d8430ec5c8a120473555ef5ec47bf11",
       "engineMin": "0.0.0"
     },
     {
       "range": ">=0.1.0-beta.7",
       "revision": "r2",
       "url": "r2.json",
-      "sha256": "0c5d27143792863ed08ca308f3783d14a89eea253e465156e54508aef947624a",
+      "sha256": "22c7670c70341af744cffb0429f1ae534dd454b47f599313bf73979220b14081",
       "engineMin": "0.0.0"
     }
   ]

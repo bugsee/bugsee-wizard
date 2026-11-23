@@ -88,6 +88,28 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
     expect(JSON.stringify(await calls()).match(/tok123/g)).toHaveLength(2); // only as env, never in argv
   });
 
+  it('runs bugsee-cli from PATH when a package script put it there (Yarn PnP has no node_modules/.bin), npx only as the fallback', async () => {
+    await out();
+    // a package script's PATH carries the project's binaries; stand-in for that shim
+    await writeFile(join(root, 'bin', 'bugsee-cli'), STUB);
+    await chmod(join(root, 'bin', 'bugsee-cli'), 0o755);
+    const r = run([], { BUGSEE_APP_TOKEN: 'tok', BUGSEE_BUILD: '1' });
+    expect(r.status).toBe(0);
+    expect((await calls()).map((c) => c.args.slice(0, 3))).toEqual([
+      ['sourcemaps', 'inject', 'dist'],
+      ['debug-files', 'upload', 'dist'],
+    ]);
+  });
+
+  it('a failing bugsee-cli on PATH fails the build and is not retried through npx', async () => {
+    await out();
+    await writeFile(join(root, 'bin', 'bugsee-cli'), STUB);
+    await chmod(join(root, 'bin', 'bugsee-cli'), 0o755);
+    const r = run([], { BUGSEE_APP_TOKEN: 't', STUB_EXIT: '10' });
+    expect(r.status).toBe(10);
+    expect((await calls()).length).toBe(1);
+  });
+
   it('reads the token from .env.bugsee-build-plugin the way the wizard writes it (export, spaces, quotes)', async () => {
     await out();
     for (const line of [
