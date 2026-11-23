@@ -61,14 +61,14 @@ const CASES: Record<string, Expected> = {
   'nextjs-app': {
     runtimes: ['browser', 'node'],
     framework: 'nextjs',
-    buildTool: 'webpack',
+    buildTool: 'nextjs',
     typescript: true,
     packageManager: 'npm',
   },
   'nuxt-app': {
     runtimes: ['browser', 'node'],
     framework: 'nuxt',
-    buildTool: 'vite',
+    buildTool: 'nuxt',
     typescript: true,
     packageManager: 'pnpm',
   },
@@ -82,8 +82,15 @@ const CASES: Record<string, Expected> = {
   'astro-site': {
     runtimes: ['browser', 'node'],
     framework: 'astro',
-    buildTool: 'vite',
+    buildTool: 'astro',
     typescript: true,
+    packageManager: 'npm',
+  },
+  'remix-app': {
+    runtimes: ['browser', 'node'],
+    framework: 'remix',
+    buildTool: 'vite',
+    typescript: false,
     packageManager: 'npm',
   },
   'electron-app': {
@@ -136,7 +143,7 @@ describe('detectJavaScript fixtures', () => {
 
   it('does not let a stray vite dependency override a framework-owned build tool', async () => {
     // nextjs-app ships vitest, not vite; the angular/next/nuxt tool is fixed by the framework.
-    expect((await detectJavaScript(fx('nextjs-app')))?.buildTool).toBe('webpack');
+    expect((await detectJavaScript(fx('nextjs-app')))?.buildTool).toBe('nextjs');
   });
 
   it('Electron reports only the electron runtime', async () => {
@@ -428,6 +435,52 @@ describe('detectJavaScript rules (synthetic projects)', () => {
     const det = await detectJavaScript(dir);
     expect(det?.typescript).toBe(true);
     expect(det?.buildTool).toBe('cli');
+  });
+
+  describe('tsup builds with esbuild but writes the files itself: the esbuild plugin cannot run there', () => {
+    it('a tsup build script wins over a direct esbuild dependency and over tsc: the CLI route', async () => {
+      const dir = await project({
+        'package.json': {
+          name: 'x',
+          scripts: { build: 'tsup src/index.ts' },
+          devDependencies: { tsup: '8.0.0', esbuild: '0.25.0', typescript: '5.5.0' },
+        },
+        'tsconfig.json': '{}',
+      });
+      expect((await detectJavaScript(dir))?.buildTool).toBe('cli');
+    });
+
+    it('a tsup.config file counts as well as the script', async () => {
+      const dir = await project({
+        'package.json': { name: 'x', devDependencies: { tsup: '8.0.0', typescript: '5.5.0' } },
+        'tsup.config.ts': 'export default {};',
+        'tsconfig.json': '{}',
+      });
+      expect((await detectJavaScript(dir))?.buildTool).toBe('cli');
+    });
+
+    it('a tsup dependency that does not build the project changes nothing', async () => {
+      const dir = await project({
+        'package.json': {
+          name: 'x',
+          scripts: { build: 'vite build' },
+          devDependencies: { tsup: '8.0.0', vite: '5.0.0' },
+        },
+      });
+      expect((await detectJavaScript(dir))?.buildTool).toBe('vite');
+    });
+
+    it('a framework still fixes its own build tool', async () => {
+      const dir = await project({
+        'package.json': {
+          name: 'x',
+          scripts: { build: 'tsup && nuxt build' },
+          dependencies: { nuxt: '3.12.0' },
+          devDependencies: { tsup: '8.0.0' },
+        },
+      });
+      expect((await detectJavaScript(dir))?.buildTool).toBe('nuxt');
+    });
   });
 
   it('vite wins over rspack when both are present', async () => {

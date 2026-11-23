@@ -11,10 +11,14 @@ import type { Prompts } from './prompts.js';
 /** The runtime recipe a run applies, or why none is. */
 export type RuntimeChoice =
   | { runtime: SdkRuntime; platform: string; note?: string }
+  /** A framework adapter (one package for browser and server): its recipe installs it and hands back the wiring. */
+  | { framework: string; platform: string; note?: string }
   /** `silent`: the user asked for it (`--runtime none`), so it is not an unfinished step. */
   | { skip: string; silent?: true };
 
 const SUPPORTED: readonly SdkRuntime[] = ['browser', 'node', 'bun'];
+/** Frameworks whose SDK setup is only the adapter package plus a documented wiring snippet. */
+const FRAMEWORK_RECIPES: ReadonlySet<string> = new Set(['nuxt', 'sveltekit', 'astro', 'remix']);
 const LABEL: Record<SdkRuntime, string> = {
   browser: 'browser (a web page)',
   node: 'Node.js',
@@ -118,6 +122,9 @@ export async function chooseRuntime(
 ): Promise<RuntimeChoice> {
   if (opts.runtime === 'none') {
     return { skip: 'not initialising the SDK in code (--runtime none).', silent: true };
+  }
+  if (det.framework !== undefined && FRAMEWORK_RECIPES.has(det.framework)) {
+    return { framework: det.framework, platform: `javascript-framework-${det.framework}` };
   }
   if (det.framework !== undefined) {
     return {

@@ -17,6 +17,7 @@ import {
   captureOutput,
   gitCommitAll,
   makeDeps,
+  resolveBuildToolOnly,
   type Sandbox,
   sandbox,
   TOKEN,
@@ -110,6 +111,41 @@ describe.skipIf(process.platform === 'win32')('runJavaScriptInstall', () => {
       expect(text).toMatch(/production/i);
       expect(text).toMatch(/npm run build/);
       expect(text).toMatch(/upload/i);
+    });
+
+    it('ends with the verification lines of the build-tool recipe, after the build advice', async () => {
+      const cap = captureOutput();
+      const recipe = { ...VITE_RECIPE, verify: ['VERIFY-ONE', 'VERIFY-TWO'] };
+      await runJavaScriptInstall(
+        baseOpts(sb.project),
+        makeDeps(cap, { resolveRecipe: resolveBuildToolOnly(recipe) }),
+      );
+      const text = cap.lines.join('\n');
+      expect(text).toContain('VERIFY-ONE\nVERIFY-TWO');
+      expect(text.indexOf('To verify: build in production mode')).toBeLessThan(
+        text.indexOf('VERIFY-ONE'),
+      );
+      expect(cap.lines.at(-1)).toContain('VERIFY-TWO');
+    });
+
+    it('an unfinished run prints them too, after the "complete the manual step" advice', async () => {
+      await writeFile(join(sb.project, 'vite.config.ts'), 'export default makeConfig();\n');
+      const cap = captureOutput();
+      const recipe = { ...VITE_RECIPE, verify: ['VERIFY-ONE'] };
+      const r = await runJavaScriptInstall(
+        baseOpts(sb.project),
+        makeDeps(cap, { resolveRecipe: resolveBuildToolOnly(recipe) }),
+      );
+      expect(r.incomplete).toBe(true);
+      const text = cap.lines.join('\n');
+      expect(text).toContain('Not finished: complete the manual step');
+      expect(text.indexOf('Not finished')).toBeLessThan(text.indexOf('VERIFY-ONE'));
+    });
+
+    it('a recipe without verify lines adds nothing', async () => {
+      const cap = captureOutput();
+      await runJavaScriptInstall(baseOpts(sb.project), makeDeps(cap));
+      expect(cap.lines.join('\n')).not.toContain('VERIFY-ONE');
     });
 
     it('a second run changes nothing and reports every step as already done (exit 0)', async () => {
