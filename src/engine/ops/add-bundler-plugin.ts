@@ -89,9 +89,10 @@ export function addBundlerPluginStep(spec: Spec): Step<RecipeContext> {
     callArgs: spec.callArgs,
   };
   // esbuild has no config file: the plugin goes into the user's own build script (esbuild.config.* or whatever
-  // package.json runs), so a re-run looks there, and takes the marker comment OR a hand-wired import and call
+  // package.json runs), so a re-run looks there for the import AND the call. The marker comment is not
+  // evidence: it sits on the import line, which can be pasted without the plugin entry.
   const wired = (src: string): boolean =>
-    hasBugseeMarker(src) || (src.includes(spec.importFrom) && src.includes(`${spec.importName}(`));
+    src.includes(spec.importFrom) && src.includes(`${spec.importName}(`);
   const precheckEsbuild = async (
     ctx: RecipeContext,
   ): Promise<{ kind: 'pending' | 'satisfied' }> => {

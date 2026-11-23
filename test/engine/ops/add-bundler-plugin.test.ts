@@ -164,8 +164,8 @@ describe('add-bundler-plugin op', () => {
       expect(dry).toEqual(real);
     });
 
-    it('once the user has pasted the snippet (marker comment) it is satisfied and nothing changes', async () => {
-      const done = `import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core'; // bugsee-wizard\n${BUILD}`;
+    it('once the user has pasted the snippet (import with marker, plugin in the call) it is satisfied and nothing changes', async () => {
+      const done = `import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core'; // bugsee-wizard\n${BUILD.replace('plugins: []', 'plugins: [bugseeEsbuildPlugin({})]')}`;
       await writeFile(cfg('esbuild.config.mjs'), done);
       const ctx = makeCtx(tmp.dir);
       const step = opToStep(esb);
@@ -237,6 +237,15 @@ describe('add-bundler-plugin op', () => {
         await writeFile(join(tmp.dir, 'package.json'), '{ nope');
         expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
         await writeFile(join(tmp.dir, 'package.json'), JSON.stringify({ scripts: 'x' }));
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+      });
+
+      it('the import line with its marker comment alone is not the plugin wired in', async () => {
+        await pkg({ build: 'node scripts/build.mjs' });
+        await script(
+          'scripts/build.mjs',
+          `import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core'; // bugsee-wizard\n${BUILD}`,
+        );
         expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
       });
 

@@ -110,6 +110,21 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
     expect((await calls()).length).toBe(1);
   });
 
+  it('on Windows each argument is quoted for cmd.exe so a directory with a space stays one argument', async () => {
+    const text = await scriptTemplate('javascript-cli');
+    const src = /function winQuote\(a\) \{[\s\S]*?\n\}/.exec(text)?.[0];
+    expect(src).toBeDefined();
+    const winQuote = new Function(`${src}; return winQuote;`)() as (a: string) => string;
+    expect(winQuote('dist')).toBe('dist');
+    expect(winQuote('--type')).toBe('--type');
+    expect(winQuote('C:\\build\\dist')).toBe('C:\\build\\dist');
+    expect(winQuote('dist output')).toBe('"dist output"');
+    expect(winQuote('C:\\my app\\dist')).toBe('"C:\\my app\\dist"');
+    expect(winQuote('a"b')).toBe('"a\\"b"');
+    // and the Windows branch is the only one that uses it
+    expect(text).toContain('...(win ? args.map(winQuote) : args)');
+  });
+
   it('reads the token from .env.bugsee-build-plugin the way the wizard writes it (export, spaces, quotes)', async () => {
     await out();
     for (const line of [
