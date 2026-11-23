@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "id": "javascript-framework-sveltekit",
+  "kind": "framework",
+  "platform": "javascript-framework-sveltekit",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "SvelteKit: @bugsee/sveltekit adds the server hooks (handle, handleError) and the client hooks, so one session covers the server request and the browser that triggered it. The browser token is PUBLIC_BUGSEE_TOKEN (written to .env, git-ignored, read through $env/static/public); the server hooks read BUGSEE_APP_TOKEN from the environment the server runs in, so export it there (SvelteKit does not copy .env into process.env). Edge targets use registerServerEdge and createEdgeHandle from @bugsee/sveltekit/edge instead. The wizard installs the adapter and hands you the exact wiring for the framework's own files instead of editing them; run it again after pasting and the step is reported as done. An application token is not a secret.",
+  "detect": [
+    {
+      "dependency": "@sveltejs/kit"
+    }
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/sveltekit"],
+      "tag": "beta",
+      "installScripts": false
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env"
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env",
+      "key": "PUBLIC_BUGSEE_TOKEN",
+      "from": "token"
+    },
+    {
+      "op": "show-snippet",
+      "file": "src/hooks.server.ts",
+      "title": "Wire the Bugsee server hooks (src/hooks.server.ts)",
+      "code": "import { sequence } from '@sveltejs/kit/hooks';\nimport { registerServer } from '@bugsee/sveltekit/server';\nimport { handle as bugseeHandle, handleErrorWithBugsee } from '@bugsee/sveltekit';\n\nregisterServer(process.env.BUGSEE_APP_TOKEN!);\n\nexport const handle = sequence(bugseeHandle);\nexport const handleError = handleErrorWithBugsee();",
+      "doneWhen": {
+        "files": ["src/hooks.server.ts", "src/hooks.server.js"],
+        "contains": "@bugsee/sveltekit"
+      }
+    },
+    {
+      "op": "show-snippet",
+      "file": "src/hooks.client.ts",
+      "title": "Wire the Bugsee client hooks (src/hooks.client.ts)",
+      "code": "import { PUBLIC_BUGSEE_TOKEN } from '$env/static/public';\nimport { registerClient, handleErrorWithBugsee } from '@bugsee/sveltekit/client';\n\nregisterClient(PUBLIC_BUGSEE_TOKEN);\n\nexport const handleError = handleErrorWithBugsee();",
+      "doneWhen": {
+        "files": ["src/hooks.client.ts", "src/hooks.client.js"],
+        "contains": "@bugsee/sveltekit"
+      }
+    }
+  ]
+}

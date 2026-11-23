@@ -3,10 +3,17 @@
   "platform": "javascript-esbuild",
   "entries": [
     {
-      "range": ">=0.1.0-beta.5",
+      "range": ">=0.1.0-beta.5 <0.1.0-beta.7",
       "revision": "r1",
       "url": "r1.json",
-      "sha256": "74207bb1ca50f111f8a02ebeb42842aa2d1a1db24836251133bc6b5bbcdcf4d1",
+      "sha256": "1352af5baf5923c0987f2800fa0a0ef25e493fa3d85afb2dfdb158fcadd7e043",
+      "engineMin": "0.0.0"
+    },
+    {
+      "range": ">=0.1.0-beta.7",
+      "revision": "r2",
+      "url": "r2.json",
+      "sha256": "0c5d27143792863ed08ca308f3783d14a89eea253e465156e54508aef947624a",
       "engineMin": "0.0.0"
     }
   ]

@@ -478,13 +478,17 @@ describe.skipIf(process.platform === 'win32')('generated script: review round 1 
   });
 });
 
-describe('the four CLI-route recipes', () => {
+describe('the CLI-route recipes', () => {
   it('ship byte-identical scripts', async () => {
-    const [cli, ...others] = await Promise.all(
-      ['javascript-cli', 'javascript-tsc', 'javascript-esbuild', 'javascript-rspack'].map(
-        scriptTemplate,
-      ),
-    );
+    // esbuild and rspack keep the CLI route as r1 for SDKs whose plugin cannot upload yet
+    const [cli, ...others] = await Promise.all([
+      scriptTemplate('javascript-cli'),
+      scriptTemplate('javascript-tsc'),
+      scriptTemplate('javascript-nextjs'),
+      scriptTemplate('javascript-esbuild', 'r1'),
+      scriptTemplate('javascript-rspack', 'r1'),
+    ]);
+    expect(others).toHaveLength(4);
     for (const o of others) expect(o).toBe(cli);
   });
 });

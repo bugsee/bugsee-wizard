@@ -7,9 +7,9 @@
     "min": "0.0.0"
   },
   "sdk": {
-    "range": ">=0.1.0-beta.5"
+    "range": ">=0.1.0-beta.5 <0.1.0-beta.7"
   },
-  "notes": "CLI route: scripts/bugsee-sourcemaps.mjs runs bugsee-cli to inject debug ids into the built output and upload its source maps. The output directory is the argument, else BUGSEE_SOURCEMAPS_DIR, else tsconfig.json outDir or ./dist (whichever exists; the most recently built if both do); the app token comes from BUGSEE_APP_TOKEN or .env.bugsee-build-plugin. The esbuild plugin does not upload yet (JS issue #184), so this recipe uses the bugsee-cli script until it lands. Enable sourcemap: true in the esbuild build options.",
+  "notes": "CLI route: scripts/bugsee-sourcemaps.mjs runs bugsee-cli to inject debug ids into the built output and upload its source maps. The output directory is the argument, else BUGSEE_SOURCEMAPS_DIR, else tsconfig.json outDir or ./dist (whichever exists; the most recently built if both do); the app token comes from BUGSEE_APP_TOKEN or .env.bugsee-build-plugin. The esbuild plugin does not upload yet (JS issue #184), so this recipe uses the bugsee-cli script (the plugin uploads from SDK 0.1.0-beta.7; for SDK 0.1.0-beta.5 and 0.1.0-beta.6 this is the route). Enable sourcemap: true in the esbuild build options. The script uploads but does not delete the .map files: remove them from what you deploy (for example find <outputDir> -name '*.map' -delete) if you do not want them public.",
   "detect": [
     {
       "dependency": "esbuild"
@@ -42,5 +42,8 @@
       "key": "BUGSEE_APP_TOKEN",
       "from": "token"
     }
+  ],
+  "verify": [
+    "Verify symbolication in a production build: serve or deploy it (not the dev server), trigger a test error from it (for example a button that throws new Error('Bugsee test error')), then open the report in the Bugsee dashboard. The stack should show your original files, functions and lines; minified positions such as a.js:1:48210 mean the source maps were not uploaded for this build or do not match it."
   ]
 }

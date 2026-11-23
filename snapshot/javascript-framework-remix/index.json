@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-framework-remix",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "a61eea2e118ece3086aa8fc369c474f05c6000e7ba39f23652b9e15a631af67c",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

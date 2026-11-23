@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "id": "javascript-rspack",
+  "kind": "buildtool",
+  "platform": "javascript-rspack",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.7"
+  },
+  "notes": "Bundler-plugin route: bugseeRspackPlugin from @bugsee/bundler-plugin-core stamps debug ids and uploads source maps after Rspack emits its assets. Rspack writes no source maps by default in production (devtool: false), so the plugin would find nothing to upload: set devtool: 'source-map' in the rspack config; the wizard only reports that switch, it never edits it. Builds that Rspack calls development are skipped (uploadInDevelopment: true overrides). The plugin reads the app token from BUGSEE_APP_TOKEN. From SDK 0.1.0-beta.7 the plugin also reads the token from .env.bugsee-build-plugin (the file the wizard writes); older SDKs need BUGSEE_APP_TOKEN exported. In CI, export BUGSEE_APP_TOKEN. The plugin does nothing without an app token. By default it deletes the .map files from the build output after a fully successful upload (deleteMaps: false keeps them), so they are not deployed. A build that pins script hashes with Subresource Integrity is warned about or refused, never silently broken. pnpm 11 approvals: the install script of the plugin's CLI dependency must be approved, and its name depends on the SDK (@bugsee/cli from 0.1.0-beta.7, @bugsee/bugsee-cli before), so both are written to allowBuilds; the one the project does not use is a harmless pre-approval and is removed again by uninstall.",
+  "detect": [
+    {
+      "dependency": "@rspack/core"
+    }
+  ],
+  "verify": [
+    "Verify symbolication in a production build: serve or deploy it (not the dev server), trigger a test error from it (for example a button that throws new Error('Bugsee test error')), then open the report in the Bugsee dashboard. The stack should show your original files, functions and lines; minified positions such as a.js:1:48210 mean the source maps were not uploaded for this build or do not match it."
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/bundler-plugin-core"],
+      "buildScripts": ["@bugsee/cli", "@bugsee/bugsee-cli"],
+      "dev": true,
+      "tag": "beta"
+    },
+    {
+      "op": "add-bundler-plugin",
+      "target": "rspack",
+      "importFrom": "@bugsee/bundler-plugin-core",
+      "importName": "bugseeRspackPlugin",
+      "callArgs": "{ appToken: process.env.BUGSEE_APP_TOKEN }",
+      "ensureSourcemap": true
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env.bugsee-build-plugin"
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env.bugsee-build-plugin",
+      "key": "BUGSEE_APP_TOKEN",
+      "from": "token"
+    }
+  ]
+}

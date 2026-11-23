@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "id": "javascript-nuxt",
+  "kind": "buildtool",
+  "platform": "javascript-nuxt",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Bundler-plugin route for Nuxt: Nuxt builds with Vite, but its Vite config lives inside nuxt.config, so the wizard installs @bugsee/vite-plugin and hands you the nuxt.config snippet (vite.plugins plus sourcemap: { client: true }) instead of editing it. The plugin runs for the client and the server Vite builds and uploads their maps; the Nitro server bundle is built afterwards into .output/server, and those maps are not covered by the plugin (run bugsee-cli sourcemaps inject and debug-files upload on .output/server if you need server frames symbolicated). The plugin reads the app token from BUGSEE_APP_TOKEN. From SDK 0.1.0-beta.7 the plugin also reads the token from .env.bugsee-build-plugin (the file the wizard writes); older SDKs need BUGSEE_APP_TOKEN exported. In CI, export BUGSEE_APP_TOKEN. The plugin does nothing without an app token. By default it deletes the .map files from the build output after a fully successful upload (deleteMaps: false keeps them), so they are not deployed. A build that pins script hashes with Subresource Integrity is warned about or refused, never silently broken. pnpm 11 approvals: the install script of the plugin's CLI dependency must be approved, and its name depends on the SDK (@bugsee/cli from 0.1.0-beta.7, @bugsee/bugsee-cli before), so both are written to allowBuilds; the one the project does not use is a harmless pre-approval and is removed again by uninstall.",
+  "detect": [
+    {
+      "dependency": "nuxt"
+    }
+  ],
+  "verify": [
+    "Verify symbolication in a production build: serve or deploy it (not the dev server), trigger a test error from it (for example a button that throws new Error('Bugsee test error')), then open the report in the Bugsee dashboard. The stack should show your original files, functions and lines; minified positions such as a.js:1:48210 mean the source maps were not uploaded for this build or do not match it."
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/vite-plugin"],
+      "buildScripts": ["@bugsee/cli", "@bugsee/bugsee-cli"],
+      "dev": true,
+      "tag": "beta"
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env.bugsee-build-plugin"
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env.bugsee-build-plugin",
+      "key": "BUGSEE_APP_TOKEN",
+      "from": "token"
+    },
+    {
+      "op": "show-snippet",
+      "file": "nuxt.config.ts",
+      "title": "Upload source maps from the Nuxt build (nuxt.config.ts)",
+      "code": "import { bugseeVitePlugin } from '@bugsee/vite-plugin'; // bugsee-wizard\n\nexport default defineNuxtConfig({\n  // ...your existing options\n  sourcemap: { client: true },\n  vite: {\n    plugins: [bugseeVitePlugin({ appToken: process.env.BUGSEE_APP_TOKEN })],\n  },\n});",
+      "doneWhen": {
+        "files": [
+          "nuxt.config.ts",
+          "nuxt.config.js",
+          "nuxt.config.mjs",
+          "nuxt.config.mts",
+          "nuxt.config.cjs",
+          "nuxt.config.cts"
+        ],
+        "contains": "@bugsee/vite-plugin"
+      }
+    }
+  ]
+}

@@ -35,8 +35,11 @@
 // like the samples' (no lockfile is committed: it would pin a stale SDK).
 //   tsc-build      `tsc -p tsconfig.json` into lib/ (an outDir other than dist), no source-map
 //                  options: the recipe sets sourceMap/inlineSources itself
-//   esbuild-build  the esbuild CLI, --sourcemap, --outdir=dist
-//   rspack-build   @rspack/cli + @rspack/core, devtool 'source-map', output.path dist
+//   esbuild-build  a build script (esbuild.config.mjs) that calls esbuild's API, sourcemap 'external', outdir dist,
+//                  with the plugin snippet the wizard hands back already pasted (esbuild has no config the
+//                  wizard edits; the marker comment makes the step `skipped`): plugin route, upload at build time
+//   rspack-build   @rspack/cli + @rspack/core, devtool 'source-map', output.path dist; an object-form
+//                  rspack.config.mjs, so the wizard wires bugseeRspackPlugin itself (plugin route)
 //   rollup-build   an object-form rollup.config.mjs with output.sourcemap, so the wizard wires
 //                  bugseeRollupPlugin itself (plugin route, upload at build time)
 //
@@ -163,14 +166,14 @@ export const FIXTURES = {
     synthetic: true,
     runtime: 'javascript-browser',
     recipe: 'javascript-esbuild',
-    route: 'cli',
+    route: 'plugin',
     outDir: 'dist',
   },
   'rspack-build': {
     synthetic: true,
     runtime: 'javascript-browser',
     recipe: 'javascript-rspack',
-    route: 'cli',
+    route: 'plugin',
     outDir: 'dist',
   },
   'rollup-build': {

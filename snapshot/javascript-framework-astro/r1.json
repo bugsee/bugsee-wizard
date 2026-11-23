@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "id": "javascript-framework-astro",
+  "kind": "framework",
+  "platform": "javascript-framework-astro",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Astro: @bugsee/astro is an Astro integration that launches the browser client on every page and adds a server middleware for the server SDK (runtime: 'edge' for Vercel or Cloudflare edge deployments). Astro does not load .env files while it reads astro.config, so BUGSEE_APP_TOKEN must be exported in the shell or CI for the build; the token is inlined into the client script. The wizard installs the adapter and hands you the exact wiring for the framework's own files instead of editing them; run it again after pasting and the step is reported as done. An application token is not a secret.",
+  "detect": [
+    {
+      "dependency": "astro"
+    }
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/astro"],
+      "tag": "beta",
+      "installScripts": false
+    },
+    {
+      "op": "show-snippet",
+      "file": "astro.config.mjs",
+      "title": "Add the Bugsee integration (astro.config.mjs)",
+      "code": "import { bugsee } from '@bugsee/astro'; // bugsee-wizard\n\nexport default defineConfig({\n  integrations: [bugsee({ appToken: process.env.BUGSEE_APP_TOKEN, runtime: 'node' })],\n});",
+      "doneWhen": {
+        "files": [
+          "astro.config.ts",
+          "astro.config.js",
+          "astro.config.mjs",
+          "astro.config.mts",
+          "astro.config.cjs",
+          "astro.config.cts"
+        ],
+        "contains": "@bugsee/astro"
+      }
+    }
+  ]
+}
