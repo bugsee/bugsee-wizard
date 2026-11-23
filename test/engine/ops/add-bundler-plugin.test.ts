@@ -89,6 +89,100 @@ describe('add-bundler-plugin op', () => {
     expect(ctx.entries).toEqual([]);
   });
 
+  describe('esbuild: there is no config to edit, so the wiring is always handed back', () => {
+    const esb = {
+      ...spec,
+      target: 'esbuild',
+      importFrom: '@bugsee/bundler-plugin-core',
+      importName: 'bugseeEsbuildPlugin',
+      callArgs: '{ appToken: process.env.BUGSEE_APP_TOKEN }',
+    } as OpSpec;
+    const BUILD =
+      "import { build } from 'esbuild';\nawait build({ entryPoints: ['src/main.ts'], plugins: [] });\n";
+
+    it('id and title name esbuild', () => {
+      const step = opToStep(esb);
+      expect(step.id).toBe('add-bundler-plugin:esbuild');
+      expect(step.title).toContain('esbuild');
+    });
+
+    it('no esbuild.config file: a snippet for your build script, nothing written', async () => {
+      const ctx = makeCtx(tmp.dir);
+      const step = opToStep(esb);
+      expect(await step.precheck(ctx)).toEqual({ kind: 'pending' });
+      const res = await step.apply(ctx);
+      expect(res?.manual?.file).toBe('your esbuild build script');
+      expect(res?.manual?.title).toBe('Add the Bugsee plugin to your esbuild build script');
+      const code = res?.manual?.code ?? '';
+      expect(code).toContain(
+        "import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core'; // bugsee-wizard",
+      );
+      expect(code).toContain(
+        'plugins: [bugseeEsbuildPlugin({ appToken: process.env.BUGSEE_APP_TOKEN })]',
+      );
+      expect(code).toContain('build(');
+      expect(ctx.entries).toEqual([{ file: 'your esbuild build script', action: 'manual' }]);
+    });
+
+    it('an esbuild.config.mjs is never edited: the snippet names it and the file stays as it was', async () => {
+      await writeFile(cfg('esbuild.config.mjs'), BUILD);
+      const ctx = makeCtx(tmp.dir);
+      const res = await opToStep(esb).apply(ctx);
+      expect(res?.manual?.file).toBe('esbuild.config.mjs');
+      expect(res?.manual?.title).toBe('Add the Bugsee plugin to esbuild.config.mjs');
+      expect(await readFile(cfg('esbuild.config.mjs'), 'utf8')).toBe(BUILD);
+      expect(ctx.entries).toEqual([{ file: 'esbuild.config.mjs', action: 'manual' }]);
+    });
+
+    it('even a config that looks editable is left alone (esbuild takes plugins in a call, not an object)', async () => {
+      const looksEditable = 'export default { plugins: [] };\n';
+      await writeFile(cfg('esbuild.config.mjs'), looksEditable);
+      const ctx = makeCtx(tmp.dir);
+      const step = opToStep(esb);
+      expect(await step.precheck(ctx)).toEqual({ kind: 'pending' });
+      const res = await step.apply(ctx);
+      expect(res?.manual?.code).toContain('bugseeEsbuildPlugin');
+      expect(await readFile(cfg('esbuild.config.mjs'), 'utf8')).toBe(looksEditable);
+    });
+
+    it('a CommonJS script gets a require() line, an ES module an import', async () => {
+      await writeFile(
+        cfg('esbuild.config.cjs'),
+        "const { build } = require('esbuild');\nbuild({});\n",
+      );
+      const cjs = await opToStep(esb).apply(makeCtx(tmp.dir));
+      expect(cjs?.manual?.code).toContain(
+        "const { bugseeEsbuildPlugin } = require('@bugsee/bundler-plugin-core'); // bugsee-wizard",
+      );
+    });
+
+    it('the dry run predicts the same snippet', async () => {
+      await writeFile(cfg('esbuild.config.mjs'), BUILD);
+      const step = opToStep(esb);
+      const dry = await step.preview?.(makeCtx(tmp.dir));
+      const real = await step.apply(makeCtx(tmp.dir));
+      expect(dry).toEqual(real);
+    });
+
+    it('once the user has pasted the snippet (marker comment) it is satisfied and nothing changes', async () => {
+      const done = `import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core'; // bugsee-wizard\n${BUILD}`;
+      await writeFile(cfg('esbuild.config.mjs'), done);
+      const ctx = makeCtx(tmp.dir);
+      const step = opToStep(esb);
+      expect(await step.precheck(ctx)).toEqual({ kind: 'satisfied' });
+      expect(await step.apply(ctx)).toBeUndefined();
+      expect(await readFile(cfg('esbuild.config.mjs'), 'utf8')).toBe(done);
+      expect(ctx.entries).toEqual([]);
+    });
+
+    it('the plugin sets the source-map option itself, so no source-map hint is added', async () => {
+      const res = await opToStep({ ...esb, ensureSourcemap: false } as OpSpec).apply(
+        makeCtx(tmp.dir),
+      );
+      expect(res?.manual?.code).not.toContain('sourcemap:');
+    });
+  });
+
   describe('ensureSourcemap is never silently ignored', () => {
     const hints: Array<['vite' | 'rollup' | 'webpack' | 'rspack', string]> = [
       ['vite', 'build: { sourcemap: true }'],

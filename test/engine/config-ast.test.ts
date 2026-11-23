@@ -202,6 +202,21 @@ export default defineConfig({
     });
   });
 
+  it('esbuild: never edited, always a snippet for a build() call (ES module or CommonJS)', () => {
+    const esb = { ...spec, importName: 'bugseeEsbuildPlugin', callArgs: '{}' };
+    const esm = addBundlerPlugin('export default { plugins: [] };\n', 'esbuild', esb);
+    expect(esm).toEqual({
+      manual: `import { bugseeEsbuildPlugin } from '@bugsee/vite-plugin'; ${MARK}\n\n// Add to the "plugins" of your esbuild build() or context() call:\nplugins: [bugseeEsbuildPlugin({})]`,
+    });
+    const cjs = addBundlerPlugin("const e = require('esbuild');\ne.build({});\n", 'esbuild', esb);
+    expect(cjs).toEqual({
+      manual: `const { bugseeEsbuildPlugin } = require('@bugsee/vite-plugin'); ${MARK}\n\n// Add to the "plugins" of your esbuild build() or context() call:\nplugins: [bugseeEsbuildPlugin({})]`,
+    });
+    // already pasted (marker): nothing to do
+    const done = `// bugsee-wizard\nbuild({});\n`;
+    expect(addBundlerPlugin(done, 'esbuild', esb)).toEqual({ code: done });
+  });
+
   it('rspack: defineConfig with empty plugins and CJS object', () => {
     expect(apply('rspack/define-config.ts', 'rspack')).toEqual({
       code: `import { defineConfig } from '@rspack/cli';

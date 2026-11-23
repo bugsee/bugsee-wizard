@@ -6,6 +6,7 @@ import { addSdkInitStep } from './add-sdk-init.js';
 import { ensureGitignoreStep } from './ensure-gitignore.js';
 import { installPackageStep } from './install-package.js';
 import { setJsonKeyStep } from './set-json-key.js';
+import { showSnippetStep } from './show-snippet.js';
 import { writeEnvVarStep } from './write-env-var.js';
 import { writeFileStep } from './write-file.js';
 
@@ -28,6 +29,8 @@ export function opToStep(spec: OpSpec): Step<RecipeContext> {
       return writeEnvVarStep(spec);
     case 'write-file':
       return writeFileStep(spec);
+    case 'show-snippet':
+      return showSnippetStep(spec);
     default: {
       const unknown: never = spec;
       throw new Error(`Unknown operation: ${JSON.stringify(unknown)}`);

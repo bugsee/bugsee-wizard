@@ -22,9 +22,26 @@ const SOURCEMAP_HINT: Record<PluginTarget, string> = {
   rollup: 'output: { sourcemap: true }',
   webpack: "devtool: 'source-map'",
   rspack: "devtool: 'source-map'",
+  esbuild: "sourcemap: 'external'",
 };
 
+/** Where the snippet goes when no config file exists (esbuild has none by convention). */
+function fallbackFile(target: PluginTarget): string {
+  return target === 'esbuild' ? 'your esbuild build script' : `${target}.config.ts`;
+}
+
+function fallbackTitle(spec: Spec): string {
+  return spec.target === 'esbuild'
+    ? 'Add the Bugsee plugin to your esbuild build script'
+    : `Add the Bugsee plugin to your ${spec.target} config`;
+}
+
 function pluginSnippet(spec: Spec): string {
+  if (spec.target === 'esbuild') {
+    // the same text the config-ast helper hands back for an esbuild script (marker comment included)
+    const res = addBundlerPlugin('', 'esbuild', spec);
+    if ('manual' in res) return res.manual;
+  }
   return [
     `import { ${spec.importName} } from '${spec.importFrom}';`,
     '',
@@ -67,12 +84,12 @@ export function addBundlerPluginStep(spec: Spec): Step<RecipeContext> {
       const wantHint = spec.ensureSourcemap === true;
       const hint = wantHint ? sourcemapSnippet(spec) : undefined;
       if (!path) {
-        const file = `${spec.target}.config.ts`;
+        const file = fallbackFile(spec.target);
         ctx.manifest.record({ file, action: 'manual' });
         return {
           manual: {
             file,
-            title: `Add the Bugsee plugin to your ${spec.target} config`,
+            title: fallbackTitle(spec),
             code: [pluginSnippet(spec), hint].filter(Boolean).join('\n\n'),
           },
         };
@@ -119,11 +136,11 @@ export function addBundlerPluginStep(spec: Spec): Step<RecipeContext> {
       const wantHint = spec.ensureSourcemap === true;
       const hint = wantHint ? sourcemapSnippet(spec) : undefined;
       if (!path) {
-        const file = `${spec.target}.config.ts`;
+        const file = fallbackFile(spec.target);
         return {
           manual: {
             file,
-            title: `Add the Bugsee plugin to your ${spec.target} config`,
+            title: fallbackTitle(spec),
             code: [pluginSnippet(spec), hint].filter(Boolean).join('\n\n'),
           },
         };

@@ -309,8 +309,9 @@ describe('parseRecipe', () => {
       ...x,
     });
     expect(() => parseRecipe(withOp(op({})))).not.toThrow();
+    expect(() => parseRecipe(withOp(op({ target: 'esbuild' })))).not.toThrow();
     expect(violations(withOp(op({ target: 'parcel' })))).toEqual([
-      'recipe.ops[0].target: must be one of vite, webpack, rollup, rspack',
+      'recipe.ops[0].target: must be one of vite, webpack, rollup, rspack, esbuild',
     ]);
     expect(violations(withOp(op({ importFrom: '' })))).toEqual([
       'recipe.ops[0].importFrom: must not be empty',
