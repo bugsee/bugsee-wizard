@@ -58,10 +58,13 @@ const FRAMEWORKS: ReadonlyArray<{ framework: string; match: (dep: string) => boo
 
 /** Frameworks whose build tool the framework itself fixes (an extra `vite` dep, e.g. for vitest, never overrides it). */
 const FRAMEWORK_TOOL: Record<string, string> = {
-  nextjs: 'webpack',
-  nuxt: 'vite',
+  // Next 16 builds with Turbopack by default (webpack with --webpack): there is no webpack config to
+  // edit either way, so its recipe is the post-build upload, which does not depend on the bundler.
+  nextjs: 'nextjs',
+  // Nuxt and Astro run Vite but keep its config inside nuxt.config / astro.config: no vite.config to edit.
+  nuxt: 'nuxt',
   sveltekit: 'vite',
-  astro: 'vite',
+  astro: 'astro',
   remix: 'vite',
   angular: 'cli',
 };
@@ -364,8 +367,15 @@ async function inspectProject(
     if (file) bundlerConfigs.set(b.tool, path.basename(file));
   }
   const bundler = BUNDLERS.find((b) => deps.has(b.dep) || bundlerConfigs.has(b.tool))?.tool;
+  // tsup runs esbuild but tells it not to write, so the esbuild plugin never sees a file: the CLI route
+  const buildScript = isRecord(pkg.scripts) ? pkg.scripts.build : undefined;
+  const tsup =
+    deps.has('tsup') &&
+    ((typeof buildScript === 'string' && /\btsup\b/.test(buildScript)) ||
+      (await findConfigFile(cwd, 'tsup.config')) !== undefined);
   let buildTool: string;
   if (framework && FRAMEWORK_TOOL[framework]) buildTool = FRAMEWORK_TOOL[framework] as string;
+  else if (tsup) buildTool = 'cli';
   else if (bundler) buildTool = bundler;
   else if (typescript && hasTsconfig) buildTool = 'tsc';
   else buildTool = 'cli';

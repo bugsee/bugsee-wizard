@@ -42,7 +42,7 @@ export const VITE_RECIPE: Recipe = parseRecipe({
   ],
 });
 
-const RUNTIME_PLATFORM = /^javascript-(?:browser|node|bun)(?:-|$)/;
+const RUNTIME_PLATFORM = /^javascript-(?:browser|node|bun|framework)(?:-|$)/;
 export const emptyRuntimeRecipe = (platform: string): Recipe =>
   parseRecipe({
     schema: 1,

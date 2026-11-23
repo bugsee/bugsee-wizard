@@ -85,6 +85,10 @@ interface Case {
   runtime?: Runtime;
   /** The runtime recipe is skipped (a framework, a library): an unfinished `add-sdk-init` step. */
   runtimeSkipped?: boolean;
+  /** A snippet the user was left to paste is a manual reminder on uninstall too (exit 3). */
+  manualLeft?: boolean;
+  /** The SDK version the recipes are resolved for (default: the oldest beta the bundled recipes cover). */
+  sdk?: string;
 }
 
 interface Runtime {
@@ -260,6 +264,181 @@ const CASES: Case[] = [
   ),
 ];
 
+/** SDK 0.1.0-beta.7+: the esbuild and Rspack plugins upload, so those recipes are the plugin route. */
+const PLUGIN_SDK = '0.1.0-beta.8';
+
+const frameworkRuntime = (
+  fw: string,
+  pm: string,
+  pkg: string,
+  envFile: string | undefined,
+  envKey: string | undefined,
+  snippets: [string, string][],
+  contains: [string, string[]][],
+): Runtime => ({
+  platform: `javascript-framework-${fw}`,
+  install: [pm === 'npm' ? 'install' : 'add', `${pkg}@beta`],
+  steps: [
+    applied(`install-package:${pkg}`),
+    ...(envFile === undefined
+      ? []
+      : [applied(`ensure-gitignore:${envFile}`), applied(`write-env-var:${envFile}:${envKey}`)]),
+    // the framework's own files are never edited: every snippet is a manual step, every run
+    ...snippets.map(([file, title]): [string, string, string] => [
+      `show-snippet:${file}:${title}`,
+      'manual',
+      'manual',
+    ]),
+  ],
+  contains: [
+    ...contains,
+    ...(envFile === undefined ? [] : [[envFile, [TOKEN]] as [string, string[]]]),
+  ],
+});
+
+const SNIPPET_BUILD = (file: string, title: string): [string, string, string][] => [
+  ['install-package:@bugsee/vite-plugin', 'applied', 'skipped'],
+  [GI_STEP, 'applied', 'skipped'],
+  [ENV_STEP, 'applied', 'skipped'],
+  [`show-snippet:${file}:${title}`, 'manual', 'manual'],
+  ['ensure-gitignore:.bugsee/', 'applied', 'skipped'],
+];
+
+CASES.push(
+  // esbuild: no config file to edit, so the plugin wiring is a snippet for the user's build script
+  {
+    id: 'esbuild',
+    fixture: 'esbuild-node',
+    pm: 'npm',
+    sdk: PLUGIN_SDK,
+    manualLeft: true,
+    runtime: runtimeCase('node', 'npm', 'src/index.js', [
+      `launch(process.env['BUGSEE_APP_TOKEN']);`,
+    ]),
+    install: ['install', '-D', '@bugsee/bundler-plugin-core@beta'],
+    steps: [
+      ['install-package:@bugsee/bundler-plugin-core', 'applied', 'skipped'],
+      ['add-bundler-plugin:esbuild', 'manual', 'manual'],
+      ...TAIL,
+    ],
+    contains: [
+      ['package.json', ['@bugsee/bundler-plugin-core']],
+      [ENV_FILE, [`BUGSEE_APP_TOKEN=${TOKEN}`]],
+    ],
+  },
+  // Rspack: the plugin goes into the config; the devtool switch (off by default in production) is reported
+  {
+    ...pluginCase(
+      'rspack',
+      'rspack-app',
+      'pnpm',
+      '@bugsee/bundler-plugin-core',
+      'bugseeRspackPlugin',
+      'rspack.config.js',
+      runtimeCase('browser', 'pnpm', 'src/index.js', [`launch('${TOKEN}').catch(() => {});`]),
+    ),
+    sdk: PLUGIN_SDK,
+  },
+  // Next.js (Turbopack by default): a post-build step on .next, whatever bundles it
+  {
+    ...cliCase('nextjs', 'nextjs-app', 'npm', 'package.json', false, undefined, true),
+    contains: [
+      ['package.json', [SCRIPT_NAME, `${SCRIPT_COMMAND} .next`]],
+      [SCRIPT_PATH, ['bugsee-cli', 'sourcemaps']],
+      [ENV_FILE, [`BUGSEE_APP_TOKEN=${TOKEN}`]],
+    ],
+  },
+  {
+    id: 'nuxt',
+    fixture: 'nuxt-app',
+    pm: 'pnpm',
+    manualLeft: true,
+    runtime: frameworkRuntime(
+      'nuxt',
+      'pnpm',
+      '@bugsee/nuxt',
+      '.env',
+      'BUGSEE_APP_TOKEN',
+      [['nuxt.config.ts', 'Register the Bugsee module (nuxt.config.ts)']],
+      [],
+    ),
+    install: ['add', '-D', '@bugsee/vite-plugin@beta'],
+    steps: SNIPPET_BUILD(
+      'nuxt.config.ts',
+      'Upload source maps from the Nuxt build (nuxt.config.ts)',
+    ),
+    contains: [[ENV_FILE, [`BUGSEE_APP_TOKEN=${TOKEN}`]]],
+  },
+  // SvelteKit and Remix / React Router keep a vite.config of their own: the Vite plugin goes there
+  {
+    ...pluginCase(
+      'vite',
+      'sveltekit-app',
+      'npm',
+      '@bugsee/vite-plugin',
+      'bugseeVitePlugin',
+      'vite.config.js',
+    ),
+    runtime: frameworkRuntime(
+      'sveltekit',
+      'npm',
+      '@bugsee/sveltekit',
+      '.env',
+      'PUBLIC_BUGSEE_TOKEN',
+      [
+        ['src/hooks.server.ts', 'Wire the Bugsee server hooks (src/hooks.server.ts)'],
+        ['src/hooks.client.ts', 'Wire the Bugsee client hooks (src/hooks.client.ts)'],
+      ],
+      [],
+    ),
+    manualLeft: true,
+  },
+  {
+    ...pluginCase(
+      'vite',
+      'remix-app',
+      'npm',
+      '@bugsee/vite-plugin',
+      'bugseeVitePlugin',
+      'vite.config.ts',
+    ),
+    runtime: frameworkRuntime(
+      'remix',
+      'npm',
+      '@bugsee/remix',
+      '.env.local',
+      'VITE_BUGSEE_TOKEN',
+      [
+        ['app/entry.server.tsx', 'Wire the Bugsee server entry (app/entry.server.tsx)'],
+        ['app/entry.client.tsx', 'Wire the Bugsee client entry (app/entry.client.tsx)'],
+      ],
+      [],
+    ),
+    manualLeft: true,
+  },
+  {
+    id: 'astro',
+    fixture: 'astro-site',
+    pm: 'npm',
+    manualLeft: true,
+    runtime: frameworkRuntime(
+      'astro',
+      'npm',
+      '@bugsee/astro',
+      undefined,
+      undefined,
+      [['astro.config.mjs', 'Add the Bugsee integration (astro.config.mjs)']],
+      [],
+    ),
+    install: ['install', '-D', '@bugsee/vite-plugin@beta'],
+    steps: SNIPPET_BUILD(
+      'astro.config.mjs',
+      'Upload source maps from the Astro build (astro.config.mjs)',
+    ),
+    contains: [[ENV_FILE, [`BUGSEE_APP_TOKEN=${TOKEN}`]]],
+  },
+);
+
 function outcomes(r: WizardRunResult): [string, string][] {
   return r.steps.map((s) => [s.id, s.outcome]);
 }
@@ -271,14 +450,20 @@ describe.skipIf(process.platform === 'win32')('bundled recipes, end to end', () 
     sb = undefined;
   });
 
-  describe.each(CASES)('javascript-$id on $fixture', (c) => {
+  for (const c of CASES) c.sdk ??= '0.1.0-beta.5';
+
+  describe.each(CASES)('javascript-$id on $fixture (SDK $sdk)', (c) => {
     it('first run applies, second run changes nothing, uninstall restores the tree', async () => {
       sb = await sandbox(c.fixture);
       await withFakePms(sb);
       const original = await tree(sb.project);
 
       const platforms: string[] = [];
-      const deps = () => makeDeps(captureOutput(), { resolveRecipe: realStore(platforms) });
+      const deps = () =>
+        makeDeps(captureOutput(), {
+          resolveRecipe: realStore(platforms),
+          ...(c.sdk === undefined ? {} : { resolveSdkVersion: vi.fn(async () => c.sdk as string) }),
+        });
 
       const first = await runJavaScriptInstall(baseOpts(sb.project), deps());
       const steps: [string, string, string][] = [
@@ -315,7 +500,7 @@ describe.skipIf(process.platform === 'win32')('bundled recipes, end to end', () 
         makeDeps(captureOutput()),
       );
       expect(un.ok).toBe(true);
-      expect(un.incomplete).toBe(false);
+      expect(un.incomplete).toBe(c.manualLeft === true);
       expect(await tree(sb.project)).toEqual(original);
     });
   });

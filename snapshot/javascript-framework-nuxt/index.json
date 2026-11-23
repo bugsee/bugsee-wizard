@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-framework-nuxt",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "085bd85dbd59cb7e48ec86cc6cb4c56c7b44906bc0fcf2ddea42d767b526224f",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

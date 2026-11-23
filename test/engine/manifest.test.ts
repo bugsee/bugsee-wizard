@@ -318,6 +318,36 @@ describe('rollbackFromManifest', () => {
     expect(await exists(mpath())).toBe(false); // nothing left for the user to resolve
   });
 
+  it('a manual entry keeps its note, and uninstall prints it instead of the generic line', async () => {
+    const r = createManifestRecorder(dir, META);
+    r.record({ file: 'nuxt.config.ts', action: 'manual', note: 'remove the module you pasted' });
+    r.record({ file: 'plain.txt', action: 'manual' });
+    await r.flush();
+    expect((await loadManifest(dir))?.entries).toMatchObject([
+      { file: 'nuxt.config.ts', note: 'remove the module you pasted' },
+      { file: 'plain.txt' },
+    ]);
+    const out = await rb();
+    expect(out.results).toEqual([
+      { file: 'nuxt.config.ts', outcome: 'manual', note: 'remove the module you pasted' },
+      { file: 'plain.txt', outcome: 'manual', note: 'needs a manual step' },
+    ]);
+  });
+
+  it('a manifest whose note is not a string is rejected as malformed', async () => {
+    await mkdir(join(dir, '.bugsee'), { recursive: true });
+    await writeFile(
+      mpath(),
+      JSON.stringify({
+        schema: 1,
+        wizard: '1',
+        recipes: [],
+        entries: [{ file: 'a', action: 'manual', note: 5 }],
+      }),
+    );
+    expect(await loadManifest(dir)).toBeNull();
+  });
+
   it('edited entry without a backup is reported manual', async () => {
     await writeFile(join(dir, 'p'), 'b');
     const r = createManifestRecorder(dir, META);

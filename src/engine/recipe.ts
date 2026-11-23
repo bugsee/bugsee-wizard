@@ -43,7 +43,19 @@ export type OpSpec =
   | { op: 'add-package-script'; name: string; command: string; chainInto?: string }
   | { op: 'ensure-gitignore'; line: string }
   | { op: 'write-env-var'; file: string; key: string; from: 'token' }
-  | { op: 'write-file'; path: string; template: string };
+  | { op: 'write-file'; path: string; template: string }
+  /**
+   * Guidance the wizard cannot apply itself (a framework's own config or entry files): always handed
+   * back as a manual step. `doneWhen`: satisfied once one of `files` contains `contains`, so a re-run
+   * after the user pasted the snippet does not ask again.
+   */
+  | {
+      op: 'show-snippet';
+      file: string;
+      title: string;
+      code: string;
+      doneWhen?: { files: string[]; contains: string };
+    };
 
 export interface Recipe {
   schema: 1;
@@ -82,7 +94,7 @@ export class RecipeError extends Error {
 type Obj = Record<string, unknown>;
 
 const KINDS = ['runtime', 'framework', 'buildtool'] as const;
-const TARGETS = ['vite', 'webpack', 'rollup', 'rspack'] as const;
+const TARGETS = ['vite', 'webpack', 'rollup', 'rspack', 'esbuild'] as const;
 const SDK_RUNTIMES = ['browser', 'node', 'bun'] as const;
 const SDK_PACKAGE_RE = /^@bugsee\/[a-z0-9][a-z0-9._~-]*$/i;
 /** `process.env.X` / `import.meta.env.X`: a plain member chain, so a recipe cannot smuggle in code. */
@@ -329,6 +341,35 @@ function checkOp(c: Check, raw: unknown, path: string): OpSpec | undefined {
         );
       }
       if (file !== undefined && template !== undefined) spec = { op, path: file, template };
+      break;
+    }
+    case 'show-snippet': {
+      const o = c.object(raw, path, ['op', 'file', 'title', 'code', 'doneWhen']);
+      if (!o) return undefined;
+      const file = c.relPath(o, 'file', path);
+      const title = c.string(o, 'title', path);
+      const code = c.string(o, 'code', path);
+      if (code?.includes(TOKEN_PLACEHOLDER)) {
+        c.fail(
+          `${path}.code`,
+          `must not contain ${TOKEN_PLACEHOLDER} (secrets are never written from a template)`,
+        );
+      }
+      let doneWhen: { files: string[]; contains: string } | undefined;
+      if (o.doneWhen !== undefined) {
+        const d = c.object(o.doneWhen, `${path}.doneWhen`, ['files', 'contains']);
+        if (d) {
+          const files = c.strings(d.files, `${path}.doneWhen.files`, true);
+          files?.forEach((f, i) => {
+            c.relPath({ [`files[${i}]`]: f }, `files[${i}]`, `${path}.doneWhen`);
+          });
+          const contains = c.string(d, 'contains', `${path}.doneWhen`);
+          if (files && contains !== undefined) doneWhen = { files, contains };
+        }
+      }
+      if (file !== undefined && title !== undefined && code !== undefined) {
+        spec = { op, file, title, code, ...(doneWhen !== undefined ? { doneWhen } : {}) };
+      }
       break;
     }
     default:

@@ -25,6 +25,8 @@ export interface ManifestEntry {
   before?: string;
   after?: string;
   marker?: string;
+  /** For a `manual` entry: what uninstall should tell the user to do (shown instead of the generic line). */
+  note?: string;
 }
 
 export interface ManifestRecorder {
@@ -38,6 +40,8 @@ export interface ManifestFileEntry {
   beforeSha256?: string;
   afterSha256?: string;
   marker?: string;
+  /** A `manual` entry's hint for uninstall. */
+  note?: string;
   /** Relative to the manifest dir, under `.bugsee/backup/`: the pre-edit text. */
   backup?: string;
   /**
@@ -88,7 +92,12 @@ function validEntry(e: unknown): e is ManifestFileEntry {
   }
   if (e['action'] !== 'created' && e['action'] !== 'edited' && e['action'] !== 'manual')
     return false;
-  if (!optString(e['beforeSha256']) || !optString(e['afterSha256']) || !optString(e['marker'])) {
+  if (
+    !optString(e['beforeSha256']) ||
+    !optString(e['afterSha256']) ||
+    !optString(e['marker']) ||
+    !optString(e['note'])
+  ) {
     return false;
   }
   if (e['edits'] !== undefined && !validEdits(e['edits'])) return false;
@@ -153,6 +162,7 @@ interface Pending {
 function toFileEntry(e: ManifestEntry, file: string): Pending {
   const entry: ManifestFileEntry = { file, action: e.action };
   if (e.marker !== undefined) entry.marker = e.marker;
+  if (e.note !== undefined) entry.note = e.note;
   if (e.after !== undefined) entry.afterSha256 = sha256(e.after);
   if (e.action !== 'manual' && !isEnvMarker(e.marker)) {
     const edits = computeEdits(file, e.action, e.before, e.after);
@@ -354,7 +364,7 @@ async function rollbackEntry(
   packages: readonly string[],
 ): Promise<RollbackResult> {
   const file = e.file;
-  if (e.action === 'manual') return manual(file, 'needs a manual step');
+  if (e.action === 'manual') return manual(file, e.note ?? 'needs a manual step');
   let abs: string;
   try {
     abs = await resolveInside(root, resolve(dir, e.file));

@@ -49,10 +49,18 @@ describe('snapshot tools', () => {
     it('defaults to the repository snapshot when no directory is given', async () => {
       const r = spawnSync(process.execPath, [VALIDATE], { encoding: 'utf8', cwd: tmp });
       expect(r.status).toBe(0);
-      const n = (await readdir(SNAPSHOT, { withFileTypes: true })).filter((e) =>
+      const platforms = (await readdir(SNAPSHOT, { withFileTypes: true })).filter((e) =>
         e.isDirectory(),
-      ).length;
-      expect(r.stdout).toContain(`snapshot OK: ${n} recipe(s) in ${n} platform(s)`);
+      );
+      let recipes = 0;
+      for (const p of platforms) {
+        recipes += (await readdir(join(SNAPSHOT, p.name))).filter((f) =>
+          /^r\d+\.json$/.test(f),
+        ).length;
+      }
+      expect(r.stdout).toContain(
+        `snapshot OK: ${recipes} recipe(s) in ${platforms.length} platform(s)`,
+      );
     });
 
     it('fails on a recipe whose bytes no longer match the index sha256', async () => {

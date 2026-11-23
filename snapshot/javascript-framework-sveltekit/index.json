@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-framework-sveltekit",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "428e051ffc9fa69fb1ab99657258cac4001917b0305d950e8e0a66c094c2fb7b",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

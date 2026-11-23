@@ -3,10 +3,17 @@
   "platform": "javascript-rspack",
   "entries": [
     {
-      "range": ">=0.1.0-beta.5",
+      "range": ">=0.1.0-beta.5 <0.1.0-beta.7",
       "revision": "r1",
       "url": "r1.json",
-      "sha256": "f4b01cd5983c0615c39453462ac8ef5cc33a972258f5f813fca32d4de0d1131c",
+      "sha256": "1aa49a300b694c974f6fb93a4d1a35a1b3566e6620fe48f3bf2cbbfc32f7b5d0",
+      "engineMin": "0.0.0"
+    },
+    {
+      "range": ">=0.1.0-beta.7",
+      "revision": "r2",
+      "url": "r2.json",
+      "sha256": "3dd7f0de737c89c41e892fce87d3dcb2c43a464a103228f4de8582e3d420d5b4",
       "engineMin": "0.0.0"
     }
   ]

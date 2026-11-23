@@ -240,6 +240,10 @@ function opDetails(
       return [`      adds the line ${inline(op.line)} to .gitignore if missing`];
     case 'write-env-var':
       return [`      sets ${inline(op.key)} in ${inline(op.file)} from your token`];
+    case 'show-snippet':
+      return [
+        `      a snippet for ${inline(op.file)} to add yourself (the wizard does not edit it)`,
+      ];
     default:
       return [];
   }
@@ -262,13 +266,12 @@ function planText(
   ].join('\n');
 }
 
-/** The adapter package(s) and guide of the frameworks, whose init is not automated yet. */
+/**
+ * The adapter package(s) and guide of the frameworks whose init is not automated yet. (Nuxt, SvelteKit,
+ * Astro and Remix have framework recipes of their own: see chooseRuntime.)
+ */
 const FRAMEWORK_GUIDE: Record<string, { name: string; slug: string; packages: string[] }> = {
   nextjs: { name: 'Next.js', slug: 'nextjs', packages: ['@bugsee/nextjs'] },
-  nuxt: { name: 'Nuxt', slug: 'nuxt', packages: ['@bugsee/nuxt'] },
-  sveltekit: { name: 'SvelteKit', slug: 'sveltekit', packages: ['@bugsee/sveltekit'] },
-  astro: { name: 'Astro', slug: 'astro', packages: ['@bugsee/astro'] },
-  remix: { name: 'Remix / React Router', slug: 'remix', packages: ['@bugsee/remix'] },
   angular: { name: 'Angular', slug: 'angular', packages: ['@bugsee/bugsee', '@bugsee/angular'] },
   electron: { name: 'Electron', slug: 'electron', packages: ['@bugsee/electron'] },
 };
@@ -281,20 +284,27 @@ function snippetText(s: ManualSnippet): string {
   return `${s.title} (${s.file}):\n${s.code}`;
 }
 
-function outro(log: Logger, pm: DetectedPackageManager | null, incomplete: boolean): void {
+function outro(
+  log: Logger,
+  pm: DetectedPackageManager | null,
+  incomplete: boolean,
+  verify: readonly string[],
+): void {
   const run = `${pm?.name ?? 'npm'} run build`;
   if (incomplete) {
     log.info(
       'Not finished: complete the manual step shown above, then build in production mode to check that source maps upload.',
     );
-    return;
+  } else {
+    log.info(
+      [
+        `To verify: build in production mode (for example \`${run}\`).`,
+        'With BUGSEE_APP_TOKEN set, the build uploads your source maps (the output shows the Bugsee upload); without it the upload is skipped.',
+      ].join('\n'),
+    );
   }
-  log.info(
-    [
-      `To verify: build in production mode (for example \`${run}\`).`,
-      'With BUGSEE_APP_TOKEN set, the build uploads your source maps (the output shows the Bugsee upload); without it the upload is skipped.',
-    ].join('\n'),
-  );
+  // the recipe's own last word: how to confirm symbolication end to end
+  if (verify.length > 0) log.info(verify.join('\n'));
 }
 
 export async function runJavaScriptInstall(
@@ -385,7 +395,7 @@ export async function runJavaScriptInstall(
     confirm: (m) => deps.prompts.confirm(m),
   };
   const entry =
-    runtimeRecipe !== undefined && !('skip' in choice)
+    runtimeRecipe !== undefined && 'runtime' in choice
       ? await findEntry(packageDir, choice.runtime)
       : undefined;
   // an init that is already done (a re-run) must not be promised as an edit in the plan
@@ -514,6 +524,13 @@ export async function runJavaScriptInstall(
       : {}),
   };
   if (opts.dryRun) log.info('Dry run: nothing was written.');
-  else if (!run.failed) outro(log, packageManager, run.incomplete || skipped !== undefined);
+  else if (!run.failed) {
+    outro(
+      log,
+      packageManager,
+      run.incomplete || skipped !== undefined,
+      buildTool.recipe.verify ?? [],
+    );
+  }
   return result;
 }

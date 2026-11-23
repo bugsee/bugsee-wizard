@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-astro",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "166950468a696aff32a7d0408e9277533e4bf72daad5220d5d140193f06e1cc8",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

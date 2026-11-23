@@ -10,7 +10,11 @@ import { parseModule } from 'magicast';
  * of an unusual shape ends in a `{ manual }` snippet — never a false success.
  */
 
-export type PluginTarget = 'vite' | 'webpack' | 'rollup' | 'rspack';
+/**
+ * `esbuild` has no config file to edit: it is a JavaScript call (`build({ ... })`) in a script of the
+ * user's own, so its wiring is always handed back as a snippet (see addBundlerPlugin).
+ */
+export type PluginTarget = 'vite' | 'webpack' | 'rollup' | 'rspack' | 'esbuild';
 
 export interface PluginSpec {
   importFrom: string;
@@ -406,11 +410,30 @@ export function isRequireDeclaration(stmt: Node): boolean {
   });
 }
 
-function snippet(target: PluginTarget, spec: PluginSpec, cjs: boolean): string {
-  const line = cjs
-    ? `const { ${spec.importName} } = require('${spec.importFrom}'); // ${MARKER}`
-    : `import { ${spec.importName} } from '${spec.importFrom}'; // ${MARKER}`;
+/** `both`: the module system is unknown (no file to look at), so show the import and the require form. */
+export type SnippetFormat = 'esm' | 'cjs' | 'both';
+
+export function bundlerPluginSnippet(
+  target: PluginTarget,
+  spec: PluginSpec,
+  format: SnippetFormat,
+): string {
+  const esm = `import { ${spec.importName} } from '${spec.importFrom}'; // ${MARKER}`;
+  const cjs = `const { ${spec.importName} } = require('${spec.importFrom}'); // ${MARKER}`;
+  const line =
+    format === 'both'
+      ? `// ES modules:\n${esm}\n\n// CommonJS:\n${cjs}`
+      : format === 'cjs'
+        ? cjs
+        : esm;
+  if (target === 'esbuild') {
+    return `${line}\n\n// Add to the "plugins" of your esbuild build() or context() call:\nplugins: [${spec.importName}(${spec.callArgs})]`;
+  }
   return `${line}\n\n// Add to the "plugins" array of your ${target} config:\n${spec.importName}(${spec.callArgs})`;
+}
+
+function snippet(target: PluginTarget, spec: PluginSpec, cjs: boolean): string {
+  return bundlerPluginSnippet(target, spec, cjs ? 'cjs' : 'esm');
 }
 
 export function parses(code: string): boolean {
@@ -453,6 +476,8 @@ export function addBundlerPlugin(
   }
   const manualFor = (cjs: boolean): PluginEditResult => ({ manual: snippet(target, spec, cjs) });
   const guessCjs = looksCommonJs(source);
+  // an esbuild "config" is a script that calls build(): never edited, always a snippet
+  if (target === 'esbuild') return manualFor(guessCjs);
 
   let body: Node[];
   let directives: Node[];

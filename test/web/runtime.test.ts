@@ -77,6 +77,29 @@ describe('chooseRuntime', () => {
     expect(p.select).not.toHaveBeenCalled();
   });
 
+  it.each([['nuxt'], ['sveltekit'], ['astro'], ['remix']])(
+    '%s has a framework recipe: its own platform, no runtime question',
+    async (framework) => {
+      const p = prompts();
+      const res = await chooseRuntime(
+        det({ runtimes: ['browser', 'node'], framework, buildTool: 'vite' }),
+        opts,
+        p,
+      );
+      expect(res).toEqual({ framework, platform: `javascript-framework-${framework}` });
+      expect(p.select).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([['angular'], ['electron']])(
+    '%s has no framework recipe yet: skipped with its name',
+    async (framework) => {
+      expect(await chooseRuntime(det({ framework }), opts, prompts())).toEqual({
+        skip: expect.stringContaining(framework),
+      });
+    },
+  );
+
   it.each([['electron'], ['edge'], ['webworker'], ['serviceworker']])(
     'the %s runtime is not covered yet: skipped with its name',
     async (runtime) => {
@@ -283,6 +306,17 @@ describe('chooseRuntime (unknown runtime, --runtime, Vite env)', () => {
   it('a framework is skipped even with --runtime (that init is a later wave)', async () => {
     expect(await chooseRuntime(det({ framework: 'nextjs' }), withFlag('node'), prompts())).toEqual({
       skip: expect.stringContaining('nextjs'),
+    });
+  });
+
+  it('a framework with a recipe uses it even with --runtime (the adapter does both sides), but --runtime none still skips', async () => {
+    expect(await chooseRuntime(det({ framework: 'nuxt' }), withFlag('node'), prompts())).toEqual({
+      framework: 'nuxt',
+      platform: 'javascript-framework-nuxt',
+    });
+    expect(await chooseRuntime(det({ framework: 'nuxt' }), withFlag('none'), prompts())).toEqual({
+      skip: expect.stringContaining('--runtime none'),
+      silent: true,
     });
   });
 

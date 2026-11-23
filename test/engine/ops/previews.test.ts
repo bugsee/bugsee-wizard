@@ -33,6 +33,16 @@ const put = (rel: string, text: string): Promise<void> =>
   );
 
 describe('dry-run previews agree with the real run', () => {
+  it('show-snippet: manual in both, nothing written', async () => {
+    const op: OpSpec = { op: 'show-snippet', file: 'nuxt.config.ts', title: 'T', code: 'c' };
+    const { dry, real } = await outcome(op);
+    expect(dry.results[0]?.outcome).toBe('manual');
+    expect(dry.results[0]?.snippet).toEqual({ file: 'nuxt.config.ts', title: 'T', code: 'c' });
+    expect(real.results[0]?.outcome).toBe('manual');
+    expect(real.results[0]?.snippet).toEqual(dry.results[0]?.snippet);
+    expect(dry.incomplete).toBe(true);
+  });
+
   it('add-package-script with no script to chain into: manual in both, exit-3 material', async () => {
     await put('package.json', JSON.stringify({ name: 'x', scripts: { start: 'node a.js' } }));
     const op: OpSpec = {

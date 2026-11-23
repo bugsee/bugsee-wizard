@@ -104,7 +104,8 @@ const RUNTIME_SKIPPED: Record<string, string[]> = {
   'webpack-object-config': [INSTALLED, INIT_BROWSER],
   'node-service': [INSTALLED, INIT_NODE, 'ensure-gitignore:.env'],
   'tsc-build': [INIT_NODE],
-  'esbuild-build': [INIT_BROWSER],
+  // esbuild has no config the wizard edits: this fixture already carries the snippet (see its config), so that step is done
+  'esbuild-build': [INIT_BROWSER, 'add-bundler-plugin:esbuild'],
   'rollup-build': [INIT_BROWSER],
   'rspack-build': [INIT_BROWSER],
 };
@@ -205,8 +206,21 @@ async function treeState(dir: string): Promise<string> {
   return [status, diff, ...hashes].join('\n');
 }
 
+/** The newest bundled revision of a recipe: the one the wizard picks for the current SDK beta. */
+function newestEntry(id: string): { revision: string; url: string } {
+  const index = JSON.parse(readFileSync(path.join(ROOT, 'snapshot', id, 'index.json'), 'utf8')) as {
+    entries: { revision: string; url: string }[];
+  };
+  const newest = [...index.entries].sort(
+    (a, b) => Number(b.revision.slice(1)) - Number(a.revision.slice(1)),
+  )[0];
+  if (newest === undefined) throw new Error(`${id} has no bundled recipe`);
+  return newest;
+}
+
 function readRecipe(id: string): Recipe {
-  return JSON.parse(readFileSync(path.join(ROOT, 'snapshot', id, 'r1.json'), 'utf8')) as Recipe;
+  const { url } = newestEntry(id);
+  return JSON.parse(readFileSync(path.join(ROOT, 'snapshot', id, url), 'utf8')) as Recipe;
 }
 
 function parseResult(r: Ran): {
@@ -443,8 +457,10 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
         readFileSync(path.join(dir, '.bugsee/wizard-manifest.json'), 'utf8'),
       );
       expect(manifest.recipes).toEqual([
-        ...(fixture.runtime === null ? [] : [{ id: fixture.runtime, revision: 'r1' }]),
-        { id: fixture.recipe, revision: 'r1' },
+        ...(fixture.runtime === null
+          ? []
+          : [{ id: fixture.runtime, revision: newestEntry(fixture.runtime).revision }]),
+        { id: fixture.recipe, revision: newestEntry(fixture.recipe).revision },
       ]);
       const entries = manifest.entries as { file: string; action: string }[];
       // a plugin left to the user is recorded as `manual` (uninstall reminds them of it)
@@ -503,8 +519,9 @@ for (const name of selected.filter((n) => n in FIXTURES)) {
       const env: NodeJS.ProcessEnv = {
         BUGSEE_ENDPOINT: collector.url,
         BUGSEE_REGISTER_BUILD: 'false',
-        // the plugins read the token from the environment only (JS issue #182); the CLI-route
-        // script reads .env.bugsee-build-plugin itself, so it gets no token from here
+        // the plugin route gets the token from here; the CLI-route script reads .env.bugsee-build-plugin
+        // itself (the plugins read that file too from SDK 0.1.0-beta.7: the discovery check below builds
+        // once without this variable to prove it)
         ...(fixture.route === 'plugin' ? { BUGSEE_APP_TOKEN: TOKEN } : {}),
       };
       const r = await exec('pnpm', ['run', 'build'], { cwd: dir, env });

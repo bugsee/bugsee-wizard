@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "platform": "javascript-nextjs",
+  "entries": [
+    {
+      "range": ">=0.1.0-beta.5",
+      "revision": "r1",
+      "url": "r1.json",
+      "sha256": "e30035964a9e45824cad7ca023b63d1c28a8878fe07dd47d0c02cb67322c1dc7",
+      "engineMin": "0.0.0"
+    }
+  ]
+}

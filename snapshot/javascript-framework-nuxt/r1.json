@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "id": "javascript-framework-nuxt",
+  "kind": "framework",
+  "platform": "javascript-framework-nuxt",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Nuxt: @bugsee/nuxt is a Nuxt module that launches the browser client (with the Vue error handler) and the Nitro server from one nuxt.config entry. The token is read from BUGSEE_APP_TOKEN, which Nuxt loads from .env when it reads the config (the wizard writes it there, git-ignored); set it in CI and hosting too. The wizard installs the adapter and hands you the exact wiring for the framework's own files instead of editing them; run it again after pasting and the step is reported as done. An application token is not a secret.",
+  "detect": [
+    {
+      "dependency": "nuxt"
+    }
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/nuxt"],
+      "tag": "beta",
+      "installScripts": false
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env"
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env",
+      "key": "BUGSEE_APP_TOKEN",
+      "from": "token"
+    },
+    {
+      "op": "show-snippet",
+      "file": "nuxt.config.ts",
+      "title": "Register the Bugsee module (nuxt.config.ts)",
+      "code": "export default defineNuxtConfig({\n  modules: ['@bugsee/nuxt'],\n  bugsee: {\n    appToken: process.env.BUGSEE_APP_TOKEN,\n  },\n});",
+      "doneWhen": {
+        "files": [
+          "nuxt.config.ts",
+          "nuxt.config.js",
+          "nuxt.config.mjs",
+          "nuxt.config.mts",
+          "nuxt.config.cjs",
+          "nuxt.config.cts"
+        ],
+        "contains": "@bugsee/nuxt"
+      }
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "id": "javascript-astro",
+  "kind": "buildtool",
+  "platform": "javascript-astro",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Bundler-plugin route for Astro: Astro builds with Vite, but its Vite config lives inside astro.config, so the wizard installs @bugsee/vite-plugin and hands you the astro.config snippet (vite.plugins plus vite.build.sourcemap) instead of editing it. Astro does not load .env files while it reads astro.config, so process.env.BUGSEE_APP_TOKEN there needs the variable exported in the shell or CI (the build plugin also falls back to .env.bugsee-build-plugin from SDK 0.1.0-beta.7). The plugin reads the app token from BUGSEE_APP_TOKEN. From SDK 0.1.0-beta.7 the plugin also reads the token from .env.bugsee-build-plugin (the file the wizard writes); older SDKs need BUGSEE_APP_TOKEN exported. In CI, export BUGSEE_APP_TOKEN. The plugin does nothing without an app token. By default it deletes the .map files from the build output after a fully successful upload (deleteMaps: false keeps them), so they are not deployed. A build that pins script hashes with Subresource Integrity in its emitted HTML is warned about or refused. Hashes pinned elsewhere, such as in a server-side manifest or a page rendered at request time, are not detected and can break scripts silently: check those builds for integrity pins before enabling the plugin. pnpm 11 approvals: the install script of the plugin's CLI dependency must be approved, and its name depends on the SDK (@bugsee/cli from 0.1.0-beta.7, @bugsee/bugsee-cli before), so both are written to allowBuilds; the one the project does not use is a harmless pre-approval and is removed again by uninstall.",
+  "detect": [
+    {
+      "dependency": "astro"
+    }
+  ],
+  "verify": [
+    "Verify symbolication in a production build: serve or deploy it (not the dev server), trigger a test error from it (for example a button that throws new Error('Bugsee test error')), then open the report in the Bugsee dashboard. The stack should show your original files, functions and lines; minified positions such as a.js:1:48210 mean the source maps were not uploaded for this build or do not match it."
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/vite-plugin"],
+      "buildScripts": ["@bugsee/cli", "@bugsee/bugsee-cli"],
+      "dev": true,
+      "tag": "beta"
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env.bugsee-build-plugin"
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env.bugsee-build-plugin",
+      "key": "BUGSEE_APP_TOKEN",
+      "from": "token"
+    },
+    {
+      "op": "show-snippet",
+      "file": "astro.config.mjs",
+      "title": "Upload source maps from the Astro build (astro.config.mjs)",
+      "code": "import { bugseeVitePlugin } from '@bugsee/vite-plugin'; // bugsee-wizard\n\nexport default defineConfig({\n  // ...your existing options\n  vite: {\n    build: { sourcemap: true },\n    plugins: [bugseeVitePlugin({ appToken: process.env.BUGSEE_APP_TOKEN })],\n  },\n});",
+      "doneWhen": {
+        "files": [
+          "astro.config.mjs",
+          "astro.config.ts",
+          "astro.config.js",
+          "astro.config.mts",
+          "astro.config.cjs",
+          "astro.config.cts"
+        ],
+        "contains": "@bugsee/vite-plugin"
+      }
+    }
+  ]
+}

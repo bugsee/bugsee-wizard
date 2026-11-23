@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "id": "javascript-framework-remix",
+  "kind": "framework",
+  "platform": "javascript-framework-remix",
+  "engine": {
+    "min": "0.0.0"
+  },
+  "sdk": {
+    "range": ">=0.1.0-beta.5"
+  },
+  "notes": "Remix and React Router v7/v8 (framework mode): @bugsee/remix reports server errors through handleError in entry.server and captures the browser through entry.client. The browser token is VITE_BUGSEE_TOKEN (written to .env.local, git-ignored, which Vite inlines); the server reads BUGSEE_APP_TOKEN from the environment it runs in, so export it there. The default entry files are hidden in React Router apps: run `npx react-router reveal` (Remix v2 projects with hidden entry files: `npx remix reveal`) before pasting. Remix v2 has no onError prop: call captureRemixErrorBoundaryError from your root ErrorBoundary instead (see the Bugsee Remix docs). The wizard installs the adapter and hands you the exact wiring for the framework's own files instead of editing them; run it again after pasting and the step is reported as done. An application token is not a secret.",
+  "detect": [
+    {
+      "dependency": "react-router"
+    }
+  ],
+  "ops": [
+    {
+      "op": "install-package",
+      "packages": ["@bugsee/remix"],
+      "tag": "beta",
+      "installScripts": false
+    },
+    {
+      "op": "ensure-gitignore",
+      "line": ".env.local"
+    },
+    {
+      "op": "write-env-var",
+      "file": ".env.local",
+      "key": "VITE_BUGSEE_TOKEN",
+      "from": "token"
+    },
+    {
+      "op": "show-snippet",
+      "file": "app/entry.server.tsx",
+      "title": "Wire the Bugsee server entry (app/entry.server.tsx)",
+      "code": "import { registerServer } from '@bugsee/remix/server';\n\nregisterServer(process.env.BUGSEE_APP_TOKEN!);\n\nexport { handleError } from '@bugsee/remix';",
+      "doneWhen": {
+        "files": [
+          "app/entry.server.tsx",
+          "app/entry.server.jsx",
+          "app/entry.server.ts",
+          "app/entry.server.js"
+        ],
+        "contains": "registerServer("
+      }
+    },
+    {
+      "op": "show-snippet",
+      "file": "app/entry.client.tsx",
+      "title": "Wire the Bugsee client entry (app/entry.client.tsx)",
+      "code": "import { registerClient, bugseeOnError } from '@bugsee/remix/client';\n\nregisterClient(import.meta.env.VITE_BUGSEE_TOKEN);\n\n// React Router framework mode: pass the handler to the router:\nhydrateRoot(document, <HydratedRouter onError={bugseeOnError} />);\n\n// Remix v2: keep your <RemixBrowser /> hydration as it is, and report from your root\n// ErrorBoundary (app/root.tsx) instead:\n// import { captureRemixErrorBoundaryError } from '@bugsee/remix/client';\n// export function ErrorBoundary() {\n//   const error = useRouteError();\n//   captureRemixErrorBoundaryError(error);\n//   return <YourErrorPage />;\n// }",
+      "doneWhen": {
+        "files": [
+          "app/entry.client.tsx",
+          "app/entry.client.jsx",
+          "app/entry.client.ts",
+          "app/entry.client.js"
+        ],
+        "contains": "registerClient("
+      }
+    }
+  ]
+}

@@ -88,6 +88,43 @@ describe.skipIf(process.platform === 'win32')('generated scripts/bugsee-sourcema
     expect(JSON.stringify(await calls()).match(/tok123/g)).toHaveLength(2); // only as env, never in argv
   });
 
+  it('runs bugsee-cli from PATH when a package script put it there (Yarn PnP has no node_modules/.bin), npx only as the fallback', async () => {
+    await out();
+    // a package script's PATH carries the project's binaries; stand-in for that shim
+    await writeFile(join(root, 'bin', 'bugsee-cli'), STUB);
+    await chmod(join(root, 'bin', 'bugsee-cli'), 0o755);
+    const r = run([], { BUGSEE_APP_TOKEN: 'tok', BUGSEE_BUILD: '1' });
+    expect(r.status).toBe(0);
+    expect((await calls()).map((c) => c.args.slice(0, 3))).toEqual([
+      ['sourcemaps', 'inject', 'dist'],
+      ['debug-files', 'upload', 'dist'],
+    ]);
+  });
+
+  it('a failing bugsee-cli on PATH fails the build and is not retried through npx', async () => {
+    await out();
+    await writeFile(join(root, 'bin', 'bugsee-cli'), STUB);
+    await chmod(join(root, 'bin', 'bugsee-cli'), 0o755);
+    const r = run([], { BUGSEE_APP_TOKEN: 't', STUB_EXIT: '10' });
+    expect(r.status).toBe(10);
+    expect((await calls()).length).toBe(1);
+  });
+
+  it('on Windows each argument is quoted for cmd.exe so a directory with a space stays one argument', async () => {
+    const text = await scriptTemplate('javascript-cli');
+    const src = /function winQuote\(a\) \{[\s\S]*?\n\}/.exec(text)?.[0];
+    expect(src).toBeDefined();
+    const winQuote = new Function(`${src}; return winQuote;`)() as (a: string) => string;
+    expect(winQuote('dist')).toBe('dist');
+    expect(winQuote('--type')).toBe('--type');
+    expect(winQuote('C:\\build\\dist')).toBe('C:\\build\\dist');
+    expect(winQuote('dist output')).toBe('"dist output"');
+    expect(winQuote('C:\\my app\\dist')).toBe('"C:\\my app\\dist"');
+    expect(winQuote('a"b')).toBe('"a\\"b"');
+    // and the Windows branch is the only one that uses it
+    expect(text).toContain('...(win ? args.map(winQuote) : args)');
+  });
+
   it('reads the token from .env.bugsee-build-plugin the way the wizard writes it (export, spaces, quotes)', async () => {
     await out();
     for (const line of [
@@ -478,13 +515,17 @@ describe.skipIf(process.platform === 'win32')('generated script: review round 1 
   });
 });
 
-describe('the four CLI-route recipes', () => {
+describe('the CLI-route recipes', () => {
   it('ship byte-identical scripts', async () => {
-    const [cli, ...others] = await Promise.all(
-      ['javascript-cli', 'javascript-tsc', 'javascript-esbuild', 'javascript-rspack'].map(
-        scriptTemplate,
-      ),
-    );
+    // esbuild and rspack keep the CLI route as r1 for SDKs whose plugin cannot upload yet
+    const [cli, ...others] = await Promise.all([
+      scriptTemplate('javascript-cli'),
+      scriptTemplate('javascript-tsc'),
+      scriptTemplate('javascript-nextjs'),
+      scriptTemplate('javascript-esbuild', 'r1'),
+      scriptTemplate('javascript-rspack', 'r1'),
+    ]);
+    expect(others).toHaveLength(4);
     for (const o of others) expect(o).toBe(cli);
   });
 });

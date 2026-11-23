@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { executeRecipe } from '../../../src/engine/execute.js';
@@ -87,6 +87,180 @@ describe('add-bundler-plugin op', () => {
     await step.apply(ctx);
     expect(await readFile(cfg(), 'utf8')).toBe(done);
     expect(ctx.entries).toEqual([]);
+  });
+
+  describe('esbuild: there is no config to edit, so the wiring is always handed back', () => {
+    const esb = {
+      ...spec,
+      target: 'esbuild',
+      importFrom: '@bugsee/bundler-plugin-core',
+      importName: 'bugseeEsbuildPlugin',
+      callArgs: '{ appToken: process.env.BUGSEE_APP_TOKEN }',
+    } as OpSpec;
+    const BUILD =
+      "import { build } from 'esbuild';\nawait build({ entryPoints: ['src/main.ts'], plugins: [] });\n";
+
+    it('id and title name esbuild', () => {
+      const step = opToStep(esb);
+      expect(step.id).toBe('add-bundler-plugin:esbuild');
+      expect(step.title).toContain('esbuild');
+    });
+
+    it('no esbuild.config file: a snippet for your build script, nothing written', async () => {
+      const ctx = makeCtx(tmp.dir);
+      const step = opToStep(esb);
+      expect(await step.precheck(ctx)).toEqual({ kind: 'pending' });
+      const res = await step.apply(ctx);
+      expect(res?.manual?.file).toBe('your esbuild build script');
+      expect(res?.manual?.title).toBe('Add the Bugsee plugin to your esbuild build script');
+      const code = res?.manual?.code ?? '';
+      expect(code).toContain(
+        "import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core'; // bugsee-wizard",
+      );
+      expect(code).toContain(
+        'plugins: [bugseeEsbuildPlugin({ appToken: process.env.BUGSEE_APP_TOKEN })]',
+      );
+      expect(code).toContain('build(');
+      expect(ctx.entries).toEqual([{ file: 'your esbuild build script', action: 'manual' }]);
+    });
+
+    it('an esbuild.config.mjs is never edited: the snippet names it and the file stays as it was', async () => {
+      await writeFile(cfg('esbuild.config.mjs'), BUILD);
+      const ctx = makeCtx(tmp.dir);
+      const res = await opToStep(esb).apply(ctx);
+      expect(res?.manual?.file).toBe('esbuild.config.mjs');
+      expect(res?.manual?.title).toBe('Add the Bugsee plugin to esbuild.config.mjs');
+      expect(await readFile(cfg('esbuild.config.mjs'), 'utf8')).toBe(BUILD);
+      expect(ctx.entries).toEqual([{ file: 'esbuild.config.mjs', action: 'manual' }]);
+    });
+
+    it('even a config that looks editable is left alone (esbuild takes plugins in a call, not an object)', async () => {
+      const looksEditable = 'export default { plugins: [] };\n';
+      await writeFile(cfg('esbuild.config.mjs'), looksEditable);
+      const ctx = makeCtx(tmp.dir);
+      const step = opToStep(esb);
+      expect(await step.precheck(ctx)).toEqual({ kind: 'pending' });
+      const res = await step.apply(ctx);
+      expect(res?.manual?.code).toContain('bugseeEsbuildPlugin');
+      expect(await readFile(cfg('esbuild.config.mjs'), 'utf8')).toBe(looksEditable);
+    });
+
+    it('a CommonJS script gets a require() line, an ES module an import', async () => {
+      await writeFile(
+        cfg('esbuild.config.cjs'),
+        "const { build } = require('esbuild');\nbuild({});\n",
+      );
+      const cjs = await opToStep(esb).apply(makeCtx(tmp.dir));
+      expect(cjs?.manual?.code).toContain(
+        "const { bugseeEsbuildPlugin } = require('@bugsee/bundler-plugin-core'); // bugsee-wizard",
+      );
+    });
+
+    it('the dry run predicts the same snippet', async () => {
+      await writeFile(cfg('esbuild.config.mjs'), BUILD);
+      const step = opToStep(esb);
+      const dry = await step.preview?.(makeCtx(tmp.dir));
+      const real = await step.apply(makeCtx(tmp.dir));
+      expect(dry).toEqual(real);
+    });
+
+    it('once the user has pasted the snippet (import with marker, plugin in the call) it is satisfied and nothing changes', async () => {
+      const done = `import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core'; // bugsee-wizard\n${BUILD.replace('plugins: []', 'plugins: [bugseeEsbuildPlugin({})]')}`;
+      await writeFile(cfg('esbuild.config.mjs'), done);
+      const ctx = makeCtx(tmp.dir);
+      const step = opToStep(esb);
+      expect(await step.precheck(ctx)).toEqual({ kind: 'satisfied' });
+      expect(await step.apply(ctx)).toBeUndefined();
+      expect(await readFile(cfg('esbuild.config.mjs'), 'utf8')).toBe(done);
+      expect(ctx.entries).toEqual([]);
+    });
+
+    it('no esbuild.config file: the module system is unknown, so both import and require forms are shown', async () => {
+      const code = (await opToStep(esb).apply(makeCtx(tmp.dir)))?.manual?.code ?? '';
+      expect(code).toContain('// ES modules:');
+      expect(code).toContain(
+        "import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core'; // bugsee-wizard",
+      );
+      expect(code).toContain('// CommonJS:');
+      expect(code).toContain(
+        "const { bugseeEsbuildPlugin } = require('@bugsee/bundler-plugin-core'); // bugsee-wizard",
+      );
+      expect(code).toContain(
+        'plugins: [bugseeEsbuildPlugin({ appToken: process.env.BUGSEE_APP_TOKEN })]',
+      );
+      // the dry run shows the same
+      expect(await opToStep(esb).preview?.(makeCtx(tmp.dir))).toEqual(
+        await opToStep(esb).apply(makeCtx(tmp.dir)),
+      );
+    });
+
+    describe('a build script that is not called esbuild.config.*', () => {
+      const WIRED =
+        "import { build } from 'esbuild';\nimport { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core';\nawait build({ plugins: [bugseeEsbuildPlugin({})] });\n";
+      const pkg = (scripts: Record<string, string>) =>
+        writeFile(join(tmp.dir, 'package.json'), JSON.stringify({ scripts }));
+      const script = async (name: string, text: string) => {
+        await mkdir(join(tmp.dir, 'scripts'), { recursive: true });
+        await writeFile(join(tmp.dir, name), text);
+      };
+
+      it('is satisfied when the script named in package.json has the import and the call, with or without the marker comment', async () => {
+        await pkg({ build: 'node scripts/build.mjs --prod' });
+        await script('scripts/build.mjs', WIRED);
+        const ctx = makeCtx(tmp.dir);
+        const step = opToStep(esb);
+        expect(await step.precheck(ctx)).toEqual({ kind: 'satisfied' });
+        expect(ctx.entries).toEqual([]);
+      });
+
+      it('stays pending while that script lacks the plugin (an import alone is not enough)', async () => {
+        await pkg({ build: 'node scripts/build.mjs' });
+        await script(
+          'scripts/build.mjs',
+          "import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core';\nawait build({});\n",
+        );
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+        await script('scripts/build.mjs', BUILD);
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+      });
+
+      it('ignores scripts that are missing, outside the project, or not JavaScript', async () => {
+        await pkg({
+          a: 'node scripts/missing.mjs',
+          b: 'node ../outside.mjs',
+          c: 'tsc -p tsconfig.json',
+        });
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+      });
+
+      it('an unreadable or non-object package.json is not a reason to fail', async () => {
+        await writeFile(join(tmp.dir, 'package.json'), '{ nope');
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+        await writeFile(join(tmp.dir, 'package.json'), JSON.stringify({ scripts: 'x' }));
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+      });
+
+      it('the import line with its marker comment alone is not the plugin wired in', async () => {
+        await pkg({ build: 'node scripts/build.mjs' });
+        await script(
+          'scripts/build.mjs',
+          `import { bugseeEsbuildPlugin } from '@bugsee/bundler-plugin-core'; // bugsee-wizard\n${BUILD}`,
+        );
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'pending' });
+      });
+
+      it('an esbuild.config.mjs wired by hand without the marker comment is satisfied too', async () => {
+        await writeFile(cfg('esbuild.config.mjs'), WIRED);
+        expect(await opToStep(esb).precheck(makeCtx(tmp.dir))).toEqual({ kind: 'satisfied' });
+      });
+    });
+
+    it('the plugin sets the source-map option itself, so no source-map hint is added', async () => {
+      const res = await opToStep({ ...esb, ensureSourcemap: false } as OpSpec).apply(
+        makeCtx(tmp.dir),
+      );
+      expect(res?.manual?.code).not.toContain('sourcemap:');
+    });
   });
 
   describe('ensureSourcemap is never silently ignored', () => {

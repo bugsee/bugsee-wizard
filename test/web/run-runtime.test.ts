@@ -47,7 +47,7 @@ describe.skipIf(process.platform === 'win32')('runtime recipes through the run',
     await runJavaScriptInstall(baseOpts(sb.project), makeDeps(cap, { resolveRecipe: real }));
     expect(cap.lines.join('\n')).toMatch(/Skipping SDK install and init: nextjs/);
     const platforms = real.mock.calls.map((c) => c[0].platform);
-    expect(platforms).toEqual(['javascript-webpack']);
+    expect(platforms).toEqual(['javascript-nextjs']);
   });
 
   it('a skipped runtime is an unfinished step: incomplete, a structured step and a snippet, exit 3', async () => {
